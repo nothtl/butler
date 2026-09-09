@@ -44,6 +44,19 @@ class Planner:
         self.day_start = int(self.cfg.sleep_end)     # e.g. 07:00
         self.day_end = int(self.cfg.sleep_start)     # e.g. 23:00
         self.agent = Agent(self.container)
+        self.timeline = getattr(container, "timeline", None)
+
+    def _tl(self) -> Any:
+        return self.timeline
+
+    def _record_task_event(self, task_id: int, title: str, kind: str) -> None:
+        tl = self._tl()
+        if tl is None or not hasattr(tl, kind):
+            return
+        try:
+            getattr(tl, kind)(task_id, title or "")
+        except Exception:  # pragma: no cover — timeline is an audit trail
+            log.debug("timeline %s failed for task %s", kind, task_id, exc_info=True)
 
     # ------------------------------------------------------------------ events
     def sync_events(self, source: str = "") -> dict[str, Any]:
@@ -308,7 +321,14 @@ class Planner:
         return self._summary(state)
 
     def reschedule(self, day_ts: int | None = None) -> dict[str, Any]:
-        return self.plan_day(day_ts)
+        out = self.plan_day(day_ts)
+        tl = self._tl()
+        if tl is not None and hasattr(tl, "record_schedule_change"):
+            try:
+                tl.record_schedule_change(note="reschedule")
+            except Exception:  # pragma: no cover — timeline is an audit trail
+                pass
+        return out
 
     def what_now(self, message: str = "", day_ts: int | None = None,
                  now_min: int | None = None) -> dict[str, Any]:
@@ -484,6 +504,7 @@ class Planner:
         if not t:
             return {"ok": False, "error": "unknown task"}
         self.db.update_task(task_id, status="doing")
+        self._record_task_event(task_id, t["title"], "record_task_started")
         return {"ok": True, "task_id": task_id, "title": t["title"]}
 
     def done(self, task_id: int) -> dict[str, Any]:
@@ -491,6 +512,7 @@ class Planner:
         if not t:
             return {"ok": False, "error": "unknown task"}
         self.db.set_task_status(task_id, "done")
+        self._record_task_event(task_id, t["title"], "record_task_completed")
         self._replan_if_active(task_id)
         return {"ok": True, "task_id": task_id, "title": t["title"]}
 
@@ -499,6 +521,7 @@ class Planner:
         if not t:
             return {"ok": False, "error": "unknown task"}
         self.db.set_task_status(task_id, "skipped")
+        self._record_task_event(task_id, t["title"], "record_task_completed")
         self._replan_if_active(task_id)
         return {"ok": True, "task_id": task_id, "title": t["title"]}
 

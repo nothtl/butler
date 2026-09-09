@@ -52,6 +52,7 @@ class ContextEngine:
         self.container = container
         self.cfg = container.cfg
         self.db = container.db
+        self.timeline = getattr(container, "timeline", None)
 
     # ------------------------------------------------------------ snapshot
     def snapshot(self) -> dict[str, Any]:
@@ -59,6 +60,8 @@ class ContextEngine:
         day_start = _midnight_ts(now)
         day_end = day_start + 86400
         week_end = day_start + 7 * 86400
+        presence = self._presence()
+        self._observe_timeline(presence)
         return {
             "now": now,
             "day_start": day_start,
@@ -71,8 +74,34 @@ class ContextEngine:
             "courses_document_count": self._course_doc_count(),
             "food_expiring": self._food_expiring(),
             "file_count": self._file_count(),
-            "presence": self._presence(),
+            "presence": presence,
+            "timeline": self._timeline_snapshot(day_start, day_end),
         }
+
+    def _observe_timeline(self, presence: dict[str, Any]) -> None:
+        """Record a zone change if the HA presence actually moved (idempotent).
+
+        Recording is passive and never raises: a HA outage just means no event.
+        """
+        tl = self.timeline
+        if tl is None or not hasattr(tl, "observe_presence"):
+            return
+        try:
+            tl.observe_presence(presence)
+        except Exception:  # pragma: no cover — timeline must never break context
+            log.debug("timeline observe failed", exc_info=True)
+
+    def _timeline_snapshot(self, day_start: int, day_end: int) -> dict[str, Any]:
+        """Current vs historical context, distinct: ``current`` is the live
+        zone; ``today`` is the durable history for this calendar day."""
+        tl = self.timeline
+        if tl is None or not hasattr(tl, "current_context"):
+            return {"current": {"known": False, "zone": ""}, "today": []}
+        try:
+            return {"current": tl.current_context(),
+                    "today": tl.get_between(day_start, day_end)[:50]}
+        except Exception:  # pragma: no cover
+            return {"current": {"known": False, "zone": ""}, "today": []}
 
     def free_minutes(self, day_start: int, day_end: int) -> int:
         """Waking free time (minutes, minute-of-day window) on a day.

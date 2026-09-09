@@ -28,6 +28,7 @@ from .nas import FileManager
 from .house import HomeAssistant
 from .context import ContextEngine
 from .proactive import Proactive
+from .timeline import Timeline
 
 
 class Container:
@@ -35,6 +36,7 @@ class Container:
         self.cfg = config or Config.load()
         self.cfg.ensure_dirs()
         self.db = DB(self.cfg)
+        self.timeline = Timeline(self.cfg, self.db)
         self.engine = Engine(self.cfg)
         self.embedder = Embedder(self.cfg.embed_model)
         self.search = Search(self.cfg, self.db, self.embedder)
@@ -57,7 +59,8 @@ class Container:
                                self.organizer, self.search, self.chat,
                                planner=self.planner, courses=self.courses,
                                food=self.food, chef=self.chef, nas=self.nas,
-                               context=self.context, proactive=self.proactive)
+                               context=self.context, proactive=self.proactive,
+                               timeline=self.timeline)
         self.trash = Trash(self.cfg, self.db, self.engine)
         self.indexer = Indexer(self.cfg, self.db, self.embedder)
         self.backup = Backup(self.cfg, self.db)

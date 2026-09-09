@@ -527,6 +527,9 @@ class TelegramBot:
             await msg.reply_text("📍 " + (result.get("answer", str(result))))
         elif kind == "move_block":
             await msg.reply_text("🔀 " + (result.get("answer", str(result))))
+        elif kind == "timeline":
+            await msg.reply_text(result.get("text", "Nothing recorded yet.") or
+                                 "Nothing recorded yet.")
         else:
             await msg.reply_text(str(result.get("text", result)))
 

@@ -154,6 +154,12 @@ class Config:
     home_assistant_url: str = ""           # e.g. http://homeassistant.local:8123
     home_assistant_token: str = ""
 
+    # --- context timeline (Phase 4.3) ---
+    # Zone-level history of meaningful events. Privacy-first: only zone names,
+    # never GPS coordinates or tokens. ``retention_days`` = 0 keeps everything.
+    timeline_enabled: bool = True
+    timeline_retention_days: int = 30
+
     config_path: str = ""
 
     # ------------------------------------------------------------------
@@ -313,6 +319,11 @@ class Config:
         cfg.home_assistant_token = os.environ.get("BUTLER_HA_TOKEN",
                                                   cfg.home_assistant_token or ha.get("token", ""))
 
+        tl = page.get("timeline", {})
+        cfg.timeline_enabled = bool(tl.get("enabled", cfg.timeline_enabled))
+        cfg.timeline_retention_days = int(tl.get("retention_days",
+                                                 cfg.timeline_retention_days))
+
         emb = page.get("embed", {})
         cfg.embed_model = emb.get("model", cfg.embed_model)
         cfg.embed_dim = int(emb.get("dim", cfg.embed_dim))
@@ -364,4 +375,6 @@ class Config:
             "home_assistant_enabled": self.home_assistant_enabled,
             "home_assistant_url": self.home_assistant_url,
             "home_assistant_configured": bool(self.home_assistant_token),
+            "timeline_enabled": self.timeline_enabled,
+            "timeline_retention_days": self.timeline_retention_days,
         }

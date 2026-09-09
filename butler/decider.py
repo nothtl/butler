@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from .config import Config
@@ -33,6 +34,7 @@ class Intent:
     params: dict[str, Any] = field(default_factory=dict)
     raw: str = ""
     plan: Plan | None = None
+    scope: str = ""   # timeline/context scoping, e.g. "today" | "day"
 
 
 class Decider:
@@ -40,7 +42,7 @@ class Decider:
                  organizer: Organizer, search: Search, chat: Any = None,
                  planner: Any = None, courses: Any = None, food: Any = None,
                  chef: Any = None, nas: Any = None, context: Any = None,
-                 proactive: Any = None):
+                 proactive: Any = None, timeline: Any = None):
         self.cfg = cfg
         self.db = db
         self.engine = engine
@@ -61,6 +63,7 @@ class Decider:
         self.nas = nas
         self.context = context
         self.proactive = proactive
+        self.timeline = timeline
 
     # ---------------------------------------------------------------- parse
     def parse(self, message: str) -> Intent:
@@ -70,6 +73,18 @@ class Decider:
         slash = re.match(r"^/(\w+)(?:\s+(.*))?$", msg)
         if slash:
             return self._slash(slash.group(1), slash.group(2) or "", msg)
+
+        # --- Phase 4.3: context timeline / history ---
+        # Kept first so "show my context today" is not swallowed by the Phase 2
+        # "show.*day" rule (the word "today" contains "day").
+        scope = "day" if re.search(r"\b(afternoon|morning|evening|yesterday|earlier|last)\b",
+                                   low) else "today"
+        if re.search(r"\b(where have i been|where (was|were) i|where did i go"
+                     r"|my (history|timeline|day so far|movements?))\b", low) or \
+           re.search(r"\b(what have i (been doing|done)|what did i (do|get up to)"
+                     r"|show (my )?(timeline|context today|day so far|history))", low) or \
+           re.search(r"\b(timeline|history today)\b", low):
+            return Intent("timeline_today", scope=scope, raw=msg)
 
         # --- planner / scheduler intents (Phase 2) ---
         if re.search(r"\b(what should|what to do|what now|what do i do|what next|whats next)\b", low):
@@ -300,6 +315,9 @@ class Decider:
             return Intent("where_am_i", raw=raw)
         if cmd in ("around", "nearby"):
             return Intent("around_me", raw=raw)
+        # --- Phase 4.3: timeline ---
+        if cmd in ("timeline", "history"):
+            return Intent("timeline_today", scope=target or "today", raw=raw)
         return Intent("help", raw=raw)
 
     # ---------------------------------------------------------------- handlers
@@ -438,6 +456,8 @@ class Decider:
             return self._do_where_am_i()
         if k == "around_me":
             return self._do_around_me()
+        if k == "timeline_today":
+            return self._do_timeline(intent)
         return {"kind": "help"}
 
     # ---------------------------------------------------------------- Phase 3
@@ -658,6 +678,34 @@ class Decider:
         return {"kind": "around_me", "presence": snap.get("presence", {}),
                 "events_today": snap.get("events_today", []),
                 "free_minutes_today": snap.get("free_minutes_today", 0)}
+
+    # ------------------------------------------------------- Phase 4.3
+    def _do_timeline(self, intent: Intent) -> dict[str, Any]:
+        """Answer "where have I been?" / "what am I doing today?" from the
+        durable zone-only timeline — never from the LLM."""
+        if self.timeline is None:
+            return {"kind": "context", "ok": False,
+                    "error": "timeline not configured"}
+        scope = getattr(intent, "scope", None) or "today"
+        now_dt = datetime.now()
+        day_start = int(datetime(now_dt.year, now_dt.month, now_dt.day).timestamp())
+        if scope == "day":
+            day_start = day_start - 86400
+        events = self.timeline.get_between(day_start, day_start + 86400)
+        current = self.timeline.current_context()
+        text = self._timeline_text(events, current)
+        return {"kind": "timeline", "scope": scope, "current": current,
+                "events": events, "text": text}
+
+    def _timeline_text(self, events: list[dict[str, Any]],
+                       current: dict[str, Any]) -> str:
+        head = "📍 You're currently at " + (current.get("zone") or "an unknown place")
+        if current.get("at"):
+            head += f" (since {current['at']})"
+        if not events:
+            return head + "\n\nNothing else recorded this period yet."
+        body = self.timeline.timeline_text(events)
+        return head + "\n\n📅 Timeline\n" + body
 
     # ------------------------------------------------------- Phase 4.2
     def _do_location_change(self, intent: Intent) -> dict[str, Any]:

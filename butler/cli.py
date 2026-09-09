@@ -286,6 +286,10 @@ def dispatch(container: Container, ns: argparse.Namespace) -> int:
     if cmd == "around":
         return emit(container, container.decider.resolve(
             container.decider.parse("around me")), ns)
+    if cmd in ("timeline", "history"):
+        scope = " ".join(args) or "today"
+        return emit(container, container.decider.resolve(
+            container.decider.parse("timeline " + scope)), ns)
     if cmd == "calendar":
         sub = args[0] if args else ""
         if sub == "connect":
@@ -570,6 +574,8 @@ def render(c: Container, r: dict) -> str:
         return r.get("answer", str(r))
     if k == "move_block":
         return r.get("answer", str(r))
+    if k == "timeline":
+        return r.get("text", "Nothing recorded yet.")
     return json.dumps(r, indent=2, default=default_json)
 
 

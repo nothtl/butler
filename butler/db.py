@@ -241,6 +241,32 @@ CREATE TABLE IF NOT EXISTS meal_history(
     created_at  INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_meal_history_ts ON meal_history(ts);
+
+-- ---------- Phase 4.3: context timeline ----------
+-- A durable, zone-level history of *meaningful* events. Privacy-first: only
+-- zone names are stored (never raw GPS coordinates), and no credentials /
+-- tokens / full API responses are ever written here. The DB is the single
+-- source of truth; recording is passive and never mutates the scheduler.
+CREATE TABLE IF NOT EXISTS timeline_events(
+    id          INTEGER PRIMARY KEY,
+    ts          INTEGER NOT NULL,
+    type        TEXT NOT NULL,          -- zone_change|calendar_start|calendar_end|task_started|task_completed|schedule_change|user_context
+    zone_from   TEXT,
+    zone_to     TEXT,
+    source      TEXT,                   -- home_assistant|google|local|user|scheduler
+    external_id TEXT,                   -- dedupe key (calendar event id / task id)
+    title       TEXT,
+    note        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_tl_ts ON timeline_events(ts);
+CREATE INDEX IF NOT EXISTS idx_tl_type ON timeline_events(type);
+
+-- Tiny per-state key/value used to remember the last known zone so changing
+-- presence can be detected (only a *change* produces a zone_change event).
+CREATE TABLE IF NOT EXISTS tl_state(
+    key     TEXT PRIMARY KEY,
+    value   TEXT
+);
 """
 
 
