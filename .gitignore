@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtualenv
+.venv/
+venv/
+env/
+
+# Runtime state / secrets
+.butler/
+butler.db
+*.log
+*.sqlite
+*.sqlite3
+*client_secret.json
+*gcal_token.json
+*.ics
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Cache
+.cache/
+*.pyc

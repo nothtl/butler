@@ -1,0 +1,87 @@
+# Butler configuration
+# Place at ~/.config/butler/config.toml or override with BUTLER_CONFIG.
+# Persistent data lives under `data_dir` — on this Pi that is on the M.2 SSD
+# because $HOME (/home) is backed by /dev/nvme0n1p2.
+
+[storage]
+# Configurable storage directory (feature 1). Lives on the M.2 SSD.
+data_dir = "~/ButlerStorage"
+# Directories Butler is allowed to manage.
+roots = ["~/Downloads", "~/Documents", "~/Desktop", "~/ButlerStorage"]
+index_roots = ["~/Downloads", "~/Documents", "~/Desktop", "~/Pictures", "~/Videos"]
+# Course library. Course codes (e.g. CS168) are routed here (feature 17).
+course_dir = "~/University"
+incoming_dir = "~/Incoming"
+courses = ["CS168"]
+max_file_size_mb = 256
+
+[trash]
+# Trash lives under <data_dir>/.butler/trash by default; override here.
+# dir = "~/ButlerStorage/.butler/trash"
+retention_days = 30
+
+# SMB/Samba NAS shares (feature 2). Mount via CIFS/gvfs and point mountpoint at it.
+# [[smb]]
+# name = "nas"
+# mountpoint = "/mnt/nas"
+# server = "192.168.1.10"
+# share = "files"
+# username = "tingli"
+
+[telegram]
+# token = "123456:ABC..."          # or env BUTLER_TELEGRAM_TOKEN
+# allowed_users = [123456789]
+
+[backup]
+# dir = "~/Backups"                 # feature 18
+schedule = "daily"
+
+[remote]
+enabled = false
+port = 7841
+# token = "..."                     # required for auth (feature 19)
+
+[embed]
+model = "BAAI/bge-small-en-v1.5"
+dim = 384
+
+[ai]
+# Optional LLM provider for RAG chat (/ask) and tutoring (/teach) + richer
+# organisation decisions. Leave empty to use Butler's offline grounded answers.
+# api_key = "sk-..."
+# base_url = "https://api.openai.com/v1"
+model = "gpt-4o-mini"
+rag_top_k = 6
+
+[ocr]
+# OCR scanned PDFs and photos (requires `sudo apt install tesseract-ocr`).
+enabled = false
+
+[scheduler]
+enabled = true
+reindex_every_hours = 6
+digest = "daily"
+# digest_chat = 123456789      # Telegram chat id to push the daily digest to. 0 = off
+
+[planner]
+# Phase 2 — deterministic day scheduler. The DB is the source of truth and the
+# pure solver (butler/schedule.py) makes ALL placement decisions; DeepSeek (ai.*)
+# is optional and only reasons about *why* / priority, never positions.
+sleep_start = 1380          # minutes-of-day the day window ends (23:00)
+sleep_end = 420             # minutes-of-day the day window starts (07:00)
+buffer_fraction = 0.20      # keep ~20% of the day free as buffer
+buffer_minutes = 15         # minimum tail buffer after the last block
+min_slot_minutes = 25       # smallest slot worth scheduling
+urgency_deadline_days = 3
+undo_history_max = 50
+# Local calendar (iCal) to import hard commitments from (optional).
+# local_calendar_file = "~/University/schedule.ics"
+# Google Calendar (optional) — see `butler calendar connect`.
+google_calendar_enabled = false
+google_calendar_credentials = "~/.config/butler/client_secret.json"
+
+[links]
+# Prior turn — LinkCollector: fetch, dedupe and archive links.
+dir = "~/ButlerStorage/links"
+check_hours = 24
+download = true
