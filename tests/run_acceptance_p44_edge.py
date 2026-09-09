@@ -155,6 +155,48 @@ def test_cross_config_isolation():
     check("user B sees no candidates", ct2.routines.scan()["candidates"] == [])
 
 
+def test_same_day_flurry_no_false_routine():
+    print("\n=== 7. A busy single day never evokes a routine ===")
+    c = _cfg(tempfile.mkdtemp(prefix="p44e-"), "flurry")
+    ct = Container(c)
+    # Several same-category completions crammed into ONE day (same minute).
+    ts = _mon_ts(17, 0, 1)
+    for i, minutes in zip((1, 2, 3), (0, 0, 0)):
+        ct.timeline.record_task_completed(i, "Workout", ts=_mon_ts(17, minutes, 1))
+    cands = ct.routines.scan()["candidates"]
+    check("a same-day flurry does not become a routine",
+          len(cands) == 0,
+          f"candidates={[(x['category'], x['count'], x['weeks']) for x in cands]}")
+    check("no routine row was persisted for the flurry",
+          len(ct.db.query("SELECT * FROM routines")) == 0)
+
+    # Controls: the same three completions on THREE distinct Mondays DO count.
+    c2 = _cfg(tempfile.mkdtemp(prefix="p44e-"), "flurry-ctrl")
+    ct2 = Container(c2)
+    for wk in (1, 2, 3):
+        ct2.timeline.record_task_completed(wk, "Workout", ts=_mon_ts(17, 0, wk))
+    cands2 = ct2.routines.scan()["candidates"]
+    check("the identical effort spread over 3 weeks IS a routine",
+          any(x["category"] == "exercise" and x["weeks"] == 3
+              for x in cands2),
+          str([(x['category'], x['weeks']) for x in cands2]))
+
+
+def test_any_day_reason_no_false_day():
+    print("\n=== 8. An any-day routine is not explained as a specific day ===")
+    c = _cfg(tempfile.mkdtemp(prefix="p44e-"), "reason")
+    ct = Container(c)
+    ct.routines.create_explicit("I always study every day")
+    mon = _mon_ts(17, 0, 0)
+    reason = ct.routines.affinity_for("study", day_ts=mon, now_min=17 * 60).get("reason", "")
+    check("an any-day routine never claims a weekday", "day" in reason or "observation" in reason,
+          reason)
+    check("the reason never names a single weekday (e.g. Sunday)",
+          not any(d in reason for d in
+                  ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")),
+          reason)
+
+
 def test_lifecycle_reversible():
     print("\n=== 6. Lifecycle is deterministic and reversible ===")
     c = _cfg(tempfile.mkdtemp(prefix="p44e-"), "life")
@@ -178,7 +220,9 @@ def main() -> int:
     test_candidate_vs_confirmed_stored_distinctly()
     test_rejected_never_influences()
     test_cross_config_isolation()
+    test_same_day_flurry_no_false_routine()
     test_lifecycle_reversible()
+    test_any_day_reason_no_false_day()
 
     print("\n==== RESULT: %d passed, %d failed ====" % (PASS, FAIL))
     return 1 if FAIL else 0

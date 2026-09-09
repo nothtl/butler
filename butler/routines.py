@@ -236,6 +236,7 @@ class Routines:
             return []
         now = now or int(datetime.now().timestamp())
         obs = [o for o in (self._observe(e) for e in events) if o]
+        obs = _dedupe_obs(obs)
         cands = self._detect_single(obs, now)
         cands += self._detect_sequence(obs, now)
         return cands
@@ -669,8 +670,11 @@ class Routines:
             return head + (f" on {day}s" if day else "")
         label = r["zone"] or _CAT_LABEL.get(r["category"], r["category"])
         where = f" at {r['zone']}" if r["zone"] else ""
-        return (f"Because you usually {label}{where} around {_hm(now_min)}"
-                f" ({r['n_of_m']} of the last {r['count']} {_DAYS[r['weekday']]}s)")
+        day = _DAYS[r["weekday"]] if r["weekday"] != _ANY_WEEKDAY else ""
+        freq = (f" ({r['n_of_m']} of the last {r['count']} {day}s)" if day
+                else f" ({r['count']} observation"
+                      f"{'s' if r['count'] != 1 else ''})")
+        return (f"Because you usually {label}{where} around {_hm(now_min)}{freq}")
 
     # --------------------------------------------------------------- rendering
     def show(self) -> str:
@@ -690,6 +694,24 @@ class Routines:
 
 
 # --------------------------------------------------------------- helpers
+def _dedupe_obs(obs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Count each (date, category) once so a recurring pattern needs evidence
+    spread across *distinct days*, not several events crammed into one day.
+
+    A single busy morning (e.g. a zone change, a task completion and a context
+    note all at the same minute for the same category) must not vote a
+    routine. Otherwise ``routines_min_observations`` counts events, not days,
+    and a one-day flurry produces ``count`` as high as the event volume while
+    ``weeks`` stays 1.
+    """
+    seen: dict[tuple[tuple[int, int, int], str], dict[str, Any]] = {}
+    for o in obs:
+        key = (o["date"], o["category"])
+        if key not in seen:
+            seen[key] = o
+    return list(seen.values())
+
+
 def _match(pattern: str, text: str):
     import re
     return re.search(pattern, text)
