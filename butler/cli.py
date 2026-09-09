@@ -30,7 +30,8 @@ def main(argv: list[str] | None = None) -> int:
         "organize", "dupes", "dupes-trash", "trash", "trash-list", "recover",
         "mkdir", "move", "rename", "apply", "backup", "bot", "monitor", "remote",
         "mcp", "daemon",
-        "task", "tasks", "day", "now", "done", "skip", "start", "cameup", "why",
+        "task", "tasks", "day", "now", "done", "skip", "start", "defer", "block",
+        "cancel", "resume", "cameup", "why",
         "whythis", "undo", "reschedule", "calendar",
         "course", "courses", "checkcourses", "materials", "ingest",
         "pantry", "food", "addfood", "expiring", "used", "grocery",
@@ -191,14 +192,18 @@ def dispatch(container: Container, ns: argparse.Namespace) -> int:
     if cmd == "now":
         return emit(container, {"kind": "now",
                                 **container.planner.what_now(" ".join(args))}, ns)
-    if cmd in ("done", "skip", "start"):
+    if cmd in ("done", "skip", "start", "defer", "block", "cancel", "resume"):
         tid = _taskid(container, args)
         if tid is None:
             print("couldn't find that task; use `butler tasks`", file=sys.stderr)
             return 1
         out = {"done": container.planner.done,
                "skip": container.planner.skip,
-               "start": container.planner.start}[cmd](tid)
+               "start": container.planner.start,
+               "defer": container.planner.defer,
+               "block": container.planner.block_task,
+               "cancel": container.planner.cancel_task,
+               "resume": container.planner.resume_task}[cmd](tid)
         return emit(container, {"kind": "text", "text": str(out)}, ns)
     if cmd == "cameup":
         title = " ".join(args).strip()

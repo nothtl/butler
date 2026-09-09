@@ -138,7 +138,9 @@ class Decider:
         if re.search(r"\b(undo|go back|revert)\b", low):
             return Intent("undo", raw=msg)
         for _kw, _kind in (("done", "done"), ("finish", "done"), ("complete", "done"),
-                           ("skip", "skip"), ("start", "start")):
+                           ("skip", "skip"), ("start", "start"),
+                           ("defer", "defer"), ("block", "block"),
+                           ("cancel", "cancel"), ("resume", "resume")):
             m = re.search(rf"\b{_kw}\b\s+(.+)", low)
             if m:
                 return Intent(_kind, query=m.group(1).strip(), raw=msg)
@@ -309,6 +311,14 @@ class Decider:
             return Intent("skip", query=target, raw=raw)
         if cmd in ("begin", "go"):
             return Intent("start", query=target, raw=raw)
+        if cmd in ("defer", "postpone", "later"):
+            return Intent("defer", query=target, raw=raw)
+        if cmd in ("block", "stuck", "blocked"):
+            return Intent("block", query=target, raw=raw)
+        if cmd in ("cancel", "cancel_task", "remove-task"):
+            return Intent("cancel", query=target, raw=raw)
+        if cmd in ("resume", "reopen", "unblock"):
+            return Intent("resume", query=target, raw=raw)
         if cmd in ("cameup", "came_up", "urgent"):
             return Intent("came_up", query=target, raw=raw)
         if cmd == "why":
@@ -476,6 +486,14 @@ class Decider:
             return {"kind": "plan_tasks", **self._do_state(intent, "skip")}
         if k == "start":
             return {"kind": "plan_tasks", **self._do_state(intent, "start")}
+        if k == "defer":
+            return {"kind": "plan_tasks", **self._do_state(intent, "defer")}
+        if k == "block":
+            return {"kind": "plan_tasks", **self._do_state(intent, "block")}
+        if k == "cancel":
+            return {"kind": "plan_tasks", **self._do_state(intent, "cancel")}
+        if k == "resume":
+            return {"kind": "plan_tasks", **self._do_state(intent, "resume")}
         if k == "came_up":
             return {"kind": "plan_tasks", **self._do_cameup(intent)}
         if k == "why":
@@ -1198,6 +1216,14 @@ class Decider:
             return self.planner.done(task_id)
         if action == "skip":
             return self.planner.skip(task_id)
+        if action == "defer":
+            return self.planner.defer(task_id)
+        if action == "block":
+            return self.planner.block_task(task_id)
+        if action == "cancel":
+            return self.planner.cancel_task(task_id)
+        if action == "resume":
+            return self.planner.resume_task(task_id)
         return self.planner.start(task_id)
 
     def _do_cameup(self, intent: Intent) -> dict[str, Any]:
@@ -1215,6 +1241,12 @@ class Decider:
                 return tid
         low = msg.lower()
         for r in self.db.tasks("active"):
+            t = r["title"].lower()
+            if t and (t in low or all(w in low for w in t.split())):
+                return int(r["id"])
+        # fall back to any known task by title (so resume/block/defer can target
+        # a currently-terminal task the user is re-engaging with)
+        for r in self.db.all_tasks():
             t = r["title"].lower()
             if t and (t in low or all(w in low for w in t.split())):
                 return int(r["id"])

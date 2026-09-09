@@ -180,9 +180,9 @@ def main() -> int:
         text = render(A, notify)
         check("notification renders the assignment + its study block",
               "task #" in text and "07:00" in text, text.strip())
-    tasks = [dict(x) for x in A.db.tasks("todo")]
+    tasks = [dict(x) for x in A.db.tasks("active")]
     t = next((x for x in tasks if "Project 2" in x["title"]), None)
-    n = len([x for x in A.db.tasks("todo") if "Project 2" in x["title"]])
+    n = len([x for x in A.db.tasks("active") if "Project 2" in x["title"]])
     check("exactly one task exists", t is not None and n == 1, f"n={n}")
     if t:
         check("workload estimate materialised", int(t["est_minutes"]) == 360, t["est_minutes"])
@@ -190,7 +190,7 @@ def main() -> int:
     print("\n=== 3.6.2 Monitor twice -> no duplicate task ===")
     updates2 = A.courses.check_all()
     again = A.courses.sync_assignments("CS168")
-    n2 = len([x for x in A.db.tasks("todo") if "Project 2" in x["title"]])
+    n2 = len([x for x in A.db.tasks("active") if "Project 2" in x["title"]])
     check("second monitor run is a no-op", updates2 == [], str([u.get("kind") for u in updates2]))
     check("re-sync deduped (no duplicate task)", again.get("count") == 0,
           str(again.get("count")))
@@ -218,7 +218,7 @@ def main() -> int:
           str(tid))
     check("deadline advanced on the existing task",
           int(tt["deadline"]) == fcA.deadline_ts, str(tt["deadline"]))
-    n3 = len([x for x in A.db.tasks("todo") if "Project 2" in x["title"]])
+    n3 = len([x for x in A.db.tasks("active") if "Project 2" in x["title"]])
     check("no duplicate task after update", n3 == 1, f"n={n3}")
 
     print("\n=== 3.6.5 Insufficient capacity -> conflict reported, never overbooked ===")
@@ -240,7 +240,7 @@ def main() -> int:
               sched.get("deficit", 0) > 0, str(sched.get("deficit")))
     else:
         check("capacity conflict surfaced", False, "no assignment update produced")
-    tskB = [dict(x) for x in B.db.tasks("todo") if "Project 2" in x["title"]]
+    tskB = [dict(x) for x in B.db.tasks("active") if "Project 2" in x["title"]]
     check("task still created even when tight", len(tskB) == 1, str(len(tskB)))
 
     print("\n=== 3.6.5b Hard events are never overwritten ===")

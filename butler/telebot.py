@@ -107,6 +107,10 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("skip", self.cmd_slash_wrap))
         self.app.add_handler(CommandHandler("begin", self.cmd_slash_wrap))
         self.app.add_handler(CommandHandler("go", self.cmd_slash_wrap))
+        self.app.add_handler(CommandHandler("defer", self.cmd_slash_wrap))
+        self.app.add_handler(CommandHandler("block", self.cmd_slash_wrap))
+        self.app.add_handler(CommandHandler("cancel", self.cmd_slash_wrap))
+        self.app.add_handler(CommandHandler("resume", self.cmd_slash_wrap))
         self.app.add_handler(CommandHandler("cameup", self.cmd_slash_wrap))
         self.app.add_handler(CommandHandler("why", self.cmd_slash_wrap))
         self.app.add_handler(CommandHandler("undo", self.cmd_slash_wrap))
@@ -339,7 +343,8 @@ class TelegramBot:
                 for t in tasks:
                     lines.append(f" #{t['id']} {t['title']} "
                                  f"(est {t['est_minutes']}m, p{t['priority']})")
-                await msg.reply_text("\n".join(lines))
+                await msg.reply_text("\n".join(lines),
+                                     reply_markup=self._task_buttons(tasks))
                 return
             await msg.reply_text(str(result.get("text", result)))
         elif kind == "plan_why":
@@ -613,6 +618,19 @@ class TelegramBot:
         )
 
     # ------------------------------------------------------------ confirm flow
+    def _task_buttons(self, tasks: list[dict]) -> InlineKeyboardMarkup:
+        """Per-task lifecycle buttons behind the active-task list (Phase 5.0)."""
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton("▶️ Start", callback_data=f"tact:start:{t['id']}"),
+                InlineKeyboardButton("✅ Done", callback_data=f"tact:done:{t['id']}"),
+                InlineKeyboardButton("⏸ Defer", callback_data=f"tact:defer:{t['id']}"),
+                InlineKeyboardButton("⏭ Skip", callback_data=f"tact:skip:{t['id']}"),
+                InlineKeyboardButton("✓ Cancel", callback_data=f"tact:cancel:{t['id']}"),
+            ] for t in tasks
+        ])
+        return kb
+
     def _confirm_buttons(self, plan_id: str) -> InlineKeyboardMarkup:
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ Confirm", callback_data=f"confirm:{plan_id}"),
@@ -642,6 +660,13 @@ class TelegramBot:
         query = update.callback_query
         await query.answer()
         data = query.data or ""
+        if data.startswith("tact:"):
+            _pre, act, tid = data.split(":", 2)
+            _slash = {"start": "begin", "done": "done", "defer": "defer",
+                      "skip": "skip", "cancel": "cancel"}.get(act, act)
+            await self._dispatch(update, f"/{_slash} {tid}",
+                                 user=update.effective_user.username or "telegram")
+            return
         action, _, plan_id = data.partition(":")
         if action == "confirm":
             plan = self._pop_plan(plan_id)

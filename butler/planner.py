@@ -24,11 +24,29 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from . import schedule as sch
+from . import db as dbmod
 from . import affinity
 from .agent import Agent
 from .gcal import GCalError, GoogleCalendar
 
 log = logging.getLogger("butler.planner")
+
+# Phase 5.0 lifecycle. ``done`` is the historical alias for ``completed``.
+# A transition is allowed only if it is in the table below; anything else is
+# rejected so the deterministic state machine is the single source of truth.
+LEGAL_TRANSITIONS: dict[str, tuple[str, ...]] = {
+    "todo":      ("scheduled", "doing", "completed", "deferred", "skipped",
+                  "cancelled", "blocked"),
+    "scheduled": ("doing", "todo", "deferred", "skipped", "cancelled",
+                  "blocked"),
+    "doing":     ("completed", "deferred", "blocked", "cancelled", "skipped",
+                  "scheduled", "todo"),
+    "deferred":  ("todo", "scheduled", "doing", "cancelled"),
+    "blocked":   ("todo", "scheduled", "cancelled"),
+    "completed": ("todo", "doing", "scheduled"),
+    "skipped":   ("todo", "doing", "scheduled"),
+    "cancelled": ("todo", "doing", "scheduled"),
+}
 
 
 def _hm(minutes: int) -> str:
@@ -46,6 +64,10 @@ class Planner:
         self.agent = Agent(self.container)
         self.timeline = getattr(container, "timeline", None)
         self.routines = getattr(container, "routines", None)
+        # Test/override hook: a pre-built GoogleCalendar. When set, the write
+        # projection uses it verbatim instead of constructing one from config
+        # (which is how the offline acceptance tests inject a fake transport).
+        self.gcal_override: GoogleCalendar | None = None
 
     def _tl(self) -> Any:
         return self.timeline
@@ -137,6 +159,12 @@ class Planner:
         for e in events:
             ext = e.get("external_id", "")
             if not ext:
+                skipped += 1
+                continue
+            if e.get("butler_managed"):
+                # Events Butler itself wrote are a projection of the local plan,
+                # not independent hard commitments -- importing them as such
+                # would create feedback (a planned slot blocking itself).
                 skipped += 1
                 continue
             if e.get("status") == "cancelled":
@@ -319,7 +347,21 @@ class Planner:
         self.db.save_plan(self.day_start, self.day_end, "active", state.to_json())
         if prev:
             self.db.update_plan_state(int(prev["id"]), "history")
+        self._mark_scheduled(state)
+        self._sync_calendar()
         return self._summary(state)
+
+    def _mark_scheduled(self, state: sch.PlanState) -> None:
+        """Promote any freshly-placed ``todo`` task to ``scheduled``.
+
+        A task becomes ``scheduled`` once the solver has committed a slot for it
+        today. ``doing`` is left untouched (it is actively being worked on).
+        Idempotent: only a genuine ``todo -> scheduled`` change writes history.
+        """
+        for s in state.slots:
+            row = self.db.task_by_id(s.task_id)
+            if row and dbmod.normalize_status(row["status"] or "todo") == "todo":
+                self.db.set_task_status(s.task_id, "scheduled", reason="auto-scheduled")
 
     def reschedule(self, day_ts: int | None = None) -> dict[str, Any]:
         out = self.plan_day(day_ts)
@@ -553,7 +595,9 @@ class Planner:
         t = self.db.task_by_id(task_id)
         if not t:
             return {"ok": False, "error": "unknown task"}
-        self.db.update_task(task_id, status="doing")
+        res = self._transition(task_id, "doing", reason="started")
+        if not res["ok"]:
+            return res
         self._record_task_event(task_id, t["title"], "record_task_started")
         return {"ok": True, "task_id": task_id, "title": t["title"]}
 
@@ -561,19 +605,83 @@ class Planner:
         t = self.db.task_by_id(task_id)
         if not t:
             return {"ok": False, "error": "unknown task"}
-        self.db.set_task_status(task_id, "done")
+        res = self._transition(task_id, "completed", reason="finished")
+        if not res["ok"]:
+            return res
         self._record_task_event(task_id, t["title"], "record_task_completed")
-        self._replan_if_active(task_id)
         return {"ok": True, "task_id": task_id, "title": t["title"]}
 
     def skip(self, task_id: int) -> dict[str, Any]:
         t = self.db.task_by_id(task_id)
         if not t:
             return {"ok": False, "error": "unknown task"}
-        self.db.set_task_status(task_id, "skipped")
+        res = self._transition(task_id, "skipped", reason="skipped")
+        if not res["ok"]:
+            return res
         self._record_task_event(task_id, t["title"], "record_task_completed")
+        return {"ok": True, "task_id": task_id, "title": t["title"]}
+
+    def defer(self, task_id: int) -> dict[str, Any]:
+        t = self.db.task_by_id(task_id)
+        if not t:
+            return {"ok": False, "error": "unknown task"}
+        res = self._transition(task_id, "deferred", reason="deferred")
+        if not res["ok"]:
+            return res
+        self._record_task_event(task_id, t["title"], "record_task_completed")
+        return {"ok": True, "task_id": task_id, "title": t["title"]}
+
+    def block_task(self, task_id: int) -> dict[str, Any]:
+        t = self.db.task_by_id(task_id)
+        if not t:
+            return {"ok": False, "error": "unknown task"}
+        res = self._transition(task_id, "blocked", reason="blocked")
+        if not res["ok"]:
+            return res
+        self._record_task_event(task_id, t["title"], "record_task_completed")
+        return {"ok": True, "task_id": task_id, "title": t["title"]}
+
+    def cancel_task(self, task_id: int) -> dict[str, Any]:
+        t = self.db.task_by_id(task_id)
+        if not t:
+            return {"ok": False, "error": "unknown task"}
+        res = self._transition(task_id, "cancelled", reason="cancelled")
+        if not res["ok"]:
+            return res
+        self._record_task_event(task_id, t["title"], "record_task_completed")
+        return {"ok": True, "task_id": task_id, "title": t["title"]}
+
+    def resume_task(self, task_id: int) -> dict[str, Any]:
+        t = self.db.task_by_id(task_id)
+        if not t:
+            return {"ok": False, "error": "unknown task"}
+        res = self._transition(task_id, "todo", reason="resumed")
+        if not res["ok"]:
+            return res
         self._replan_if_active(task_id)
         return {"ok": True, "task_id": task_id, "title": t["title"]}
+
+    def _transition(self, task_id: int, to_status: str,
+                    reason: str = "") -> dict[str, Any]:
+        """Validate and apply a deterministic task status transition.
+
+        Every transition is audited in ``task_history`` and, for a task leaving
+        the active set, triggers a reschedule so the plan reflects the change.
+        Illegal transitions are rejected (the state machine is authoritative).
+        """
+        row = self.db.task_by_id(task_id)
+        if not row:
+            return {"ok": False, "error": "unknown task"}
+        to = dbmod.normalize_status(to_status)
+        frm = dbmod.normalize_status((row["status"] or "todo"))
+        if to not in LEGAL_TRANSITIONS.get(frm, ()):
+            return {"ok": False, "task_id": task_id, "title": row["title"],
+                    "error": f"cannot go {frm} -> {to}"}
+        self.db.set_task_status(task_id, to, reason=reason)
+        if to not in dbmod.ACTIVE_TASK_STATUSES:
+            self._replan_if_active(task_id)
+        return {"ok": True, "task_id": task_id, "title": row["title"],
+                "from": frm, "to": to}
 
     def came_up(self, title: str, est_minutes: int = 60, deadline: int = 0,
                 priority: int = 4) -> dict[str, Any]:
@@ -743,6 +851,162 @@ class Planner:
             self.reschedule()
         except Exception as exc:  # noqa: BLE001
             log.warning("replan after task %s failed: %s", task_id, exc)
+
+    # ------------------------------------------------- calendar write (5.0)
+    def sync_calendar(self, gcal: GoogleCalendar | None = None) -> dict[str, Any]:
+        """Public, failure-safe entry point for the Google Calendar projection.
+
+        Used by the background scheduler job and tests; identical to the
+        internal ``_sync_calendar`` used after every reschedule.
+        """
+        return self._sync_calendar(gcal)
+
+    def _sync_calendar(self, gcal: GoogleCalendar | None = None) -> dict[str, Any]:
+        """Best-effort push of the current plan to Google Calendar.
+
+        Uses an injected ``gcal`` (or ``gcal_override``) for the offline tests;
+        otherwise it builds a real one only when connected. Every failure is
+        swallowed and surfaced as ``{"ok": False, "error": ...}`` so a Google
+        outage never blocks local scheduling.
+        """
+        try:
+            gcal = gcal or self.gcal_override
+            if gcal is None:
+                if not (self.cfg.google_calendar_enabled
+                        and self.cfg.google_calendar_credentials
+                        and os.path.exists(self.cfg.google_calendar_credentials)):
+                    return {"ok": True, "skipped": "not configured"}
+                if not os.path.exists(os.path.join(self.cfg.state_dir,
+                                                   "gcal_token.json")):
+                    return {"ok": True, "skipped": "not connected"}
+                gcal = GoogleCalendar(self.cfg)
+            return self.reconcile_calendar(gcal)
+        except GCalError as exc:  # noqa: BLE001 — graceful degradation
+            log.warning("calendar write sync failed (local schedule kept): %s", exc)
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:  # noqa: BLE001 — never break scheduling
+            log.warning("calendar write sync failed (local schedule kept): %s", exc)
+            return {"ok": False, "error": str(exc)}
+
+    def reconcile_calendar(self, gcal: GoogleCalendar) -> dict[str, Any]:
+        """Make the Google Calendar projection match the current active plan.
+
+        Deterministic and idempotent. For every active task with a slot today it
+        creates/updates exactly one Butler-managed event (keyed in ``task_gcal``),
+        and deletes once-scheduled events whose task left the active set *unless*
+        the task was completed (which is preserved). External events are never
+        touched. Returns a stats dict; never raises.
+
+        Layout: the "day" is the date of the active plan's ``created`` timestamp
+        (so slots, stored as minutes-within-day, map onto concrete start/end).
+        """
+        plan_row = self.db.latest_plan()
+        if not plan_row:
+            return {"ok": True, "created": 0, "updated": 0, "deleted": 0,
+                    "unchanged": 0, "pending": 0}
+        try:
+            state = sch.PlanState.from_json(plan_row["json"])
+        except Exception as exc:  # noqa: BLE001
+            log.warning("reconcile: bad plan json: %s", exc)
+            return {"ok": True, "created": 0, "updated": 0, "deleted": 0,
+                    "unchanged": 0, "pending": 0}
+        midnight = self._day_start_ts(int(plan_row["created"]))
+        desired: dict[int, tuple[int, int, str]] = {}
+        for s in state.slots:
+            start_ts = midnight + int(s.start_min) * 60
+            end_ts = midnight + int(s.end_min) * 60
+            cur = desired.get(s.task_id)
+            if cur is None:
+                desired[s.task_id] = (start_ts, end_ts, s.title)
+            else:
+                desired[s.task_id] = (min(cur[0], start_ts), max(cur[1], end_ts), s.title)
+
+        stats = {"ok": True, "created": 0, "updated": 0, "deleted": 0,
+                 "unchanged": 0, "pending": 0}
+        for row in self.db.task_gcal_all():
+            tid = int(row["task_id"])
+            if tid not in desired:
+                task = self.db.task_by_id(tid)
+                status = dbmod.normalize_status((task["status"] if task else "cancelled"))
+                if status == "completed":
+                    stats["unchanged"] += 1  # completed tasks keep their event
+                    continue
+                self._delete_task_event(gcal, tid, row, stats)
+        for tid, (start_ts, end_ts, title) in desired.items():
+            row = self.db.task_gcal(tid)
+            if row and row["gcal_event_id"]:
+                window_same = (int(row["start_ts"]) == start_ts
+                               and int(row["end_ts"]) == end_ts)
+                if window_same and row["state"] in ("synced", "pending_update"):
+                    stats["unchanged"] += 1
+                    continue
+                if not self._update_task_event(gcal, tid, title, start_ts, end_ts):
+                    stats["pending"] += 1
+                else:
+                    stats["updated"] += 1
+            else:
+                if row and row["state"] == "pending_delete":
+                    # previously asked to delete, still wanted -> recreate
+                    pass
+                if self._create_task_event(gcal, tid, title, start_ts, end_ts):
+                    stats["created"] += 1
+                else:
+                    stats["pending"] += 1
+        return stats
+
+    def _delete_task_event(self, gcal: GoogleCalendar, task_id: int,
+                           row: Any, stats: dict[str, Any]) -> None:
+        eid = (row["gcal_event_id"] or "")
+        if not eid:
+            self.db.upsert_task_gcal(task_id, "", "deleted", row["title"])
+            return
+        try:
+            if gcal.delete_event(eid):
+                self.db.upsert_task_gcal(task_id, "", "deleted", row["title"])
+                stats["deleted"] += 1
+            else:
+                self.db.upsert_task_gcal(task_id, eid, "pending_delete", row["title"])
+                stats["pending"] += 1
+        except GCalError as exc:  # noqa: BLE001
+            self.db.upsert_task_gcal(task_id, eid, "pending_delete", row["title"],
+                                     last_error=str(exc))
+            stats["pending"] += 1
+
+    def _update_task_event(self, gcal: GoogleCalendar, task_id: int, title: str,
+                           start_ts: int, end_ts: int) -> bool:
+        row = self.db.task_gcal(task_id)
+        eid = (row["gcal_event_id"] or "") if row else ""
+        try:
+            if gcal.update_event(eid, title, start_ts, end_ts, task_id):
+                self.db.upsert_task_gcal(task_id, eid, "synced", title,
+                                         start_ts, end_ts)
+                return True
+            # 404: remote event vanished -> recreate below
+            if self._create_task_event(gcal, task_id, title, start_ts, end_ts):
+                return True
+            self.db.upsert_task_gcal(task_id, eid or "", "pending_update", title,
+                                     start_ts, end_ts)
+            return False
+        except GCalError as exc:  # noqa: BLE001
+            self.db.upsert_task_gcal(task_id, eid, "pending_update", title,
+                                     start_ts, end_ts, last_error=str(exc))
+            return False
+
+    def _create_task_event(self, gcal: GoogleCalendar, task_id: int, title: str,
+                           start_ts: int, end_ts: int) -> bool:
+        try:
+            ev = gcal.create_event(title, start_ts, end_ts, task_id)
+            eid = str(ev.get("id", ""))
+            if not eid:
+                self.db.upsert_task_gcal(task_id, "", "pending_create", title,
+                                         start_ts, end_ts, last_error="no id returned")
+                return False
+            self.db.upsert_task_gcal(task_id, eid, "synced", title, start_ts, end_ts)
+            return True
+        except GCalError as exc:  # noqa: BLE001
+            self.db.upsert_task_gcal(task_id, "", "pending_create", title,
+                                     start_ts, end_ts, last_error=str(exc))
+            return False
 
     def _summary(self, state: sch.PlanState) -> dict[str, Any]:
         return {

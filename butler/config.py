@@ -136,6 +136,7 @@ class Config:
     local_calendar_file: str = ""
     google_calendar_credentials: str = ""   # path to client_secret.json
     google_calendar_enabled: bool = False
+    calendar_sync_schedule: str = "15m"     # cadence for the write-back projection
     # Default working window (24h clock, minutes from midnight). Sleep hours.
     sleep_start: int = 23 * 60 + 0          # 23:00
     sleep_end: int = 7 * 60 + 0             # 07:00
@@ -339,6 +340,8 @@ class Config:
                                        "client_secret.json"))))
         cfg.google_calendar_enabled = bool(pl.get("google_calendar",
                                                   cfg.google_calendar_enabled))
+        cfg.calendar_sync_schedule = pl.get("calendar_sync_schedule",
+                                            cfg.calendar_sync_schedule)
         cfg.sleep_start = int(pl.get("sleep_start", cfg.sleep_start))
         cfg.sleep_end = int(pl.get("sleep_end", cfg.sleep_end))
         cfg.buffer_fraction = float(pl.get("buffer_fraction", cfg.buffer_fraction))
@@ -519,6 +522,7 @@ class Config:
             "links_dir": self.links_dir,
             "links_check_hours": self.links_check_hours,
             "google_calendar_enabled": self.google_calendar_enabled,
+            "calendar_sync_schedule": self.calendar_sync_schedule,
             "local_calendar_file": self.local_calendar_file,
             "sleep_start": self.sleep_start,
             "sleep_end": self.sleep_end,

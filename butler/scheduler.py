@@ -93,6 +93,8 @@ class Scheduler:
                  self._run_courses),
                 ("proactive", _cadence_seconds(self.cfg.proactive_schedule),
                  self._run_proactive),
+                ("gcal_sync", _cadence_seconds(self.cfg.calendar_sync_schedule),
+                 self._run_gcal_sync),
             ]
             for name, every, fn in jobs:
                 if every <= 0:
@@ -139,6 +141,19 @@ class Scheduler:
             return
         res = proactive.run()
         log.info("proactive check: %s", res)
+
+    def _run_gcal_sync(self) -> None:
+        """Push the local plan to Google Calendar (Phase 5.0 write projection).
+
+        Built on the planner so every failure is swallowed there; the job merely
+        triggers it on the configured cadence.
+        """
+        planner = getattr(self.container, "planner", None)
+        if planner is None or not hasattr(planner, "sync_calendar"):
+            return
+        res = planner.sync_calendar()
+        log.info("scheduled gcal sync: %s",
+                 {k: v for k, v in res.items() if k != "ok"})
 
     def _run_digest(self) -> None:
         text = self.build_digest(self.container)

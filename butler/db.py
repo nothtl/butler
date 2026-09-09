@@ -13,6 +13,24 @@ from typing import Any
 
 from .config import Config
 
+# Phase 5.0 task lifecycle. The active set is what the planner may place;
+# terminal statuses leave the active work set (and are what the Google Calendar
+# writer preserves vs. removes). ``done`` is the historical alias for
+# ``completed`` and is normalised to it wherever it meets the DB.
+ACTIVE_TASK_STATUSES = ("todo", "doing", "scheduled")
+TERMINAL_STATUSES = ("completed", "skipped", "cancelled", "deferred", "blocked")
+_VALID_TASK_STATUSES = ACTIVE_TASK_STATUSES + TERMINAL_STATUSES
+
+
+def normalize_status(status: str) -> str:
+    s = (status or "").strip().lower()
+    if s == "done":
+        return "completed"
+    if s not in _VALID_TASK_STATUSES:
+        return "todo"
+    return s
+
+
 
 def _day_bounds(ts: int) -> tuple[int, int]:
     """Start-of-day and start-of-next-day unix timestamps for a unix ts."""
@@ -329,6 +347,38 @@ CREATE TABLE IF NOT EXISTS meal_suggestions(
     UNIQUE(day_ts, recipe_id)
 );
 CREATE INDEX IF NOT EXISTS idx_meal_sugg_day ON meal_suggestions(day_ts);
+
+-- ---------- Phase 5.0: task lifecycle + Google Calendar write sync ----------
+-- A durable audit of every status transition so "why did this task move?" is
+-- answered deterministically, and Butler never loses track of a completion.
+CREATE TABLE IF NOT EXISTS task_history(
+    id          INTEGER PRIMARY KEY,
+    task_id     INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    from_status TEXT DEFAULT '',
+    to_status   TEXT NOT NULL,
+    reason      TEXT DEFAULT '',
+    ts          INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_th_task ON task_history(task_id);
+CREATE INDEX IF NOT EXISTS idx_th_ts ON task_history(ts);
+
+-- The stable link between a Butler task/block and the Google Calendar event
+-- Butler created for it. One row per task (so a task maps to at most one event
+-- and a rerun never duplicates an event). External events (no ``butler_managed``
+-- marker) are NEVER recorded here and thus never touched by the write path.
+CREATE TABLE IF NOT EXISTS task_gcal(
+    id           INTEGER PRIMARY KEY,
+    task_id      INTEGER NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE CASCADE,
+    gcal_event_id TEXT DEFAULT '',   -- the event Butler created; '' = none yet
+    state        TEXT DEFAULT 'none',-- none|synced|pending_create|pending_update|pending_delete
+    title        TEXT DEFAULT '',
+    start_ts     INTEGER DEFAULT 0,
+    end_ts       INTEGER DEFAULT 0,
+    last_error   TEXT DEFAULT '',
+    created      INTEGER DEFAULT 0,
+    updated      INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_tg_state ON task_gcal(state);
 """
 
 
@@ -641,7 +691,7 @@ class DB:
     def tasks(self, status: str = "todo") -> list[sqlite3.Row]:
         if status == "active":
             return self.query(
-                "SELECT * FROM tasks WHERE status IN ('todo','doing') "
+                "SELECT * FROM tasks WHERE status IN ('todo','doing','scheduled') "
                 "ORDER BY deadline, priority DESC, sort")
         return self.query(
             "SELECT * FROM tasks WHERE status=? ORDER BY deadline, priority DESC, sort",
@@ -653,14 +703,74 @@ class DB:
     def update_task(self, task_id: int, **fields: Any) -> None:
         if not fields:
             return
+        if "status" in fields:
+            fields["status"] = normalize_status(fields["status"])
         cols = ", ".join(f"{k}=?" for k in fields)
         self.execute(
             f"UPDATE tasks SET {cols} WHERE id=?",
             tuple(fields.values()) + (task_id,),
         )
 
-    def set_task_status(self, task_id: int, status: str) -> None:
-        self.update_task(task_id, status=status, completed=int(time.time()))
+    def set_task_status(self, task_id: int, status: str,
+                        reason: str = "") -> None:
+        """Transition a task's status, stamping ``completed`` when it leaves the
+        active set and writing a ``task_history`` audit row. Idempotent for the
+        *digital* status (a repeated call is a no-op), but ``completed`` is only
+        set when the task actually leaves the active set."""
+        to = normalize_status(status)
+        row = self.task_by_id(task_id)
+        frm = normalize_status((row["status"] if row else "") or "todo")
+        if row and frm != to:
+            self.execute(
+                "UPDATE tasks SET status=?, completed=? WHERE id=?",
+                (to, int(time.time()) if to in TERMINAL_STATUSES else 0, task_id),
+            )
+        elif row and to in TERMINAL_STATUSES and not row["completed"]:
+            self.execute(
+                "UPDATE tasks SET completed=? WHERE id=?", (int(time.time()), task_id))
+        self.log_task_transition(task_id, frm if row else "", to, reason)
+
+    def log_task_transition(self, task_id: int, from_status: str,
+                            to_status: str, reason: str = "") -> None:
+        self.execute(
+            "INSERT INTO task_history(task_id,from_status,to_status,reason,ts) "
+            "VALUES(?,?,?,?,?)",
+            (task_id, normalize_status(from_status), normalize_status(to_status),
+             reason, int(time.time())))
+
+    def task_history(self, task_id: int | None = None,
+                     limit: int = 50) -> list[sqlite3.Row]:
+        if task_id is not None:
+            return self.query(
+                "SELECT * FROM task_history WHERE task_id=? ORDER BY id DESC LIMIT ?",
+                (task_id, limit))
+        return self.query(
+            "SELECT * FROM task_history ORDER BY id DESC LIMIT ?", (limit,))
+
+    # ---------- task -> Google Calendar mapping (Phase 5.0) ----------
+    def task_gcal(self, task_id: int) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM task_gcal WHERE task_id=?", (task_id,))
+
+    def task_gcal_all(self) -> list[sqlite3.Row]:
+        return self.query("SELECT * FROM task_gcal ORDER BY task_id")
+
+    def upsert_task_gcal(self, task_id: int, gcal_event_id: str, state: str,
+                         title: str = "", start_ts: int = 0, end_ts: int = 0,
+                         last_error: str = "") -> None:
+        now = int(time.time())
+        self.execute(
+            "INSERT INTO task_gcal(task_id,gcal_event_id,state,title,start_ts,end_ts,"
+            "last_error,created,updated) VALUES(?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(task_id) DO UPDATE SET "
+            "gcal_event_id=excluded.gcal_event_id, state=excluded.state, "
+            "title=excluded.title, start_ts=excluded.start_ts, "
+            "end_ts=excluded.end_ts, last_error=excluded.last_error, "
+            "updated=excluded.updated",
+            (task_id, gcal_event_id, state, title, start_ts, end_ts, last_error,
+             now, now))
+
+    def clear_task_gcal(self, task_id: int) -> None:
+        self.execute("DELETE FROM task_gcal WHERE task_id=?", (task_id,))
 
     # ---------- events (external hard commitments) ----------
     def add_event(self, title: str, start_ts: int, end_ts: int, source: str = "local",

@@ -30,6 +30,12 @@ from typing import Any
 # ---------------------------------------------------------------------------
 # data model
 # ---------------------------------------------------------------------------
+# Statuses the solver may still place. A task becomes ``scheduled`` once the
+# planner persists a slot for it; ``deferred``/``blocked``/``skipped``/
+# ``completed``/``cancelled`` leave the active set (they are never re-placed).
+ACTIVE_STATUSES: tuple[str, ...] = ("todo", "doing", "scheduled")
+
+
 @dataclass
 class Task:
     id: int
@@ -37,7 +43,7 @@ class Task:
     remaining_minutes: int          # total work still needed
     deadline: int | None = None     # minutes-within-day it must finish by
     priority: int = 3               # 1..5
-    status: str = "todo"            # todo | doing  (done/skipped are excluded)
+    status: str = "todo"            # todo | doing | scheduled (active set)
     color: str = ""
     tags: str = ""
     # Phase 4.2: a soft, context-derived tie-breaker (0 = context-neutral).
@@ -255,7 +261,7 @@ def solve(day_start: int, day_end: int, events: list[Event], tasks: list[Task],
     slots: list[Slot] = []
 
     for t in sorted(tasks, key=Task.urgency_key):
-        if t.remaining_minutes <= 0 or t.status not in ("todo", "doing"):
+        if t.remaining_minutes <= 0 or t.status not in ACTIVE_STATUSES:
             continue
         remaining = t.remaining_minutes
         for idx, (gs, ge, gcap) in enumerate(usable):
@@ -284,7 +290,7 @@ def solve(day_start: int, day_end: int, events: list[Event], tasks: list[Task],
     notes = []
     if placed >= capacity:
         notes.append("Buffer reached — remaining tasks left for later.")
-    unplaced = [t.title for t in tasks if t.status in ("todo", "doing")
+    unplaced = [t.title for t in tasks if t.status in ACTIVE_STATUSES
                 and self_needs(t) and not any(s.task_id == t.id for s in slots)]
     if unplaced:
         notes.append("Could not fit: " + ", ".join(unplaced))

@@ -38,7 +38,7 @@ import logging
 import os
 import re
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -76,16 +76,42 @@ def _safe_json(resp: Any) -> dict[str, Any]:
 
 
 class _DefaultTransport:
-    """Adapts ``requests`` to the connector's (status, json) contract."""
+    """Adapts ``requests`` to the connector's (status, json) contract.
 
-    def post(self, url: str, data: dict[str, Any] | None = None,
+    ``data`` may be a ``dict`` (sent as an HTML form, used by the OAuth token
+    endpoints) or a ``str`` (a JSON document, used by the event create/update
+    API). ``patch``/``delete`` are the write verbs the Phase 5.0 projection
+    uses and are only backfilled by tests that need them.
+    """
+
+    def post(self, url: str, data: dict[str, Any] | str | None = None,
              headers: dict[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
-        r = requests.post(url, data=data, headers=headers, timeout=30)
+        if isinstance(data, str):
+            h = dict(headers or {})
+            h.setdefault("Content-Type", "application/json")
+            r = requests.post(url, data=data.encode("utf-8"), headers=h, timeout=30)
+        else:
+            r = requests.post(url, data=data or {}, headers=headers, timeout=30)
         return r.status_code, _safe_json(r)
 
     def get(self, url: str, params: dict[str, Any] | None = None,
             headers: dict[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
         r = requests.get(url, params=params, headers=headers, timeout=30)
+        return r.status_code, _safe_json(r)
+
+    def patch(self, url: str, data: dict[str, Any] | str | None = None,
+              headers: dict[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
+        if isinstance(data, str):
+            h = dict(headers or {})
+            h.setdefault("Content-Type", "application/json")
+            r = requests.patch(url, data=data.encode("utf-8"), headers=h, timeout=30)
+        else:
+            r = requests.patch(url, data=data or {}, headers=headers, timeout=30)
+        return r.status_code, _safe_json(r)
+
+    def delete(self, url: str,
+               headers: dict[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
+        r = requests.delete(url, headers=headers, timeout=30)
         return r.status_code, _safe_json(r)
 
 
@@ -294,7 +320,19 @@ class GoogleCalendar:
             "location": it.get("location") or "",
             "status": it.get("status", "confirmed"),
             "timezone": tz,
+            "butler_managed": self.is_butler(it),
         }
+
+    @staticmethod
+    def is_butler(it: dict[str, Any]) -> bool:
+        """True if ``it`` is an event Butler itself created (never an external one).
+
+        Butler tags its own events in ``extendedProperties.private``. External or
+        manually-created events lack this marker, so the read path can skip the
+        projection and the write path never modifies or deletes an external event.
+        """
+        return (str((it.get("extendedProperties") or {}).get("private", {})
+                    .get("butler_managed", "")) == "1")
 
     # ------------------------------------------------------------- events
     def list_events(self) -> list[dict[str, Any]]:
@@ -330,6 +368,89 @@ class GoogleCalendar:
         except GCalError as exc:
             return {"ok": False, "connected": False, "error": str(exc)}
         return {"ok": True, "connected": True}
+
+    # --------------------------------------------------------- write (5.0)
+    def _iso(self, ts: int) -> str:
+        """RFC3339 ``dateTime`` in the configured local timezone."""
+        tzname = getattr(self.cfg, "timezone", "") or "UTC"
+        try:
+            z: tzinfo = ZoneInfo(tzname)
+        except Exception:  # noqa: BLE001 — unknown tz string -> fall back to UTC
+            z = timezone.utc
+        dt = datetime.fromtimestamp(int(ts), tz=z)
+        return dt.isoformat()
+
+    def _event_body(self, title: str, start_ts: int, end_ts: int, task_id: int,
+                    description: str = "", location: str = "") -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "summary": str(title or "Butler task"),
+            "start": {"dateTime": self._iso(start_ts)},
+            "end": {"dateTime": self._iso(end_ts)},
+            "extendedProperties": {"private": {
+                "butler_managed": "1",
+                "butler_task_id": str(int(task_id)),
+            }},
+        }
+        if location:
+            body["location"] = location
+        if description:
+            body["description"] = description
+        return body
+
+    def _raise_for(self, code: int, data: dict[str, Any]) -> None:
+        if code in (401, 403):
+            raise GCalAuthError(f"Google Calendar authorisation failed (HTTP {code}). "
+                                "Re-run `butler calendar connect`.")
+        if code < 200 or code >= 300:
+            err = data.get("error", data) if isinstance(data, dict) else data
+            raise GCalOutage(f"Calendar API unavailable (HTTP {code}): {err}")
+
+    def create_event(self, title: str, start_ts: int, end_ts: int, task_id: int,
+                     description: str = "", location: str = "") -> dict[str, Any]:
+        """Create a Butler-managed event and return the raw created event."""
+        body = self._event_body(title, start_ts, end_ts, task_id,
+                                description=description, location=location)
+        code, data = self.http.post(
+            f"{CAL_API}/calendars/primary/events",
+            data=json.dumps(body), headers=self._auth())
+        self._raise_for(code, data)
+        return data if isinstance(data, dict) else {}
+
+    def update_event(self, event_id: str, title: str, start_ts: int, end_ts: int,
+                     task_id: int, description: str = "",
+                     location: str = "") -> bool:
+        """Patch a Butler-managed event in place. Returns True on success."""
+        body = self._event_body(title, start_ts, end_ts, task_id,
+                                description=description, location=location)
+        code, data = self.http.patch(
+            f"{CAL_API}/calendars/primary/events/{event_id}",
+            data=json.dumps(body), headers=self._auth())
+        if code == 404:
+            return False
+        self._raise_for(code, data)
+        return True
+
+    def delete_event(self, event_id: str) -> bool:
+        """Delete a Butler-managed event. Returns True on success (or 404).
+
+        404 is treated as success because the goal state (the event no longer
+        exists) is already reached.
+        """
+        code, _ = self.http.delete(
+            f"{CAL_API}/calendars/primary/events/{event_id}", headers=self._auth())
+        if code == 404:
+            return True
+        self._raise_for(code, {})
+        return True
+
+    def get_event(self, event_id: str) -> dict[str, Any] | None:
+        """Return the raw event if it exists and is Butler-managed, else None."""
+        code, data = self.http.get(
+            f"{CAL_API}/calendars/primary/events/{event_id}", headers=self._auth())
+        if code == 404:
+            return None
+        self._raise_for(code, data)
+        return data if isinstance(data, dict) and self.is_butler(data) else None
 
 
 # ------------------------------------------------------- module-level API

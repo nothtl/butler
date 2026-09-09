@@ -216,7 +216,7 @@ def main() -> int:
     check("assignment understanding produced a task update",
           any(u.get("kind") == "assignment" and u.get("task", {}).get("task_id") for u in updates),
           str([u.get("kind") for u in updates]))
-    tasks = [dict(x) for x in c.db.tasks("todo")]
+    tasks = [dict(x) for x in c.db.tasks("active")]
     t = next((x for x in tasks if "Project 2" in x["title"]), None)
     check("task created by the pipeline", t is not None, str([x["title"] for x in tasks]))
     if t:
