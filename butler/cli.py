@@ -37,6 +37,7 @@ def main(argv: list[str] | None = None) -> int:
         "pantry", "food", "addfood", "expiring", "used", "grocery",
         "meal", "recipe", "searchrecipes", "favorites", "recipelibrary",
         "mealhistory", "rate", "context", "where", "around",
+        "briefing", "review",
     ])
     p.add_argument("args", nargs="*")
     p.add_argument("--yes", action="store_true", help="auto-confirm bulk plans")
@@ -284,7 +285,13 @@ def dispatch(container: Container, ns: argparse.Namespace) -> int:
             container.decider.parse("favorite " + name)), ns)
     if cmd == "context":
         return emit(container, container.decider.resolve(
-            container.decider.parse("briefing")), ns)
+            container.decider.parse("context")), ns)
+    if cmd == "briefing":
+        return emit(container, container.decider.resolve(
+            container.decider.parse("daily briefing")), ns)
+    if cmd == "review":
+        return emit(container, container.decider.resolve(
+            container.decider.parse("review my day")), ns)
     if cmd == "where":
         return emit(container, container.decider.resolve(
             container.decider.parse("where am i")), ns)
@@ -470,7 +477,18 @@ def render(c: Container, r: dict) -> str:
     if k == "day":
         return r.get("text", "")
     if k == "now":
-        return r.get("answer", "")
+        line = r.get("answer", "")
+        dur = r.get("duration")
+        if dur:
+            line += f" (~{dur}m)"
+        nxt = r.get("next")
+        if nxt:
+            line += f" · next hard: {nxt}"
+        return line
+    if k == "briefing":
+        return r.get("text", "") or str(r.get("snapshot", ""))
+    if k == "review":
+        return r.get("text", "") or str(r)
     if k == "plan_tasks":
         if "tasks" in r:
             tasks = r["tasks"]

@@ -176,6 +176,21 @@ class Config:
     notify_max_per_cadence: int = 5        # upper bound on pushes per run
     notify_dedup_window_minutes: int = 30  # skip an identical alert this soon
 
+    # --- executive loop (Phase 5.1: daily briefing / daily executive / review) ---
+    # The whole executive loop can be switched off (0 cadence also disables it).
+    executive_enabled: bool = True
+    # Daily briefing cadence, chat and banner (see ``briefing_schedule``).
+    briefing_schedule: str = "daily"     # cadence; empty/0 disables
+    briefing_chat: int = 0               # telegram chat id (0 => notify_chat/digest_chat)
+    briefing_banner: str = "📋 Daily briefing"
+    # Daily review cadence, chat and banner.
+    review_schedule: str = "daily"
+    review_chat: int = 0
+    review_banner: str = "📊 Daily review"
+    # The executive may push a matching number of recommendations/reviews per day
+    # via the proactive path (always deduplicated by delivery markers).
+    executive_max_notifications: int = 2
+
     # --- home assistant (Phase 4.1: presence) ---
     # A long-lived access token for the HA REST API. Never logged and never
     # written to ``to_dict`` (so ``status``/the remote API can't leak it).
@@ -384,6 +399,17 @@ class Config:
         cfg.home_assistant_token = os.environ.get("BUTLER_HA_TOKEN",
                                                   cfg.home_assistant_token or ha.get("token", ""))
 
+        ex = page.get("executive", {})
+        cfg.executive_enabled = bool(ex.get("enabled", cfg.executive_enabled))
+        cfg.briefing_schedule = ex.get("briefing_schedule", cfg.briefing_schedule)
+        cfg.briefing_chat = int(ex.get("briefing_chat", cfg.briefing_chat))
+        cfg.briefing_banner = ex.get("briefing_banner", cfg.briefing_banner)
+        cfg.review_schedule = ex.get("review_schedule", cfg.review_schedule)
+        cfg.review_chat = int(ex.get("review_chat", cfg.review_chat))
+        cfg.review_banner = ex.get("review_banner", cfg.review_banner)
+        cfg.executive_max_notifications = int(ex.get("max_notifications",
+                                                     cfg.executive_max_notifications))
+
         tl = page.get("timeline", {})
         cfg.timeline_enabled = bool(tl.get("enabled", cfg.timeline_enabled))
         cfg.timeline_retention_days = int(tl.get("retention_days",
@@ -545,6 +571,14 @@ class Config:
             "notify_cooldown_minutes": self.notify_cooldown_minutes,
             "notify_max_per_cadence": self.notify_max_per_cadence,
             "notify_dedup_window_minutes": self.notify_dedup_window_minutes,
+            "executive_enabled": self.executive_enabled,
+            "briefing_schedule": self.briefing_schedule,
+            "briefing_chat": self.briefing_chat,
+            "briefing_banner": self.briefing_banner,
+            "review_schedule": self.review_schedule,
+            "review_chat": self.review_chat,
+            "review_banner": self.review_banner,
+            "executive_max_notifications": self.executive_max_notifications,
             "home_assistant_enabled": self.home_assistant_enabled,
             "home_assistant_url": self.home_assistant_url,
             "home_assistant_configured": bool(self.home_assistant_token),

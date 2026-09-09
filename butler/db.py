@@ -379,6 +379,15 @@ CREATE TABLE IF NOT EXISTS task_gcal(
     updated      INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_tg_state ON task_gcal(state);
+
+-- Phase 5.1 executive state: a tiny general-purpose key/value table for
+-- idempotent delivery markers (daily briefing / daily review) and small
+-- durable amounts of state the executive loop needs across restarts.
+CREATE TABLE IF NOT EXISTS exec_state(
+    id      INTEGER PRIMARY KEY,
+    key     TEXT NOT NULL UNIQUE,
+    value   TEXT NOT NULL DEFAULT ''
+);
 """
 
 
@@ -438,6 +447,25 @@ class DB:
     def one(self, sql: str, params: tuple = ()) -> sqlite3.Row | None:
         rows = self.query(sql, params)
         return rows[0] if rows else None
+
+    # ---------- executive / meta state (Phase 5.1) ----------
+    def get_meta(self, key: str, default: str = "") -> str:
+        row = self.one("SELECT value FROM exec_state WHERE key=?", (key,))
+        return str(row["value"]) if row else default
+
+    def set_meta(self, key: str, value: str) -> None:
+        cur = self.one("SELECT id FROM exec_state WHERE key=?", (key,))
+        if cur:
+            self.execute("UPDATE exec_state SET value=? WHERE key=?", (value, key))
+        else:
+            self.execute("INSERT INTO exec_state(key, value) VALUES(?,?)", (key, value))
+
+    def delete_meta(self, key: str) -> None:
+        self.execute("DELETE FROM exec_state WHERE key=?", (key,))
+
+    def all_meta(self) -> dict[str, str]:
+        return {str(r["key"]): str(r["value"])
+                for r in self.query("SELECT key, value FROM exec_state")}
 
     # ---------- files ----------
     def upsert_file(

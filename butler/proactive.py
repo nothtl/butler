@@ -31,6 +31,7 @@ class Proactive:
         self.courses = getattr(container, "courses", None)
         self.food = getattr(container, "food", None)
         self.chef = getattr(container, "chef", None)
+        self.executive = getattr(container, "executive", None)
         # Last push bookkeeping for throttling/dedup (persisted under state_dir).
         self._state_file = os.path.join(self.cfg.state_dir, "proactive_state.json")
         self._state = self._load_state()
@@ -81,6 +82,7 @@ class Proactive:
         msgs += self._course_alerts()
         msgs += self._event_alerts()
         msgs += self._meal_suggestion()
+        msgs += self._executive_alerts()
         if not msgs:
             return []
         return msgs
@@ -174,6 +176,45 @@ class Proactive:
                 f"Want me to cook it?\n"
                 f"[Cook this] / [Another option] / [Not tonight]"]
 
+    # -------------------------------------------------- Phase 5.1 executive
+    def _executive_alerts(self) -> list[str]:
+        """Hard, executive-level nudges: an imminent deadline, a stalled task, or
+        a schedule conflict. These are *deterministic* (read from the planner and
+        context engine) and never mutate anything. Soft things (mood, meal) live
+        elsewhere and already respect the throttle."""
+        executive = getattr(self, "executive", None)
+        if executive is None or not hasattr(executive, "_tasks_safe"):
+            return []
+        try:
+            tasks = executive._tasks_safe()
+        except Exception:  # noqa: BLE001
+            return []
+        out = []
+        now = int(datetime.now().timestamp())
+        for t in tasks:
+            if t["status"] == "blocked":
+                out.append(f"🔵 Blocked: {t['title']}")
+                continue
+            if t["status"] not in ("todo", "doing", "scheduled"):
+                continue
+            dl = t.get("deadline") or 0
+            if dl and dl > now and (dl - now) <= 3 * 3600:
+                hm = datetime.fromtimestamp(dl).strftime("%H:%M")
+                out.append(f"⏰ Deadlines soon: {t['title']} due {hm}")
+            elif dl and dl <= now:
+                out.append(f"🔴 Overdue: {t['title']}")
+        capped = []
+        by_title: set[str] = set()
+        for m in out:
+            if m not in by_title:
+                capped.append(m)
+                by_title.add(m)
+        # Cap executive nags independently (keeps the daily push clean).
+        maxnot = int(getattr(self.cfg, "executive_max_notifications", 3))
+        if maxnot >= 0 and len(capped) > maxnot:
+            capped = capped[:maxnot]
+        return capped
+
     # ---------------------------------------------------------- send
     def run(self) -> dict[str, Any]:
         if not self.enabled():
@@ -182,35 +223,76 @@ class Proactive:
             return {"ok": False, "reason": "quiet hours", "sent": 0, "messages": []}
 
         msgs = self.collect()
+
+        # Phase 5.1: deliver today's due daily briefing/review first (idempotent
+        # markers), so they are never lost even when there are no alert messages
+        # this cadence. They are not subject to the alert cooldown.
+        delivered = self._deliver_executive()
+        sent = delivered["sent"]
+        sent_msgs = list(delivered["messages"])
+
         if not msgs:
-            return {"ok": True, "sent": 0, "messages": []}
+            return {"ok": True, "sent": sent, "messages": sent_msgs}
 
         # Throttle: dedup identical alerts, respect cooldown and per-cadence cap.
         cooldown = int(getattr(self.cfg, "notify_cooldown_minutes", 15)) * 60
         now = time.time()
         if self._state.get("last_push", 0) and (now - self._state["last_push"]) < cooldown:
-            return {"ok": False, "reason": "cooldown", "sent": 0, "messages": msgs}
+            return {"ok": False, "reason": "cooldown", "sent": sent, "messages": msgs}
         msgs = self._dedup_filter(msgs)
         cap = int(getattr(self.cfg, "notify_max_per_cadence", 5))
         if cap >= 0 and len(msgs) > cap:
             msgs = msgs[:cap]
 
-        if not msgs:
-            return {"ok": True, "sent": 0, "messages": []}
+        if msgs:
+            chat = self.cfg.notify_chat or self.cfg.digest_chat
+            body = "\n".join(msgs)
+            delta = 0
+            if chat and self.cfg.telegram_token:
+                if self._push(chat, body):
+                    delta = 1
+            else:
+                log.info("proactive (%d messages no telegram configured):\n%s",
+                         len(msgs), body)
+            if delta:
+                self._state["last_push"] = now
+                self._state["last_messages"] = [(m, now) for m in msgs]
+                self._save_state()
+                sent += delta
+            sent_msgs = msgs + sent_msgs
 
+        if not sent_msgs:
+            return {"ok": True, "sent": 0, "messages": []}
+        return {"ok": True, "sent": sent, "messages": sent_msgs}
+
+    def _deliver_executive(self) -> dict[str, Any]:
+        """Send today's due daily briefing and/or review (idempotent)."""
+        executive = getattr(self, "executive", None)
+        if executive is None:
+            return {"sent": 0, "messages": []}
+        now_ts = int(datetime.now().timestamp())
         chat = self.cfg.notify_chat or self.cfg.digest_chat
-        body = "\n".join(msgs)
+        msgs = []
         sent = 0
-        if chat and self.cfg.telegram_token:
-            if self._push(chat, body):
-                sent = 1
-        else:
-            log.info("proactive (%d messages no telegram configured):\n%s", len(msgs), body)
-        if sent:
-            self._state["last_push"] = now
-            self._state["last_messages"] = [(m, now) for m in msgs]
-            self._save_state()
-        return {"ok": True, "sent": sent, "messages": msgs}
+        for kind, build in ((getattr(executive, "BRIEFING_KIND", "briefing"), executive.briefing),
+                            (getattr(executive, "REVIEW_KIND", "review"), executive.review)):
+            try:
+                if not executive.is_due(kind, now_ts):
+                    continue
+                piece = build()  # type: ignore[misc]
+                text = str(piece.get("text", ""))
+                if not text:
+                    continue
+                if chat and self.cfg.telegram_token:
+                    if self._push(chat, text):
+                        sent += 1
+                else:
+                    log.info("executive %s (no telegram configured):\n%s", kind, text)
+                executive.mark_delivered(kind, now_ts)
+                msgs.append(text)
+            except Exception as exc:  # noqa: BLE001 — never break the cadence
+                log.warning("executive %s delivery failed: %s", kind, exc)
+        return {"sent": sent, "messages": msgs}
 
     def _push(self, chat_id: int, text: str) -> bool:
         try:

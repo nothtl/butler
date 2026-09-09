@@ -32,6 +32,7 @@ from .proactive import Proactive
 from .timeline import Timeline
 from .routines import Routines
 from .foodplan import FoodPlanner
+from .executive import Executive
 
 
 class Container:
@@ -64,15 +65,16 @@ class Container:
         self.nas = FileManager(self)
         self.ha = HomeAssistant(self.cfg)
         self.context = ContextEngine(self)
-        self.proactive = Proactive(self)
         self.foodplan = FoodPlanner(self)
+        self.executive = Executive(self)
+        self.proactive = Proactive(self)
         self.decider = Decider(self.cfg, self.db, self.engine,
                                self.organizer, self.search, self.chat,
                                planner=self.planner, courses=self.courses,
                                food=self.food, chef=self.chef, nas=self.nas,
                                context=self.context, proactive=self.proactive,
                                timeline=self.timeline, routines=self.routines,
-                               foodplan=self.foodplan)
+                               foodplan=self.foodplan, executive=self.executive)
         self.trash = Trash(self.cfg, self.db, self.engine)
         self.indexer = Indexer(self.cfg, self.db, self.embedder)
         self.backup = Backup(self.cfg, self.db)
@@ -118,6 +120,10 @@ class Container:
                 return {"ok": True, "tasks": [dict(r) for r in self.db.tasks("active")]}
             if route == "/context":
                 return {"ok": True, "context": self.context.snapshot()}
+            if route == "/briefing":
+                return {"ok": True, "briefing": self.executive.briefing()}
+            if route == "/review":
+                return {"ok": True, "review": self.executive.review()}
             if route == "/routines":
                 return {"ok": True, "active": self.routines.active(),
                         "candidates": self.routines.candidates()}

@@ -46,7 +46,7 @@ class Decider:
                  planner: Any = None, courses: Any = None, food: Any = None,
                  chef: Any = None, nas: Any = None, context: Any = None,
                  proactive: Any = None, timeline: Any = None, routines: Any = None,
-                 foodplan: Any = None):
+                 foodplan: Any = None, executive: Any = None):
         self.cfg = cfg
         self.db = db
         self.engine = engine
@@ -70,6 +70,7 @@ class Decider:
         self.timeline = timeline
         self.routines = routines
         self.foodplan = foodplan
+        self.executive = executive
 
     # ---------------------------------------------------------------- parse
     def parse(self, message: str) -> Intent:
@@ -123,6 +124,27 @@ class Decider:
                      r"|\b(make|cook) (dinner|lunch|breakfast|supper|tonight)\b" +
                      r"|\b(for|whats for|what's for) (dinner|lunch|supper)\b", low):
             return Intent("meal_plan", query=msg, raw=msg)
+
+        # --- Phase 5.1: daily executive loop (briefing / review) ---
+        # Routed ahead of the Phase 2 "what should"/"my day" rules so "brief me",
+        # "daily briefing", "review my day" map to the dedicated intents and are
+        # never swallowed by the generic day/recommend rules.
+        if re.search(r"\b(daily|morning|day)\b[^.]{0,20}\b(brief|briefing|intel|overview)\b" +
+                     r"|\bbrief( me)?\b|\bwhats going on today\b|\bdaily intel\b" +
+                     r"|\bwhat'?s? my day like\b", low):
+            return Intent("briefing", raw=msg)
+        if re.search(r"\b(daily|end of day|evening)\b[^.]{0,16}\b(review|digest|recap|summary)\b" +
+                     r"|\breview my day\b|\breview today\b" +
+                     r"|\bhow did (i|my day|it) (go|do)( today)?\b", low):
+            return Intent("review", raw=msg)
+        # --- feedback / adaptation (Phase 5.1): "i'm tired" is soft (handled by
+        # affinity in the planner); explicit "don't want to do X" maps to a
+        # lifecycle transition on the matched task. ---
+        if re.search(r"\b(i'?m (tired|drained|exhausted)|i (don'?t have energy|need a break))\b", low):
+            return Intent("now", params={"mood": "tired"}, raw=msg)
+        m = re.search(r"\bi (don'?t want to|am too (tired|busy) to|can'?t (do|do the))\b(.+)$", low)
+        if m:
+            return Intent("defer_feedback", query=(m.group(3) or "").strip(), raw=msg)
 
         # --- planner / scheduler intents (Phase 2) ---
         if re.search(r"\b(what should|what to do|what now|what do i do|what next|whats next)\b", low):
@@ -383,8 +405,12 @@ class Decider:
         # --- Phase 3: NAS + context + proactive ---
         if cmd in ("ingest", "processinbox"):
             return Intent("nas_ingest", raw=raw)
-        if cmd in ("context", "briefing", "brief", "status"):
+        if cmd in ("context", "status"):
             return Intent("context", raw=raw)
+        if cmd in ("briefing", "brief"):
+            return Intent("briefing", raw=raw)
+        if cmd in ("review", "reviewday", "endofday", "wrapup"):
+            return Intent("review", raw=raw)
         if cmd in ("proactive", "checks"):
             return Intent("proactive", raw=raw)
         # --- Phase 4.1: presence ---
@@ -469,6 +495,8 @@ class Decider:
         if k == "day":
             return {"kind": "day", **self.planner.plan_day()}
         if k == "now":
+            if self.executive is not None and hasattr(self.executive, "recommend"):
+                return {"kind": "now", **self.executive.recommend(intent.raw)}
             return {"kind": "now", **self.planner.what_now(intent.raw)}
         if k == "why_this":
             return {"kind": "why_this", **self.planner.explain_now()}
@@ -552,6 +580,12 @@ class Decider:
             return self._do_nas_ingest()
         if k == "context":
             return self._do_context()
+        if k == "briefing":
+            return self._do_briefing()
+        if k == "review":
+            return self._do_review()
+        if k == "defer_feedback":
+            return self._do_defer_feedback(intent)
         if k == "proactive":
             return self._do_proactive()
         if k == "where_am_i":
@@ -906,6 +940,39 @@ class Decider:
         if self.proactive is None:
             return {"kind": "proactive", "ok": False, "error": "proactive not configured"}
         return {"kind": "proactive", "messages": self.proactive.collect()}
+
+    def _do_briefing(self) -> dict[str, Any]:
+        """Phase 5.1: the daily briefing (deterministic synthesis)."""
+        if self.executive is None or not hasattr(self.executive, "briefing"):
+            return {"kind": "briefing", "ok": False, "error": "executive not configured"}
+        b = self.executive.briefing()
+        return {"kind": "briefing", "ok": True, **b}
+
+    def _do_review(self) -> dict[str, Any]:
+        """Phase 5.1: the daily review (planned vs. actual)."""
+        if self.executive is None or not hasattr(self.executive, "review"):
+            return {"kind": "review", "ok": False, "error": "executive not configured"}
+        r = self.executive.review()
+        return {"kind": "review", "ok": True, **r}
+
+    def _do_defer_feedback(self, intent: Intent) -> dict[str, Any]:
+        """"I don't want to do X right now" -> safely defer the matched task."""
+        q = (intent.query or "").strip().lower()
+        if not q:
+            return {"kind": "plan_tasks", "ok": False,
+                    "error": "which task?"}
+        # find an active task whose title matches the phrase
+        target = None
+        for r in self.db.tasks("active"):
+            t = (r["title"] or "").lower()
+            if q and (q in t or all(w in t for w in q.split() if len(w) > 2)):
+                target = r
+                break
+        if target is None:
+            return {"kind": "plan_tasks", "ok": False,
+                    "error": f"couldn't find an active task matching '{q}'"}
+        res = self.planner.defer(int(target["id"]))
+        return {"kind": "plan_tasks", "ok": True, "title": target["title"], **res}
 
     def _do_where_am_i(self) -> dict[str, Any]:
         return {"kind": "where_am_i", "presence": self._presence()}

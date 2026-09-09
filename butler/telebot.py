@@ -117,6 +117,9 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("calendar", self.cmd_slash_wrap))
         self.app.add_handler(CommandHandler("where", self.cmd_slash_wrap))
         self.app.add_handler(CommandHandler("around", self.cmd_slash_wrap))
+        self.app.add_handler(CommandHandler("briefing", self.cmd_slash_wrap))
+        self.app.add_handler(CommandHandler("brief", self.cmd_slash_wrap))
+        self.app.add_handler(CommandHandler("review", self.cmd_slash_wrap))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.on_message))
         # send-file ingestion (feature 21): documents, photos, videos, audio
         self.app.add_handler(MessageHandler(filters.Document.ALL, self.on_document))
@@ -544,6 +547,10 @@ class TelegramBot:
             await msg.reply_text("\n".join(lines) or "No un-understood assignments found.")
         elif kind == "context":
             await msg.reply_text(self._context_text(result.get("snapshot", {})))
+        elif kind == "briefing":
+            await self._reply_briefing(msg, result)
+        elif kind == "review":
+            await msg.reply_text(result.get("text", "Nothing to review yet."))
         elif kind == "proactive":
             messages = result.get("messages", [])
             if not messages:
@@ -631,6 +638,37 @@ class TelegramBot:
         ])
         return kb
 
+    async def _reply_briefing(self, msg, result) -> None:
+        """Render a daily briefing, attaching Block/Resume controls for the
+        tasks it surfaced (Start/Done/Defer already exist on /tasks)."""
+        text = result.get("text", "")
+        if not text:
+            await msg.reply_text("No briefing available yet.")
+            return
+        kb = None
+        rec = result.get("recommendation")
+        if rec and rec.get("title"):
+            t = self._find_task(rec["title"])
+            if t:
+                kb = InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton("▶️ Start",
+                                         callback_data=f"tact:start:{t['id']}"),
+                    InlineKeyboardButton("⏸ Defer",
+                                         callback_data=f"tact:defer:{t['id']}"),
+                    InlineKeyboardButton("🪫 Block",
+                                         callback_data=f"tact:block:{t['id']}"),
+                ]])
+        await msg.reply_text("📋 " + text, reply_markup=kb)
+
+    def _find_task(self, title: str) -> dict | None:
+        try:
+            for r in self.container.db.tasks("active"):
+                if (r["title"] or "").strip().lower() == title.strip().lower():
+                    return dict(r)
+        except Exception:  # noqa: BLE001
+            return None
+        return None
+
     def _confirm_buttons(self, plan_id: str) -> InlineKeyboardMarkup:
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ Confirm", callback_data=f"confirm:{plan_id}"),
@@ -663,7 +701,8 @@ class TelegramBot:
         if data.startswith("tact:"):
             _pre, act, tid = data.split(":", 2)
             _slash = {"start": "begin", "done": "done", "defer": "defer",
-                      "skip": "skip", "cancel": "cancel"}.get(act, act)
+                      "skip": "skip", "cancel": "cancel",
+                      "block": "block", "resume": "resume"}.get(act, act)
             await self._dispatch(update, f"/{_slash} {tid}",
                                  user=update.effective_user.username or "telegram")
             return

@@ -95,6 +95,10 @@ class Scheduler:
                  self._run_proactive),
                 ("gcal_sync", _cadence_seconds(self.cfg.calendar_sync_schedule),
                  self._run_gcal_sync),
+                ("briefing", _cadence_seconds(self.cfg.briefing_schedule),
+                 self._run_briefing),
+                ("review", _cadence_seconds(self.cfg.review_schedule),
+                 self._run_review),
             ]
             for name, every, fn in jobs:
                 if every <= 0:
@@ -154,6 +158,20 @@ class Scheduler:
         res = planner.sync_calendar()
         log.info("scheduled gcal sync: %s",
                  {k: v for k, v in res.items() if k != "ok"})
+
+    def _run_briefing(self) -> None:
+        exec_ = getattr(self.container, "executive", None)
+        if exec_ is None or not hasattr(exec_, "briefing"):
+            return
+        res = exec_.briefing()
+        log.info("briefing (%d sections)", len(res.get("text", [])))
+
+    def _run_review(self) -> None:
+        exec_ = getattr(self.container, "executive", None)
+        if exec_ is None or not hasattr(exec_, "review"):
+            return
+        res = exec_.review()
+        log.info("review: %s", res.get("actual", {}))
 
     def _run_digest(self) -> None:
         text = self.build_digest(self.container)
