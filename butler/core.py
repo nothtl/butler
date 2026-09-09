@@ -25,6 +25,7 @@ from .trash import Trash
 from .course import CourseIntelligence
 from .food import Chef, FoodInventory
 from .nas import FileManager
+from .house import HomeAssistant
 from .context import ContextEngine
 from .proactive import Proactive
 
@@ -49,6 +50,7 @@ class Container:
             self.cfg.roots = list(self.cfg.roots) + [self.cfg.nas_dir]
             self.cfg.index_roots = list(self.cfg.index_roots) + [self.cfg.nas_dir]
         self.nas = FileManager(self)
+        self.ha = HomeAssistant(self.cfg)
         self.context = ContextEngine(self)
         self.proactive = Proactive(self)
         self.decider = Decider(self.cfg, self.db, self.engine,

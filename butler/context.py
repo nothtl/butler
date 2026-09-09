@@ -29,6 +29,24 @@ def _midnight_ts(ts: int) -> int:
     return int(datetime(dt.year, dt.month, dt.day).timestamp())
 
 
+def describe_location(pres: dict[str, Any]) -> str:
+    """A natural sentence describing where the user is (no trailing period)."""
+    status = pres.get("status", "unknown")
+    zone = (pres.get("zone") or "").strip()
+    if status == "unknown" or not pres.get("known"):
+        return "I can't tell where you are right now"
+    if status == "home" or zone.lower() in ("home",):
+        return "You're at home"
+    if zone:
+        return f"You're at {zone}"
+    return "You're away from home"
+
+
+def presence_battery(pres: dict[str, Any]) -> str:
+    bat = pres.get("battery")
+    return f", battery {bat}%" if isinstance(bat, int) else ""
+
+
 class ContextEngine:
     def __init__(self, container: Any):
         self.container = container
@@ -53,6 +71,7 @@ class ContextEngine:
             "courses_document_count": self._course_doc_count(),
             "food_expiring": self._food_expiring(),
             "file_count": self._file_count(),
+            "presence": self._presence(),
         }
 
     def free_minutes(self, day_start: int, day_end: int) -> int:
@@ -127,6 +146,18 @@ class ContextEngine:
         except Exception:  # pragma: no cover
             return 0
 
+    def _presence(self) -> dict[str, Any]:
+        """Zone-level presence (Phase 4.1). Never raises; degrades to unknown."""
+        ha = getattr(self.container, "ha", None)
+        if ha is None or not hasattr(ha, "presence"):
+            return {"known": False, "zone": "", "status": "unknown",
+                    "battery": None, "available": False, "source": "home_assistant"}
+        try:
+            return ha.presence()
+        except Exception:  # pragma: no cover — degrade on any unexpected failure
+            return {"known": False, "zone": "", "status": "unknown",
+                    "battery": None, "available": False, "source": "home_assistant"}
+
     # ------------------------------------------------------------ describe
     def describe(self) -> str:
         s = self.snapshot()
@@ -156,4 +187,8 @@ class ContextEngine:
             lines.append(f"Food expiring in 3d: "
                          + ", ".join(f"{i['name']}" for i in exp[:5]))
         lines.append(f"Indexed files: {s['file_count']}")
+        pres = s.get("presence", {})
+        zone = pres.get("zone") or "an unknown location"
+        status = pres.get("status", "unknown")
+        lines.append(f"Presence: {status} ({zone})")
         return "\n".join(lines)

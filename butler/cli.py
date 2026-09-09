@@ -35,7 +35,7 @@ def main(argv: list[str] | None = None) -> int:
         "course", "courses", "checkcourses", "materials", "ingest",
         "pantry", "food", "addfood", "expiring", "used", "grocery",
         "meal", "recipe", "searchrecipes", "favorites", "recipelibrary",
-        "mealhistory", "rate", "context",
+        "mealhistory", "rate", "context", "where", "around",
     ])
     p.add_argument("args", nargs="*")
     p.add_argument("--yes", action="store_true", help="auto-confirm bulk plans")
@@ -276,6 +276,12 @@ def dispatch(container: Container, ns: argparse.Namespace) -> int:
     if cmd == "context":
         return emit(container, container.decider.resolve(
             container.decider.parse("briefing")), ns)
+    if cmd == "where":
+        return emit(container, container.decider.resolve(
+            container.decider.parse("where am i")), ns)
+    if cmd == "around":
+        return emit(container, container.decider.resolve(
+            container.decider.parse("around me")), ns)
     if cmd == "calendar":
         sub = args[0] if args else ""
         if sub == "connect":
@@ -538,6 +544,19 @@ def render(c: Container, r: dict) -> str:
         return r.get("snapshot_text", "") or str(r.get("snapshot"))
     if k == "proactive":
         return "\n".join(r.get("messages", [])) or "All clear."
+    if k == "where_am_i":
+        from .context import describe_location, presence_battery
+        p = r.get("presence", {})
+        return describe_location(p) + presence_battery(p) + "."
+    if k == "around_me":
+        from .context import describe_location, presence_battery
+        p = r.get("presence", {})
+        line = describe_location(p) + presence_battery(p) + "."
+        events = r.get("events_today", [])
+        if events:
+            nearby = ", ".join(str(e.get("title", "event")) for e in events[:5])
+            line += f" · today: {nearby}"
+        return line
     return json.dumps(r, indent=2, default=default_json)
 
 

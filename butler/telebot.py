@@ -27,6 +27,7 @@ from telegram.ext import (
 )
 
 from .core import Container
+from .context import describe_location, presence_battery
 
 log = logging.getLogger("butler.telebot")
 
@@ -110,6 +111,8 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("why", self.cmd_slash_wrap))
         self.app.add_handler(CommandHandler("undo", self.cmd_slash_wrap))
         self.app.add_handler(CommandHandler("calendar", self.cmd_slash_wrap))
+        self.app.add_handler(CommandHandler("where", self.cmd_slash_wrap))
+        self.app.add_handler(CommandHandler("around", self.cmd_slash_wrap))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.on_message))
         # send-file ingestion (feature 21): documents, photos, videos, audio
         self.app.add_handler(MessageHandler(filters.Document.ALL, self.on_document))
@@ -505,6 +508,17 @@ class TelegramBot:
                 await msg.reply_text("All clear. 👍")
             else:
                 await msg.reply_text("\n".join(messages))
+        elif kind == "where_am_i":
+            p = result.get("presence", {})
+            await msg.reply_text("📍 " + describe_location(p) + presence_battery(p) + ".")
+        elif kind == "around_me":
+            p = result.get("presence", {})
+            line = "📍 " + describe_location(p) + presence_battery(p) + "."
+            events = result.get("events_today", [])
+            if events:
+                nearby = ", ".join(str(e.get("title", "event")) for e in events[:5])
+                line += f"\n📅 today: {nearby}"
+            await msg.reply_text(line)
         else:
             await msg.reply_text(str(result.get("text", result)))
 
@@ -513,6 +527,11 @@ class TelegramBot:
         free = s.get("free_minutes_today", 0)
         hard = s.get("events_today", [])
         out.append(f"🕐 Free today: {free} min")
+        pres = s.get("presence", {})
+        if pres.get("known"):
+            zone = pres.get("zone") or ("home" if pres.get("status") == "home" else "away")
+            bat = presence_battery(pres)
+            out.append(f"📍 Presence: {pres.get('status', 'unknown')} ({zone}){bat}")
         if hard:
             fmt = time.strftime("%H:%M", time.localtime(h["start_ts"])) \
                 if isinstance(h.get("start_ts", 0), (int, float)) and h.get("start_ts") \

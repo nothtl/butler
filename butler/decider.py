@@ -107,6 +107,12 @@ class Decider:
             code = extract_course_code(msg) or ""
             return Intent("course_assignments", query=code, raw=msg)
 
+        # --- Phase 4.1: presence ---
+        if re.search(r"\b(where am i|where am i now|my location|where i am)\b", low):
+            return Intent("where_am_i", raw=msg)
+        if re.search(r"\b(around me|near me|whats around me|whats near me)\b", low):
+            return Intent("around_me", raw=msg)
+
         # --- Phase 3: food / chef ---
         if re.search(r"\b(from the pantry|in the fridge|in my kitchen|what do i have)\b", low):
             return Intent("food_list", raw=msg)
@@ -277,6 +283,11 @@ class Decider:
             return Intent("context", raw=raw)
         if cmd in ("proactive", "checks"):
             return Intent("proactive", raw=raw)
+        # --- Phase 4.1: presence ---
+        if cmd in ("where", "whereami", "location"):
+            return Intent("where_am_i", raw=raw)
+        if cmd in ("around", "nearby"):
+            return Intent("around_me", raw=raw)
         return Intent("help", raw=raw)
 
     # ---------------------------------------------------------------- handlers
@@ -405,6 +416,10 @@ class Decider:
             return self._do_context()
         if k == "proactive":
             return self._do_proactive()
+        if k == "where_am_i":
+            return self._do_where_am_i()
+        if k == "around_me":
+            return self._do_around_me()
         return {"kind": "help"}
 
     # ---------------------------------------------------------------- Phase 3
@@ -616,6 +631,28 @@ class Decider:
         if self.proactive is None:
             return {"kind": "proactive", "ok": False, "error": "proactive not configured"}
         return {"kind": "proactive", "messages": self.proactive.collect()}
+
+    def _do_where_am_i(self) -> dict[str, Any]:
+        return {"kind": "where_am_i", "presence": self._presence()}
+
+    def _do_around_me(self) -> dict[str, Any]:
+        snap = self._snapshot()
+        return {"kind": "around_me", "presence": snap.get("presence", {}),
+                "events_today": snap.get("events_today", []),
+                "free_minutes_today": snap.get("free_minutes_today", 0)}
+
+    def _snapshot(self) -> dict[str, Any]:
+        if self.context is None:
+            return {}
+        try:
+            return self.context.snapshot()
+        except Exception:  # noqa: BLE001  (presence must never break the intent)
+            return {}
+
+    def _presence(self) -> dict[str, Any]:
+        return self._snapshot().get("presence", {
+            "known": False, "zone": "", "status": "unknown",
+            "battery": None, "available": False, "source": "home_assistant"})
 
     # ---- Phase 3 helpers ----
     def _free_budget(self) -> int:

@@ -147,6 +147,13 @@ class Config:
     proactive_schedule: str = "hourly"     # cadence for background checks
     notify_chat: int = 0                   # telegram chat id (0 = fall back to digest_chat)
 
+    # --- home assistant (Phase 4.1: presence) ---
+    # A long-lived access token for the HA REST API. Never logged and never
+    # written to ``to_dict`` (so ``status``/the remote API can't leak it).
+    home_assistant_enabled: bool = False
+    home_assistant_url: str = ""           # e.g. http://homeassistant.local:8123
+    home_assistant_token: str = ""
+
     config_path: str = ""
 
     # ------------------------------------------------------------------
@@ -300,6 +307,12 @@ class Config:
         cfg.proactive_schedule = pro.get("schedule", cfg.proactive_schedule)
         cfg.notify_chat = int(pro.get("notify_chat", cfg.notify_chat or cfg.digest_chat))
 
+        ha = page.get("home_assistant", {})
+        cfg.home_assistant_enabled = bool(ha.get("enabled", cfg.home_assistant_enabled))
+        cfg.home_assistant_url = (ha.get("url", cfg.home_assistant_url) or "").rstrip("/")
+        cfg.home_assistant_token = os.environ.get("BUTLER_HA_TOKEN",
+                                                  cfg.home_assistant_token or ha.get("token", ""))
+
         emb = page.get("embed", {})
         cfg.embed_model = emb.get("model", cfg.embed_model)
         cfg.embed_dim = int(emb.get("dim", cfg.embed_dim))
@@ -348,4 +361,7 @@ class Config:
             "proactive_enabled": self.proactive_enabled,
             "proactive_schedule": self.proactive_schedule,
             "notify_chat": self.notify_chat,
+            "home_assistant_enabled": self.home_assistant_enabled,
+            "home_assistant_url": self.home_assistant_url,
+            "home_assistant_configured": bool(self.home_assistant_token),
         }
