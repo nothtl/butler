@@ -599,6 +599,31 @@ class DB:
         else:
             self.execute("DELETE FROM events")
 
+    def event_by_external(self, external_id: str, source: str = "") -> sqlite3.Row | None:
+        if source:
+            return self.one(
+                "SELECT * FROM events WHERE source=? AND external_id=?",
+                (source, external_id))
+        return self.one("SELECT * FROM events WHERE external_id=?", (external_id,))
+
+    def update_event(self, event_id: int, title: str, start_ts: int, end_ts: int,
+                     all_day: int = 0, location: str = "") -> None:
+        self.execute(
+            "UPDATE events SET title=?,start_ts=?,end_ts=?,all_day=?,location=?,"
+            "updated=? WHERE id=?",
+            (title, start_ts, end_ts, all_day, location, int(time.time()), event_id))
+
+    def delete_event(self, event_id: int) -> None:
+        self.execute("DELETE FROM events WHERE id=?", (event_id,))
+
+    def google_events_in_window(self, start_ts: int, end_ts: int) -> list[sqlite3.Row]:
+        """Google events where the instance START falls inside ``[start,end)``.
+        Used to prune instances the remote calendar no longer returns (so we
+        never trust a stale half-imported recurring series)."""
+        return self.query(
+            "SELECT * FROM events WHERE source='google' AND start_ts>=? AND start_ts<?",
+            (start_ts, end_ts))
+
     # ---------- plans (deterministic schedule + history) ----------
     def save_plan(self, day_start: int, day_end: int, state: str,
                   payload: str) -> int:

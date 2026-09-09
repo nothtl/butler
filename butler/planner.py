@@ -20,11 +20,12 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from . import schedule as sch
 from .agent import Agent
+from .gcal import GCalError, GoogleCalendar
 
 log = logging.getLogger("butler.planner")
 
@@ -45,32 +46,129 @@ class Planner:
 
     # ------------------------------------------------------------------ events
     def sync_events(self, source: str = "") -> dict[str, Any]:
-        """Refresh the ``events`` table from the enabled sources."""
-        fetched: list[tuple[Any, Any, Any, str]] = []  # (title, start_ts, end_ts, source)
-        if self.cfg.local_calendar_file and os.path.exists(self.cfg.local_calendar_file):
-            try:
-                fetched += self._parse_ics(self.cfg.local_calendar_file, "local")
-            except Exception as exc:  # noqa: BLE001
-                log.warning("ics parse failed: %s", exc)
-        if self.cfg.google_calendar_enabled and self.cfg.google_calendar_credentials \
-                and os.path.exists(self.cfg.google_calendar_credentials):
-            try:
-                from .gcal import sync_google_events
-                fetched += [(e["title"], e["start"], e["end"], "google")
-                            for e in sync_google_events(self.cfg)]
-            except Exception as exc:  # noqa: BLE001
-                log.warning("google calendar sync failed: %s", exc)
+        """Refresh the ``events`` table from the enabled sources.
 
-        if source and source != "local":
-            self.db.clear_events("google")
-        elif source == "local":
-            self.db.clear_events("local")
-        else:
-            self.db.clear_events()
+        Each source is independent and failure-safe: a Google Calendar outage or
+        an auth problem leaves every existing event (local *and* google) intact
+        -- only a *successful* fetch is merged into the DB (never a blind
+        clear-and-reload). See ``sync_google`` for the merge semantics.
+        """
+        if source == "local":
+            return self._sync_local()
+        if source == "google":
+            return self.sync_google()
+        local = self._sync_local()
+        out: dict[str, Any] = {"ok": True, "count": local.get("count", 0)}
+        try:
+            g = self.sync_google()
+            out["count"] = local.get("count", 0) + g.get("count", 0)
+            out["google"] = g
+        except GCalError as exc:  # noqa: BLE001
+            log.warning("google calendar sync failed (kept existing events): %s", exc)
+            out["google_error"] = str(exc)
+            out["google"] = {"ok": False, "count": 0}
+        return out
 
+    def _sync_local(self) -> dict[str, Any]:
+        """Parse the local .ics and reload *only local* events.
+
+        Fetch/parse first: if the file is missing or unreadable the existing
+        local events are left alone (never cleared into a half-imported state).
+        """
+        path = self.cfg.local_calendar_file
+        if not path or not os.path.exists(path):
+            return {"ok": True, "count": 0}
+        try:
+            fetched = self._parse_ics(path, "local")
+        except Exception as exc:  # noqa: BLE001  (keep existing local events)
+            log.warning("ics parse failed; keeping existing local events: %s", exc)
+            return {"ok": True, "count": 0, "error": str(exc)}
+        self.db.clear_events("local")
         for title, start_ts, end_ts, src in fetched:
             self.db.add_event(str(title), int(start_ts), int(end_ts), source=src)
         return {"ok": True, "count": len(fetched)}
+
+    def sync_google(self, gcal: GoogleCalendar | None = None,
+                    events: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        """Fetch Google Calendar events and merge them into the ``events`` table.
+
+        ``events`` (already-normalised records) may be injected directly so the
+        pure DB merge can be tested without network. Otherwise a ``GoogleCalendar``
+        is built (optionally injected) and ``list_events`` is called -- any
+        ``GCalError`` propagates and the DB is left untouched.
+        """
+        if events is None:
+            gc = gcal or GoogleCalendar(self.cfg)
+            events = gc.list_events()
+        return self._merge_google(events)
+
+    def _merge_google(self, events: list[dict[str, Any]]) -> dict[str, Any]:
+        """Deterministic merge of google events keyed by ``external_id``.
+
+        * new instances   -> insert
+        * existing, moved -> update in place (never a duplicate)
+        * existing, same  -> no-op
+        * vanished within the sync window -> delete (cancellation/removal)
+        * status=cancelled -> delete (a single cancelled occurrence of a series)
+
+        This is idempotent: a repeated sync with the same feed yields identical
+        DB state (``added=updated=removed=0``).
+        """
+        now = datetime.now(timezone.utc)
+        ws = int((now - timedelta(days=7)).timestamp())
+        we = int((now + timedelta(days=30)).timestamp())
+        seen: set[str] = set()
+        added = updated = removed = unchanged = skipped = 0
+        for e in events:
+            ext = e.get("external_id", "")
+            if not ext:
+                skipped += 1
+                continue
+            if e.get("status") == "cancelled":
+                row = self.db.event_by_external(ext, "google")
+                if row:
+                    self.db.delete_event(int(row["id"]))
+                    removed += 1
+                else:
+                    skipped += 1
+                continue
+            seen.add(ext)
+            row = self.db.event_by_external(ext, "google")
+            if row is None:
+                self.db.add_event(str(e["title"]), int(e["start_ts"]),
+                                  int(e["end_ts"]), source="google",
+                                  external_id=ext, all_day=int(e.get("all_day", 0)),
+                                  location=e.get("location", ""))
+                added += 1
+            else:
+                changed = (str(row["title"]) != str(e["title"])
+                           or int(row["start_ts"]) != int(e["start_ts"])
+                           or int(row["end_ts"]) != int(e["end_ts"])
+                           or int(row["all_day"] or 0) != int(e.get("all_day", 0)))
+                if changed:
+                    self.db.update_event(int(row["id"]), str(e["title"]),
+                                         int(e["start_ts"]), int(e["end_ts"]),
+                                         all_day=int(e.get("all_day", 0)),
+                                         location=e.get("location", ""))
+                    updated += 1
+                else:
+                    unchanged += 1
+        # prune instances that disappeared within the authoritative window
+        for row in self.db.google_events_in_window(ws, we):
+            if row["external_id"] not in seen:
+                self.db.delete_event(int(row["id"]))
+                removed += 1
+        self._stamp_gcal()
+        return {"ok": True, "count": added + updated + unchanged,
+                "added": added, "updated": updated, "removed": removed,
+                "unchanged": unchanged}
+
+    def _stamp_gcal(self) -> None:
+        try:
+            with open(os.path.join(self.cfg.state_dir, "gcal_last_sync"), "w") as fh:
+                fh.write(str(datetime.now().timestamp()))
+        except OSError:
+            pass
 
     @staticmethod
     def _parse_ics(path: str, source: str) -> list[tuple[str, int, int, str]]:
@@ -175,20 +273,25 @@ class Planner:
 
     # ------------------------------------------------------------------ sync
     def _maybe_sync(self) -> None:
-        """Refresh cheap local ics always; Google only if stale (>30 min)."""
+        """Refresh cheap local ics always; Google only if stale (>30 min).
+
+        A Google Calendar outage/auth problem is swallowed so a plan can always
+        be produced from whatever events are already in the DB (Graceful
+        Degradation). The recency stamp is only written on a *successful* sync,
+        so the next attempt retries when Google comes back.
+        """
         if self.cfg.local_calendar_file and os.path.exists(self.cfg.local_calendar_file):
-            self.sync_events("local")
+            self._sync_local()
         if self.cfg.google_calendar_enabled and self.cfg.google_calendar_credentials \
                 and os.path.exists(self.cfg.google_calendar_credentials):
             stamp = os.path.join(self.cfg.state_dir, "gcal_last_sync")
             fresh = os.path.exists(stamp) and \
                 (datetime.now().timestamp() - os.path.getmtime(stamp) < 1800)
             if not fresh:
-                self.sync_events()
                 try:
-                    open(stamp, "w").write(str(datetime.now().timestamp()))
-                except OSError:
-                    pass
+                    self.sync_google()
+                except GCalError as exc:  # noqa: BLE001  (keep existing events)
+                    log.warning("google calendar sync failed (kept existing events): %s", exc)
 
     def plan_day(self, day_ts: int | None = None) -> dict[str, Any]:
         day_ts = day_ts or self._today()
