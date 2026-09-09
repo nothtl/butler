@@ -436,11 +436,20 @@ class Config:
         return datetime.now(tz)
 
     def local_midnight(self, ts: int) -> int:
-        """Absolute timestamp of the local midnight that contains ``ts``."""
+        """Absolute timestamp of the local midnight that contains ``ts``.
+
+        Must strip the time on the *aware* datetime when a timezone is set.
+        Round-tripping through a naive ``datetime(y, m, d)`` would re-interpret
+        it in the host's timezone, shifting the boundary for any tz != host.
+        """
         from datetime import datetime
         tz = self.tz()
-        dt = datetime.fromtimestamp(ts, tz) if tz else datetime.fromtimestamp(ts)
-        return int(datetime(dt.year, dt.month, dt.day).timestamp())
+        if tz is None:
+            dt = datetime.fromtimestamp(ts)
+            return int(datetime(dt.year, dt.month, dt.day).timestamp())
+        aware = datetime.fromtimestamp(ts, tz)
+        midnight = aware.replace(hour=0, minute=0, second=0, microsecond=0)
+        return int(midnight.timestamp())
 
     def validate(self) -> None:
         """Fail fast on invalid configuration (audit: no silent misconfig).

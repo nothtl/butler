@@ -140,7 +140,7 @@ def classify(title: str = "", tags: str = "") -> frozenset[str]:
     frozenset when configured neutral), never a hard-coded single category.
     """
     text = f"{title} {tags}".lower()
-    found = [c for c, kws in _keyword_tables().items() if _any_in(kws, text)]
+    found = [c for c, kws in _KEYS.items() if _any_in(kws, text)]
     if not found and _UNKNOWN_CATEGORY:
         found = [_UNKNOWN_CATEGORY]
     return frozenset(found)
