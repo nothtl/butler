@@ -42,7 +42,7 @@ class Decider:
                  organizer: Organizer, search: Search, chat: Any = None,
                  planner: Any = None, courses: Any = None, food: Any = None,
                  chef: Any = None, nas: Any = None, context: Any = None,
-                 proactive: Any = None, timeline: Any = None):
+                 proactive: Any = None, timeline: Any = None, routines: Any = None):
         self.cfg = cfg
         self.db = db
         self.engine = engine
@@ -64,6 +64,7 @@ class Decider:
         self.context = context
         self.proactive = proactive
         self.timeline = timeline
+        self.routines = routines
 
     # ---------------------------------------------------------------- parse
     def parse(self, message: str) -> Intent:
@@ -85,6 +86,30 @@ class Decider:
                      r"|show (my )?(timeline|context today|day so far|history))", low) or \
            re.search(r"\b(timeline|history today)\b", low):
             return Intent("timeline_today", scope=scope, raw=msg)
+
+        # --- Phase 4.4: learned routines & habits ---
+        # Purely deterministic; a user just manages the lifecycle (recommending
+        # is driven by Routines.affinity_for, never by an intent).
+        if re.search(r"\b(what routines|my routines|show routines|list routines|"
+                     r"show my routines|routines?)\b", low) and "routine" in low:
+            return Intent("routine_show", raw=msg)
+        if re.search(r"\b(forget|delete|remove|disable|no longer want|stop tracking)"
+                     r"[^.]*\broutines?\b", low) and "routine" in low \
+                and not re.search(r"\bnot a routine|isn'?t a routine\b", low):
+            return Intent("routine_forget", raw=msg)
+        if re.search(r"\b(not a routine|isn'?t a routine|don'?t want this as a routine|"
+                     r"reject this routine)\b", low):
+            return Intent("routine_reject", raw=msg)
+        if re.search(r"\b(make (this|it) a routine|remember this( as| is)? a routine|"
+                     r"save this as a routine|make it a routine|that'?s a routine)\b", low):
+            return Intent("routine_confirm", raw=msg)
+        if re.search(r"\b(i always|i usually|i typically|i tend to|every (monday|tuesday|"
+                     r"wednesday|thursday|friday|saturday|sunday|weekday|day))\b", low):
+            return Intent("routine_explicit", query=msg, raw=msg)
+        if re.search(r"\b(don'?t want to|no longer|not anymore|never)\b[^.]*"
+                     r"\b(gym|exercise|workout|run|jog|study|library|cook|shop|grocery)\b[^.]*"
+                     r"\b(on )?(mon|tue|wed|thu|fri|sat|sun|every day)\b", low):
+            return Intent("routine_explicit", query=msg, raw=msg)
 
         # --- planner / scheduler intents (Phase 2) ---
         if re.search(r"\b(what should|what to do|what now|what do i do|what next|whats next)\b", low):
@@ -318,6 +343,15 @@ class Decider:
         # --- Phase 4.3: timeline ---
         if cmd in ("timeline", "history"):
             return Intent("timeline_today", scope=target or "today", raw=raw)
+        # --- Phase 4.4: routines ---
+        if cmd in ("routines", "showroutines", "myroutines"):
+            return Intent("routine_show", raw=raw)
+        if cmd in ("routine-confirm", "confirmroutine"):
+            return Intent("routine_confirm", raw=raw)
+        if cmd in ("routine-reject", "rejectroutine"):
+            return Intent("routine_reject", raw=raw)
+        if cmd in ("routine-forget", "forgetroutine"):
+            return Intent("routine_forget", raw=raw)
         return Intent("help", raw=raw)
 
     # ---------------------------------------------------------------- handlers
@@ -458,6 +492,16 @@ class Decider:
             return self._do_around_me()
         if k == "timeline_today":
             return self._do_timeline(intent)
+        if k == "routine_show":
+            return self._do_routine_show()
+        if k == "routine_confirm":
+            return self._do_routine_confirm()
+        if k == "routine_reject":
+            return self._do_routine_reject()
+        if k == "routine_forget":
+            return self._do_routine_forget()
+        if k == "routine_explicit":
+            return self._do_routine_explicit(intent)
         return {"kind": "help"}
 
     # ---------------------------------------------------------------- Phase 3
@@ -706,6 +750,75 @@ class Decider:
             return head + "\n\nNothing else recorded this period yet."
         body = self.timeline.timeline_text(events)
         return head + "\n\n📅 Timeline\n" + body
+
+    # ------------------------------------------------------- Phase 4.4
+    def _routine_text(self, rows: list[dict[str, Any]]) -> str:
+        from .routines import CONFIRMED
+        lines = []
+        for i, r in enumerate(rows, 1):
+            day = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
+                   "Saturday", "Sunday")[r["weekday"]] if r["weekday"] != -1 else "any day"
+            lines.append(f"{i}. {r['title']} — {day}, ~{int(r['start_min']) // 60:02d}:"
+                         f"{int(r['start_min']) % 60:02d} "
+                         f"(confidence {int(r['confidence'] * 100)}%)")
+        if not lines:
+            return "No routines yet — I'll suggest patterns once I've noticed them."
+        return "\n".join(lines)
+
+    def _do_routine_show(self) -> dict[str, Any]:
+        if self.routines is None:
+            return {"kind": "routines", "ok": False, "error": "routines not configured"}
+        active = self.routines.active()
+        candidates = self.routines.candidates() or []
+        text = "🔁 Your routines\n" + self._routine_text(active)
+        if candidates:
+            text += ("\n\n💡 I noticed these (confirm with \"make it a routine\" "
+                     "or \"yes\"):\n" + self._routine_text(candidates))
+        return {"kind": "routines", "text": text, "active": active,
+                "candidates": candidates}
+
+    def _do_routine_confirm(self) -> dict[str, Any]:
+        if self.routines is None:
+            return {"kind": "routines", "ok": False, "error": "routines not configured"}
+        res = self.routines.confirm()
+        if not res.get("ok"):
+            return {"kind": "routines", "ok": False,
+                    "error": res.get("error", "no routine to confirm")}
+        r = res["routine"]
+        return {"kind": "routines", "text": f"Got it — I'll treat \"{r['title']}\" "
+                f"as a routine from now on.", "routine": r}
+
+    def _do_routine_reject(self) -> dict[str, Any]:
+        if self.routines is None:
+            return {"kind": "routines", "ok": False, "error": "routines not configured"}
+        res = self.routines.reject()
+        if not res.get("ok"):
+            return {"kind": "routines", "ok": False, "error": res.get("error", "none")}
+        return {"kind": "routines", "text": "OK, I won't treat that as a routine. "
+                "I'll keep watching from scratch."}
+
+    def _do_routine_forget(self) -> dict[str, Any]:
+        if self.routines is None:
+            return {"kind": "routines", "ok": False, "error": "routines not configured"}
+        res = self.routines.forget()
+        if not res.get("ok"):
+            return {"kind": "routines", "ok": False, "error": res.get("error", "none")}
+        r = res["routine"]
+        return {"kind": "routines", "text": f"Done — I've stopped matching "
+                f"\"{r['title']}\" as a routine."}
+
+    def _do_routine_explicit(self, intent: Intent) -> dict[str, Any]:
+        if self.routines is None:
+            return {"kind": "routines", "ok": False, "error": "routines not configured"}
+        res = self.routines.create_explicit(intent.query or intent.raw)
+        if not res.get("ok"):
+            return {"kind": "routines", "ok": False, "error": res.get("error", "none")}
+        if res["action"] == "disable":
+            return {"kind": "routines", "text": "Understood — I'll stop matching that "
+                    "as a routine."}
+        r = res["routine"]
+        return {"kind": "routines", "text": f"Got it — I'll treat \"{r['title']}\" "
+                f"as a routine from now on.", "routine": r}
 
     # ------------------------------------------------------- Phase 4.2
     def _do_location_change(self, intent: Intent) -> dict[str, Any]:

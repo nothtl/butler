@@ -267,6 +267,36 @@ CREATE TABLE IF NOT EXISTS tl_state(
     key     TEXT PRIMARY KEY,
     value   TEXT
 );
+
+-- ---------- Phase 4.4: learned routines & habits ----------
+-- A discovered or explicitly-declared recurring habit. It is ONLY ever a soft
+-- preference at recommendation time; it never mutates a committed plan and
+-- never overrides a hard constraint (Google Calendar / deadlines / sleep).
+-- ``state`` drives the lifecycle: candidate -> confirmed (or declined),
+-- with user-forgotten routines disabled and old ones decaying to stale.
+CREATE TABLE IF NOT EXISTS routines(
+    id          INTEGER PRIMARY KEY,
+    kind        TEXT NOT NULL,          -- activity | sequence
+    category    TEXT NOT NULL,          -- primary category, or "a->b" for sequence
+    zone        TEXT,                   -- preferred zone (activity) / target zone
+    weekday     INTEGER NOT NULL,       -- 0..6, or -1 = any day
+    start_min   INTEGER NOT NULL,       -- approximate time window (minutes-in-day)
+    end_min     INTEGER NOT NULL,
+    title       TEXT,
+    count       INTEGER DEFAULT 0,      -- observations
+    weeks       INTEGER DEFAULT 0,      -- distinct weeks observed
+    n_of_m      INTEGER DEFAULT 0,      -- how many of the last M weeks matched
+    confidence  REAL DEFAULT 0,         -- deterministic, explainable score 0..1
+    first_ts    INTEGER DEFAULT 0,
+    last_ts     INTEGER DEFAULT 0,
+    state       TEXT DEFAULT 'candidate',  -- candidate|confirmed|declined|disabled|stale
+    source      TEXT DEFAULT 'inferred',   -- inferred|explicit
+    note        TEXT,                   -- explicit phrase, or short description
+    created_at  INTEGER DEFAULT 0,
+    updated_at  INTEGER DEFAULT 0,
+    signature   TEXT UNIQUE
+);
+CREATE INDEX IF NOT EXISTS idx_routines_state ON routines(state);
 """
 
 

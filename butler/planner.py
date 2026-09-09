@@ -45,6 +45,7 @@ class Planner:
         self.day_end = int(self.cfg.sleep_start)     # e.g. 23:00
         self.agent = Agent(self.container)
         self.timeline = getattr(container, "timeline", None)
+        self.routines = getattr(container, "routines", None)
 
     def _tl(self) -> Any:
         return self.timeline
@@ -352,6 +353,7 @@ class Planner:
                 "context_influenced": r["context_influenced"],
                 "user_override": r["user_override"],
                 "ha_influence": r["ha_influence"],
+                "routine_influenced": r["routine_influenced"],
                 "candidate": r["candidate"], "decision_log": r["decision_log"]}
 
     def explain_now(self, message: str = "", day_ts: int | None = None,
@@ -362,6 +364,7 @@ class Planner:
         return {"ok": True, "candidate": r["candidate"], "reason": r["reason"],
                 "factors": r["factors"], "context_influenced": r["context_influenced"],
                 "user_override": r["user_override"], "ha_influence": r["ha_influence"],
+                "routine_influenced": r["routine_influenced"],
                 "decision_log": r["decision_log"]}
 
     # ------------------------------------------------------- recommendation
@@ -373,13 +376,16 @@ class Planner:
         preferences = affinity.preference_weights(message)
         tired = affinity.is_tired(message)
         tasks = self._active_tasks(day_ts)
+        if now_min is None:
+            now_min = datetime.now().hour * 60 + datetime.now().minute
+        routine_hits, recent = self._routine_hits(tasks, day_ts, now_min, zone_raw)
         aff_map = {t.id: affinity.task_affinity(t.title, t.tags, zone,
                                                 preferences, tired)
                    for t in tasks}
+        for tid, hit in routine_hits.items():
+            aff_map[tid] += hit["score"]
         state = self._solve(day_ts, aff_map)
         tasks_by_id = {t["id"]: t for t in state.snapshot.get("tasks", [])}
-        if now_min is None:
-            now_min = datetime.now().hour * 60 + datetime.now().minute
         slots = sorted((s for s in state.slots if s.end_min > now_min),
                        key=lambda s: s.start_min)
         chosen: sch.Slot | None = None
@@ -391,44 +397,80 @@ class Planner:
             break
         base_log = {"presence_known": bool(pres.get("known")), "zone": zone_raw,
                     "tired": tired, "preference_weights": dict(preferences),
-                    "affinity": {str(k): v for k, v in aff_map.items()}}
+                    "affinity": {str(k): v for k, v in aff_map.items()},
+                    "routine_hits": {str(k): {"score": v["score"], "reason": v["reason"]}
+                                     for k, v in routine_hits.items()}}
         if chosen is None:
             return {"ok": True, "now": None,
                     "answer": "Nothing left to do right now. Enjoy the buffer.",
                     "reason": "", "factors": {}, "context_influenced": False,
                     "user_override": False, "ha_influence": False,
+                    "routine_influenced": False,
                     "candidate": None, "decision_log": base_log}
         task = tasks_by_id[chosen.task_id]
         cats = list(affinity.classify(task.get("title", ""), task.get("tags", "")))
         zw = affinity.zone_weights_for(zone)
         loc_fit = next((c for c in cats if zw.get(c, 0) > 0), None)
         pref_fit = next((c for c in cats if preferences.get(c, 0) != 0), None)
+        routine = routine_hits.get(chosen.task_id)
         factors = self._factors(task, chosen, pres, zw, cats, loc_fit, pref_fit,
-                                tired, preferences, tasks_by_id, now_min, day_ts)
+                                tired, preferences, tasks_by_id, now_min, day_ts,
+                                routine=routine)
         reason = self._explain_reason(task, chosen, zone_raw, loc_fit, pref_fit,
-                                      tired, factors)
+                                      tired, factors, routine_reason=routine.get("reason") if routine else None)
         candidate = {"task_id": chosen.task_id, "title": chosen.title,
                      "start": _hm(chosen.start_min), "end": _hm(chosen.end_min)}
         answer = f"Now: {chosen.title} ({_hm(chosen.start_min)}-{_hm(chosen.end_min)})."
-        if loc_fit or pref_fit or tired:
+        if loc_fit or pref_fit or tired or routine:
             answer += " " + reason
         return {"ok": True, "now": candidate, "answer": answer, "reason": reason,
                 "factors": factors,
                 "context_influenced": bool(loc_fit or pref_fit),
                 "user_override": bool(pref_fit),
                 "ha_influence": bool(pres.get("known") and loc_fit),
+                "routine_influenced": bool(routine),
                 "candidate": candidate,
                 "decision_log": {**base_log,
                                  "candidate": candidate, "factors": factors,
                                  "context_influenced": bool(loc_fit or pref_fit),
                                  "user_override": bool(pref_fit),
-                                 "ha_influence": bool(pres.get("known") and loc_fit)}}
+                                 "ha_influence": bool(pres.get("known") and loc_fit),
+                                 "routine_influenced": bool(routine)}}
+
+    def _routine_hits(self, tasks: list[sch.Task], day_ts: int, now_min: int,
+                      zone_raw: str) -> tuple[dict[int, dict[str, Any]], list]:
+        """The soft routine boost per task (capped by routines_affinity_max).
+
+        Returns ``(hits, recent)`` where ``hits`` maps task id -> {score, reason}
+        and ``recent`` is today's chronological timeline (used for sequence
+        triggers). Empty when routines are disabled or none are active, so the
+        baseline recommendation is unchanged.
+        """
+        hits: dict[int, dict[str, Any]] = {}
+        if self.routines is None:
+            return hits, []
+        recent: list[dict[str, Any]] = []
+        tl = self._tl()
+        if tl is not None:
+            try:
+                d = datetime.fromtimestamp(int(day_ts))
+                day_start = int(datetime(d.year, d.month, d.day).timestamp())
+                recent = tl.get_between(day_start, day_ts + 86400)
+            except Exception:  # pragma: no cover — recommendations never break
+                recent = []
+        for t in tasks:
+            rb = self.routines.affinity_for(t.title, t.tags, day_ts, now_min,
+                                            zone_raw, recent)
+            if rb.get("score"):
+                hits[t.id] = rb
+        return hits, recent
 
     def _factors(self, task: dict[str, Any], sample: sch.Slot, pres: dict[str, Any],
                  zw: dict[str, int], cats: list[str], loc_fit: str | None,
                  pref_fit: str | None, tired: bool,
                  preferences: dict[str, int], tasks_by_id: dict[int, dict[str, Any]],
-                 now_min: int, day_ts: int) -> dict[str, Any]:
+                 now_min: int, day_ts: int,
+                 routine: dict[str, Any] | None = None) -> dict[str, Any]:
         out: dict[str, Any] = {}
         deadline = task.get("deadline")
         out["deadline"] = None
@@ -455,6 +497,11 @@ class Planner:
             out["energy"] = "ok"
         out["category"] = cats
         out["affinity"] = int(task.get("affinity", 0))
+        if routine:
+            out["routine"] = {"score": int(routine.get("score", 0)),
+                              "reason": routine.get("reason", "")}
+        else:
+            out["routine"] = None
         return out
 
     def _next_commitment(self, now_min: int, day_ts: int) -> str | None:
@@ -464,7 +511,8 @@ class Planner:
 
     def _explain_reason(self, task: dict[str, Any], sample: sch.Slot,
                         zone_raw: str, loc_fit: str | None, pref_fit: str | None,
-                        tired: bool, factors: dict[str, Any]) -> str:
+                        tired: bool, factors: dict[str, Any],
+                        routine_reason: str | None = None) -> str:
         bits: list[str] = []
         if loc_fit:
             bits.append(f"you're at {zone_raw}, which suits {loc_fit}")
@@ -472,6 +520,8 @@ class Planner:
             bits.append(f"you wanted to do that")
         if tired:
             bits.append("you're a bit tired, so lighter tasks come first")
+        if routine_reason:
+            bits.append(routine_reason)
         dl = factors.get("deadline")
         if dl:
             bits.append(f"it's {dl}")

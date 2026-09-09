@@ -530,6 +530,11 @@ class TelegramBot:
         elif kind == "timeline":
             await msg.reply_text(result.get("text", "Nothing recorded yet.") or
                                  "Nothing recorded yet.")
+        elif kind == "routines":
+            if result.get("ok") is False:
+                await msg.reply_text("⚠️ " + (result.get("error", "I couldn't do that.")))
+            else:
+                await msg.reply_text(result.get("text", "Done."))
         else:
             await msg.reply_text(str(result.get("text", result)))
 

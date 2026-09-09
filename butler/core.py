@@ -29,6 +29,7 @@ from .house import HomeAssistant
 from .context import ContextEngine
 from .proactive import Proactive
 from .timeline import Timeline
+from .routines import Routines
 
 
 class Container:
@@ -37,6 +38,7 @@ class Container:
         self.cfg.ensure_dirs()
         self.db = DB(self.cfg)
         self.timeline = Timeline(self.cfg, self.db)
+        self.routines = Routines(self)
         self.engine = Engine(self.cfg)
         self.embedder = Embedder(self.cfg.embed_model)
         self.search = Search(self.cfg, self.db, self.embedder)
@@ -60,7 +62,7 @@ class Container:
                                planner=self.planner, courses=self.courses,
                                food=self.food, chef=self.chef, nas=self.nas,
                                context=self.context, proactive=self.proactive,
-                               timeline=self.timeline)
+                               timeline=self.timeline, routines=self.routines)
         self.trash = Trash(self.cfg, self.db, self.engine)
         self.indexer = Indexer(self.cfg, self.db, self.embedder)
         self.backup = Backup(self.cfg, self.db)
@@ -106,6 +108,9 @@ class Container:
                 return {"ok": True, "tasks": [dict(r) for r in self.db.tasks("active")]}
             if route == "/context":
                 return {"ok": True, "context": self.context.snapshot()}
+            if route == "/routines":
+                return {"ok": True, "active": self.routines.active(),
+                        "candidates": self.routines.candidates()}
             if route == "/courses":
                 return {"ok": True, "courses": self.courses.list_courses()}
             if route == "/documents":
@@ -181,6 +186,14 @@ class Container:
                 return {"ok": True, **self.nas.ingest_inbox()}
             if route == "/proactive":
                 return {"ok": True, **self.proactive.run()}
+            if route == "/routines/scan":
+                return {"ok": True, **self.routines.scan()}
+            if route == "/routines/confirm":
+                return self.routines.confirm(args.get("id"))
+            if route == "/routines/reject":
+                return self.routines.reject(args.get("id"))
+            if route == "/routines/forget":
+                return self.routines.forget(args.get("id"))
             return {"ok": False, "error": "unknown route"}
         return {"ok": False, "error": "unsupported"}
 

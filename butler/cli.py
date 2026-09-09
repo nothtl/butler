@@ -290,6 +290,18 @@ def dispatch(container: Container, ns: argparse.Namespace) -> int:
         scope = " ".join(args) or "today"
         return emit(container, container.decider.resolve(
             container.decider.parse("timeline " + scope)), ns)
+    if cmd in ("routines", "myroutines"):
+        return emit(container, container.decider.resolve(
+            container.decider.parse("routines")), ns)
+    if cmd == "routine-confirm":
+        return emit(container, container.decider.resolve(
+            container.decider.parse("make it a routine")), ns)
+    if cmd == "routine-reject":
+        return emit(container, container.decider.resolve(
+            container.decider.parse("not a routine")), ns)
+    if cmd == "routine-forget":
+        return emit(container, container.decider.resolve(
+            container.decider.parse("forget this routine")), ns)
     if cmd == "calendar":
         sub = args[0] if args else ""
         if sub == "connect":
@@ -576,6 +588,8 @@ def render(c: Container, r: dict) -> str:
         return r.get("answer", str(r))
     if k == "timeline":
         return r.get("text", "Nothing recorded yet.")
+    if k == "routines":
+        return r.get("text", "Done.")
     return json.dumps(r, indent=2, default=default_json)
 
 

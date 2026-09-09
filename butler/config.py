@@ -160,6 +160,20 @@ class Config:
     timeline_enabled: bool = True
     timeline_retention_days: int = 30
 
+    # --- learned routines & habits (Phase 4.4) ---
+    # Deterministic, explainable pattern detection over the context timeline.
+    # Routines are SOFT: they only nudge recommendation affinity, never alter a
+    # committed plan and never override Google Calendar/deadlines/sleep.
+    routines_enabled: bool = True
+    routines_min_observations: int = 3   # < this many matches -> not a routine
+    routines_confidence_min: float = 0.5 # candidate must reach this confidence
+    routines_time_tolerance: int = 90    # minutes spread allowed within a routine
+    routines_gap_minutes: int = 90       # max gap between A -> B for a sequence
+    routines_scan_days: int = 90         # how far back to scan the timeline
+    routines_stale_days: int = 21        # no update for this long -> stale
+    routines_max_observations: int = 5   # saturating window for the count term
+    routines_affinity_max: int = 4       # cap the soft boost (below explicit +/-6/8)
+
     config_path: str = ""
 
     # ------------------------------------------------------------------
@@ -324,6 +338,23 @@ class Config:
         cfg.timeline_retention_days = int(tl.get("retention_days",
                                                  cfg.timeline_retention_days))
 
+        rt = page.get("routines", {})
+        cfg.routines_enabled = bool(rt.get("enabled", cfg.routines_enabled))
+        cfg.routines_min_observations = int(rt.get("min_observations",
+                                                   cfg.routines_min_observations))
+        cfg.routines_confidence_min = float(rt.get("confidence_min",
+                                                   cfg.routines_confidence_min))
+        cfg.routines_time_tolerance = int(rt.get("time_tolerance",
+                                                 cfg.routines_time_tolerance))
+        cfg.routines_gap_minutes = int(rt.get("gap_minutes",
+                                              cfg.routines_gap_minutes))
+        cfg.routines_scan_days = int(rt.get("scan_days", cfg.routines_scan_days))
+        cfg.routines_stale_days = int(rt.get("stale_days", cfg.routines_stale_days))
+        cfg.routines_max_observations = int(rt.get("max_observations",
+                                                   cfg.routines_max_observations))
+        cfg.routines_affinity_max = int(rt.get("affinity_max",
+                                               cfg.routines_affinity_max))
+
         emb = page.get("embed", {})
         cfg.embed_model = emb.get("model", cfg.embed_model)
         cfg.embed_dim = int(emb.get("dim", cfg.embed_dim))
@@ -377,4 +408,13 @@ class Config:
             "home_assistant_configured": bool(self.home_assistant_token),
             "timeline_enabled": self.timeline_enabled,
             "timeline_retention_days": self.timeline_retention_days,
+            "routines_enabled": self.routines_enabled,
+            "routines_min_observations": self.routines_min_observations,
+            "routines_confidence_min": self.routines_confidence_min,
+            "routines_time_tolerance": self.routines_time_tolerance,
+            "routines_gap_minutes": self.routines_gap_minutes,
+            "routines_scan_days": self.routines_scan_days,
+            "routines_stale_days": self.routines_stale_days,
+            "routines_max_observations": self.routines_max_observations,
+            "routines_affinity_max": self.routines_affinity_max,
         }
