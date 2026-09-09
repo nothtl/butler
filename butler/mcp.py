@@ -54,6 +54,23 @@ class MCPServer:
             s("backup", "Backup status.", {}, []),
             s("organize", "Propose an organize plan for a folder (confirmation required to apply).",
               {"path": {"type": "string"}}, []),
+            s("courses", "List tracked courses.", {}, []),
+            s("course_documents", "List downloaded materials for a course code.",
+              {"code": {"type": "string"}}, ["code"]),
+            s("pantry", "List current food inventory.", {}, []),
+            s("expiring", "List food expiring within N days (default 3).",
+              {"days": {"type": "integer"}}, []),
+            s("recipe", "Suggest a meal that fits the free-time budget and ingredients.",
+              {"budget_minutes": {"type": "integer"}}, []),
+            s("grocery", "Deterministic grocery list (deduped shortfalls + low stock).", {}, []),
+            s("recipe_search", "Search real online recipes by keyword, then persist to Library.",
+              {"query": {"type": "string"}}, []),
+            s("recipes", "List the Recipe Library (persisted, rate-able).", {}, []),
+            s("favorites", "List favorited recipes.", {}, []),
+            s("recipe_history", "Recently cooked/planned meals.", {}, []),
+            s("rate_recipe", "Rate a recipe 0-5 by id or name.",
+              {"recipe": {"type": "string"}, "rating": {"type": "integer"}}, []),
+            s("context", "Personal context snapshot (free time, deadlines, expiring food).", {}, []),
         ]
 
     # ------------------------- tool invocation -------------------------
@@ -83,6 +100,40 @@ class MCPServer:
             return {"plan_id": plan.plan_id, "title": plan.title, "summary": plan.summary,
                     "items": [{"action": i.action, "src": i.src, "dest": i.dest}
                               for i in plan.items]}
+        if name == "courses":
+            return {"courses": c.courses.list_courses()}
+        if name == "course_documents":
+            code = a.get("code", "")
+            course = c.courses.course(code)
+            if not course:
+                return {"error": f"no course {code}"}
+            return {"code": code, "documents": [dict(d) for d in c.db.course_documents(int(course["id"]))]}
+        if name == "pantry":
+            return {"items": c.food.all()}
+        if name == "expiring":
+            return {"items": c.food.expiring(int(a.get("days", 3)))}
+        if name == "recipe":
+            return c.chef.plan_meal(budget_minutes=int(a.get("budget_minutes", 45)))
+        if name == "grocery":
+            return {"items": c.chef.grocery_list()}
+        if name == "recipe_search":
+            return {"query": a.get("query", ""),
+                    "results": c.chef.search(a.get("query", ""))}
+        if name == "recipes":
+            return {"count": len(c.chef.library()), "recipes": c.chef.library()}
+        if name == "favorites":
+            return {"recipes": c.chef.favorites()}
+        if name == "recipe_history":
+            return {"history": c.chef.history()}
+        if name == "rate_recipe":
+            ident = str(a.get("recipe", ""))
+            rating = float(a.get("rating", 3))
+            row = c.db.recipe_by_name(ident)
+            if not row:
+                return {"error": f"recipe not found: {ident}"}
+            return c.chef.rate(int(row["id"]), rating)
+        if name == "context":
+            return c.context.snapshot()
         raise ValueError(f"unknown tool: {name}")
 
     # ------------------------- json-rpc -------------------------

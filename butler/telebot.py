@@ -337,12 +337,169 @@ class TelegramBot:
             suffix = f"\n\n⛔ hard commitment: {cause}" if cause else ""
             await msg.reply_text("🤔 " + reason + suffix)
         elif kind == "connect":
-            await msg.reply_text("To connect Google Calendar:\n"
-                                 "1. Create creds as in the docs\n"
-                                 "2. `butler calendar connect`\n"
-                                 "3. add the client_secret.json")
+                await msg.reply_text("To connect Google Calendar:\n"
+                         "1. Create creds as in the docs\n"
+                         "2. `butler calendar connect`\n"
+                         "3. add the client_secret.json")
+        elif kind == "course_add":
+            code = result.get("code", "")
+            if result.get("need_url"):
+                await msg.reply_text(
+                    f"✅ Tracked {code}.\nSend me the course website URL (e.g. "
+                    f"`add course {code} https://...`) and I'll monitor it.")
+            else:
+                await msg.reply_text(f"✅ Tracking course {code}.")
+        elif kind == "course_list":
+            courses = result.get("courses", [])
+            if not courses:
+                await msg.reply_text("No courses tracked yet. `add course CS168 https://...`")
+                return
+            lines = []
+            for c in courses:
+                url = c.get("url") or "—no URL—"
+                lines.append(f"• {c['code']} — {c.get('name','(unnamed)')}\n   {url}")
+            await msg.reply_text("Courses I'm monitoring:\n" + "\n".join(lines))
+        elif kind == "course_check":
+            updates = result.get("updates", [])
+            if not updates:
+                await msg.reply_text("No new course activity. 👍")
+                return
+            lines = [f"• {u.get('course_code','')} — {u.get('title','')} ({u.get('doc_type','')})"
+                     for u in updates]
+            await msg.reply_text("📚 New course activity:\n" + "\n".join(lines))
+        elif kind == "course_docs":
+            docs = result.get("documents", [])
+            if not docs:
+                await msg.reply_text(f"No materials for {result.get('code','')} yet.")
+                return
+            lines = [f"• {d.get('title','')} ({d.get('doc_type','')}) "
+                     f"@ {d.get('local_path','')}" for d in docs]
+            await msg.reply_text(f"📂 {result.get('code','')} materials:\n" + "\n".join(lines))
+        elif kind == "food_add":
+            added = result.get("added", [])
+            names = ", ".join(a.get("name", "") for a in added) or "nothing"
+            await msg.reply_text(f"🥫 Stored: {names}")
+        elif kind == "food_list":
+            items = result.get("items", [])
+            if not items:
+                await msg.reply_text("Your pantry is empty.")
+                return
+            lines = [f"• {i['name']} — {i.get('quantity','')}{i.get('unit','')}"
+                     for i in items]
+            await msg.reply_text("🥕 Pantry:\n" + "\n".join(lines))
+        elif kind == "food_expiring":
+            items = result.get("items", [])
+            if not items:
+                await msg.reply_text("Nothing expiring soon. 👍")
+                return
+            lines = [f"• {i['name']} — {i.get('days_left','')}d remaining"
+                     for i in items]
+            await msg.reply_text("⏳ Expiring soon:\n" + "\n".join(lines))
+        elif kind == "food_consume":
+            await msg.reply_text("✅ " + ("Removed " + result['name'] if result.get("removed")
+                                          else f"Updated {result['name']} to {result.get('quantity')}"))
+        elif kind == "recipe":
+            p = result.get("plan", {})
+            if not p.get("recipe"):
+                await msg.reply_text(p.get("message", "No recipe fits."))
+                return
+            ms = f"\n     get: {', '.join(p['missing'])}" if p.get("missing") else ""
+            await msg.reply_text(
+                f"🍳 {p['recipe']} (~{p['time_minutes']}min, {p['difficulty']}, ¥{p['cost']})\n"
+                f"have {int(p['have_ratio']*100)}% of ingredients{ms}")
+        elif kind == "meal_plan":
+            p = result.get("plan", {})
+            if not p.get("recipe"):
+                await msg.reply_text(p.get("message", "No recipe fits."))
+                return
+            ms = f"\n     get: {', '.join(p['missing'])}" if p.get("missing") else ""
+            await msg.reply_text(
+                f"🍽 {p['meal']}: {p['recipe']} (~{p['time_minutes']}min, "
+                f"{p['difficulty']}, ¥{p['cost']})\n"
+                f"have {int(p['have_ratio']*100)}% of ingredients{ms}")
+        elif kind == "recipe_search":
+            results = result.get("results", [])
+            if not results:
+                await msg.reply_text(f"Nothing found for '{result.get('query','')}'.")
+                return
+            lines = [f"• {r['name']} ({r['time_minutes']}min, "
+                     f"have {int(r.get('rating',0) and 0 or 0)} fav={r.get('favorite')})"
+                     for r in results[:8]]
+            await msg.reply_text(f"🔍 {len(results)} result(s):\n" + "\n".join(lines))
+        elif kind == "recipe_library":
+            recipes = result.get("recipes", [])
+            lines = [f"{'⭐' if r.get('favorite') else '•'} {r['name']} "
+                     f"({r['time_minutes']}min, used {r.get('times_used',0)})"
+                     for r in recipes[:20]]
+            await msg.reply_text(f"📚 Recipe Library ({result.get('count', len(recipes))}):\n"
+                                 + ("\n".join(lines) or "(empty)"))
+        elif kind == "favorites":
+            recipes = result.get("recipes", [])
+            lines = [f"⭐ {r['name']} ({r['time_minutes']}min, "
+                     f"rating {float(r.get('rating',0)):.1f})" for r in recipes]
+            await msg.reply_text("⭐ Favorites:\n"
+                                 + ("\n".join(lines) or "(none yet)"))
+        elif kind == "recipe_history":
+            hist = result.get("history", [])
+            if not hist:
+                await msg.reply_text("No meals planned yet.")
+                return
+            lines = [f"• {h.get('recipe_name','?')} — {h.get('meal','')}"
+                     for h in hist[:20]]
+            await msg.reply_text("🕘 Recent meals:\n" + "\n".join(lines))
+        elif kind == "recipe_mark":
+            await msg.reply_text(
+                f"{'⭐ starred' if result.get('favorite') else 'unstarred'} #"
+                f"{result.get('recipe_id')} rating={result.get('rating')} 👍")
+        elif kind == "grocery":
+            items = result.get("items", [])
+            if not items:
+                await msg.reply_text("Nothing to buy. 👍")
+                return
+            lines = [f"• {i['name']} — {i.get('quantity','')}{i.get('unit','')}"
+                     for i in items]
+            await msg.reply_text("🛒 Shopping list:\n" + "\n".join(lines))
+        elif kind == "nas_ingest":
+            moved = result.get("moved", [])
+            if not moved:
+                await msg.reply_text("📥 Inbox is empty (or NAS not enabled).")
+                return
+            lines = [f"  {os.path.basename(a)} → {b}" for a, b in moved]
+            await msg.reply_text(f"📦 filed {result.get('count', len(moved))} item(s):\n"
+                                 + "\n".join(lines))
+        elif kind == "context":
+            await msg.reply_text(self._context_text(result.get("snapshot", {})))
+        elif kind == "proactive":
+            messages = result.get("messages", [])
+            if not messages:
+                await msg.reply_text("All clear. 👍")
+            else:
+                await msg.reply_text("\n".join(messages))
         else:
             await msg.reply_text(str(result.get("text", result)))
+
+    def _context_text(self, s: dict) -> str:
+        out = []
+        free = s.get("free_minutes_today", 0)
+        hard = s.get("events_today", [])
+        out.append(f"🕐 Free today: {free} min")
+        if hard:
+            fmt = time.strftime("%H:%M", time.localtime(h["start_ts"])) \
+                if isinstance(h.get("start_ts", 0), (int, float)) and h.get("start_ts") \
+                else h.get("start_ts", "")
+            hard_txt = ", ".join(f"{h.get('title','')}@{fmt}" for h in hard)
+            out.append(f"📅 Hard events: {hard_txt}")
+        for c in s.get("courses", []):
+            for d in c.get("upcoming_deadlines", []):
+                out.append(f"📚 {c.get('code','')} — deadline {time.strftime('%a %d %b', time.localtime(d))}")
+        returning = s.get("food_expiring", [])
+        if returning:
+            out.append("⏳ Expiring food:")
+            out += [f"  • {f.get('name','')} ({f.get('days_left','')}d)" for f in returning]
+        tasks = s.get("tasks", [])
+        if tasks:
+            out.append(f"✅ Active tasks: {len(tasks)}")
+        return "\n".join(out) or "Nothing on my radar."
 
     def _backup_text(self, r: dict) -> str:
         last = r["last_backup"]

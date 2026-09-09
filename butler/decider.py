@@ -37,7 +37,9 @@ class Intent:
 class Decider:
     def __init__(self, cfg: Config, db: DB, engine: Engine,
                  organizer: Organizer, search: Search, chat: Any = None,
-                 planner: Any = None):
+                 planner: Any = None, courses: Any = None, food: Any = None,
+                 chef: Any = None, nas: Any = None, context: Any = None,
+                 proactive: Any = None):
         self.cfg = cfg
         self.db = db
         self.engine = engine
@@ -51,6 +53,13 @@ class Decider:
             from .planner import Planner
             planner = Planner(type("_C", (), {"cfg": cfg, "db": db})())
         self.planner = planner
+        # --- Phase 3 subsystems ---
+        self.courses = courses
+        self.food = food
+        self.chef = chef
+        self.nas = nas
+        self.context = context
+        self.proactive = proactive
 
     # ---------------------------------------------------------------- parse
     def parse(self, message: str) -> Intent:
@@ -79,6 +88,54 @@ class Decider:
             m = re.search(rf"\b{_kw}\b\s+(.+)", low)
             if m:
                 return Intent(_kind, query=m.group(1).strip(), raw=msg)
+
+        # --- Phase 3: course intelligence ---
+        if re.search(r"\b(whats going on|briefing|my context|give me context|summarize my day)\b", low):
+            return Intent("context", raw=msg)
+        if re.search(r"\b(add|track|monitor|subscribe|watch)\b.*\bcourse\b", low):
+            return Intent("course_add", query=msg, raw=msg)
+        if re.search(r"\b(check|scan|monitor|update)\b.*\bcourse(s)?\b", low):
+            return Intent("course_check", raw=msg)
+        if re.search(r"\bmy courses\b|\blist courses\b|\bshow courses\b", low):
+            return Intent("course_list", raw=msg)
+        if re.search(r"\bcourse(s)?\b.*\b(materials?|files|docs?|notes|slides)\b", low):
+            code = extract_course_code(msg) or ""
+            return Intent("course_docs", query=code, raw=msg)
+
+        # --- Phase 3: food / chef ---
+        if re.search(r"\b(from the pantry|in the fridge|in my kitchen|what do i have)\b", low):
+            return Intent("food_list", raw=msg)
+        if re.search(r"\bexpires?\b|\bexpiring\b|about to expire|going bad|use it or lose it",
+                     low):
+            return Intent("food_expiring", raw=msg)
+        if re.search(r"\b(add|log|record)\b.*\b(food|pantry|fridge|items?)\b|\bi bought\b|\bgot some\b", low):
+            return Intent("food_add", query=msg, raw=msg)
+        if re.search(r"\b(used|ate|cooked|consumed)\b.*\b\b", low):
+            return Intent("food_consume", query=msg, raw=msg)
+        if re.search(r"\b(shopping list|grocery list|what to buy|things to buy)\b", low):
+            return Intent("grocery", raw=msg)
+        if re.search(r"\b(plan|make)\b.*\b(meal|dinner|lunch|breakfast)\b|\bmeal plan\b", low):
+            return Intent("meal_plan", query=msg, raw=msg)
+        # recipe search is matched before the generic "recipe" so "search recipes ..." works
+        if re.search(r"\b(search|find|look up|browse)\b.*\b(recipes?|dishes?)\b|\bcook\b.*\brecipes\b", low):
+            return Intent("recipe_search", query=msg, raw=msg)
+        if re.search(r"\b(recipe library|my recipes|collected recipes|saved recipes|recipe book)\b", low):
+            return Intent("recipe_library", raw=msg)
+        if re.search(r"\b(meal history|recent (meals|recipes)|last meals|cooked (recently|lately))\b", low):
+            return Intent("recipe_history", raw=msg)
+        if re.search(r"\b(star|favorite|favou?rite)\b.*\brecipe\b|\brate\b.*\b[0-5]\b" +
+                     r"|\b(star|favorite|favou?rite)\b\s+\S", low):
+            return Intent("recipe_mark", query=msg, raw=msg)
+        if re.search(r"\bfavorites?\b|\bfavourites?\b|my saved|bookmarked|show.*favorite", low):
+            return Intent("favorites", raw=msg)
+        if re.search(r"\b(what can i (cook|make|eat|have)|recipe|dinner idea|whats for|what's for)\b", low):
+            return Intent("recipe", query=msg, raw=msg)
+
+        # --- Phase 3: NAS / inbox ---
+        if re.search(r"\b(inbox|incoming)\b.*\b(organize|process|file|sort)\b" +
+                     r"|\b(organize|process|file|ingest)\b.*\binbox\b" +
+                     r"|\b(nas|storage)\b.*\b(ingest|organize|process)\b", low):
+            return Intent("nas_ingest", raw=msg)
 
         if re.search(r"\b(resume|cv)\b", low):
             return Intent("resume", raw=msg)
@@ -172,6 +229,49 @@ class Decider:
             return Intent("reschedule", raw=raw)
         if cmd in ("calendar", "connect", "link"):
             return Intent("connect", arg, raw=raw)
+        # --- Phase 3: course intelligence ---
+        if cmd in ("course", "course-add", "addcourse", "track", "add_course"):
+            return Intent("course_add", query=target or arg, raw=raw)
+        if cmd in ("courses", "course-list", "listcourses"):
+            return Intent("course_list", raw=raw)
+        if cmd in ("checkcourses", "checkcourse", "monitor", "scan"):
+            return Intent("course_check", raw=raw)
+        if cmd in ("materials", "coursedocs", "course-docs"):
+            return Intent("course_docs", query=target, raw=raw)
+        # --- Phase 3: food / chef ---
+        if cmd in ("pantry", "food", "inventory", "whatdohave"):
+            return Intent("food_list", raw=raw)
+        if cmd in ("expiring", "expire", "useit"):
+            return Intent("food_expiring", raw=raw)
+        if cmd in ("addfood", "add-food", "stock", "logfood"):
+            return Intent("food_add", query=target or arg, raw=raw)
+        if cmd in ("used", "consume", "ate"):
+            return Intent("food_consume", query=target or arg, raw=raw)
+        if cmd in ("grocery", "shopping", "buylist"):
+            return Intent("grocery", raw=raw)
+        if cmd in ("meal", "mealplan", "planmeal", "dinner", "lunch"):
+            return Intent("meal_plan", query=target or arg, raw=raw)
+        if cmd in ("recipe", "cook", "suggest", "whatcanicook"):
+            return Intent("recipe", query=target or arg, raw=raw)
+        if cmd in ("searchrecipes", "findrecipes", "recipes"):
+            return Intent("recipe_search", query=target or arg, raw=raw)
+        if cmd in ("favorites", "favs", "favrecipes"):
+            return Intent("favorites", raw=raw)
+        if cmd in ("recipelibrary", "mrecipes", "library"):
+            return Intent("recipe_library", raw=raw)
+        if cmd in ("mealhistory", "history", "recentmeals"):
+            return Intent("recipe_history", raw=raw)
+        if cmd in ("favoriterecipe", "starrecipe"):
+            return Intent("recipe_mark", query=target or arg, raw=raw)
+        if cmd in ("rate",):
+            return Intent("recipe_mark", query=target or arg, raw=raw)
+        # --- Phase 3: NAS + context + proactive ---
+        if cmd in ("ingest", "processinbox"):
+            return Intent("nas_ingest", raw=raw)
+        if cmd in ("context", "briefing", "brief", "status"):
+            return Intent("context", raw=raw)
+        if cmd in ("proactive", "checks"):
+            return Intent("proactive", raw=raw)
         return Intent("help", raw=raw)
 
     # ---------------------------------------------------------------- handlers
@@ -259,7 +359,292 @@ class Decider:
         if k == "connect":
             return {"kind": "connect", "url": "https://console.cloud.google.com",
                     "note": "Set client_secret.json then run `butler calendar connect`."}
+        # --- Phase 3: course / food / nas / context / proactive ---
+        if k == "course_add":
+            return self._do_course_add(intent)
+        if k == "course_list":
+            return self._do_course_list()
+        if k == "course_check":
+            return self._do_course_check()
+        if k == "course_docs":
+            return self._do_course_docs(intent)
+        if k == "food_add":
+            return self._do_food_add(intent)
+        if k == "food_list":
+            return self._do_food_list()
+        if k == "food_expiring":
+            return self._do_food_expiring()
+        if k == "food_consume":
+            return self._do_food_consume(intent)
+        if k == "recipe":
+            return self._do_recipe(intent)
+        if k == "recipe_search":
+            return self._do_recipe_search(intent)
+        if k == "recipe_library":
+            return self._do_recipe_library()
+        if k == "favorites":
+            return self._do_favorites()
+        if k == "recipe_history":
+            return self._do_recipe_history()
+        if k == "recipe_mark":
+            return self._do_recipe_mark(intent)
+        if k == "meal_plan":
+            return self._do_meal_plan(intent)
+        if k == "grocery":
+            return self._do_grocery(intent)
+        if k == "nas_ingest":
+            return self._do_nas_ingest()
+        if k == "context":
+            return self._do_context()
+        if k == "proactive":
+            return self._do_proactive()
         return {"kind": "help"}
+
+    # ---------------------------------------------------------------- Phase 3
+    def _do_course_add(self, intent: Intent) -> dict[str, Any]:
+        if self.courses is None:
+            return {"kind": "course_add", "ok": False, "error": "courses not configured"}
+        msg = intent.query or intent.raw
+        code = extract_course_code(msg) or self._first_token(msg)
+        url = self._course_url(msg)
+        res = self.courses.add_course(code or "", url=url)
+        if res.get("need_url"):
+            return {"kind": "course_add", "ok": True,
+                    "question": f"Added {code}. What is the course website URL?",
+                    "need_url": True, "course_id": res["course_id"]}
+        return {"kind": "course_add", "ok": True,
+                "course": res.get("course"), "code": code.upper()}
+
+    def _do_course_list(self) -> dict[str, Any]:
+        if self.courses is None:
+            return {"kind": "course_list", "ok": False, "error": "courses not configured"}
+        return {"kind": "course_list", "courses": self.courses.list_courses()}
+
+    def _do_course_check(self) -> dict[str, Any]:
+        if self.courses is None:
+            return {"kind": "course_check", "ok": False, "error": "courses not configured"}
+        updates = self.courses.check_all()
+        return {"kind": "course_check", "updates": updates, "count": len(updates)}
+
+    def _do_course_docs(self, intent: Intent) -> dict[str, Any]:
+        if self.courses is None:
+            return {"kind": "course_docs", "ok": False, "error": "courses not configured"}
+        code = (intent.query or "").strip()
+        docs = []
+        if code:
+            course = self.courses.course(code)
+            if course:
+                docs = [dict(r) for r in self.db.course_documents(int(course["id"]))]
+        return {"kind": "course_docs", "code": code.upper(), "documents": docs}
+
+    def _do_food_add(self, intent: Intent) -> dict[str, Any]:
+        if self.food is None:
+            return {"kind": "food_add", "ok": False, "error": "food not configured"}
+        text = self._food_note(intent)
+        parsed = self.food.parse(text)["added"]
+        added = [self.food.add(i["name"], i["quantity"], i["unit"])
+                 for i in parsed]
+        return {"kind": "food_add", "added": added, "count": len(added)}
+
+    def _do_food_list(self) -> dict[str, Any]:
+        if self.food is None:
+            return {"kind": "food_list", "ok": False, "error": "food not configured"}
+        return {"kind": "food_list", "items": self.food.all()}
+
+    def _do_food_expiring(self) -> dict[str, Any]:
+        if self.food is None:
+            return {"kind": "food_expiring", "ok": False, "error": "food not configured"}
+        return {"kind": "food_expiring", "items": self.food.expiring(3)}
+
+    def _do_food_consume(self, intent: Intent) -> dict[str, Any]:
+        if self.food is None:
+            return {"kind": "food_consume", "ok": False, "error": "food not configured"}
+        msg = intent.query or intent.raw
+        name = self._consume_name(msg)
+        res = self.food.consume(name)
+        return {"kind": "food_consume", **res}
+
+    @staticmethod
+    def _consume_name(msg: str) -> str:
+        low = msg.lower()
+        rest = msg
+        for kw in ("used", "ate", "cooked", "consumed", "used up"):
+            idx = low.find(kw)
+            if idx >= 0:
+                rest = msg[idx + len(kw):]
+                break
+        rest = re.sub(r"^\s*(some|the|all|of|both|a couple|a few|couple|two|one|a|an)\s*",
+                      "", rest, flags=re.I)
+        rest = re.sub(r"^[0-9]+(?:\.[0-9]+)?\s*", "", rest)
+        return rest.strip().lower().strip(" .")
+
+    def _do_recipe(self, intent: Intent) -> dict[str, Any]:
+        if self.chef is None:
+            return {"kind": "recipe", "ok": False, "error": "chef not configured"}
+        budget = self._free_budget()
+        plan = self.chef.plan_meal(budget_minutes=budget)
+        return {"kind": "recipe", "plan": plan, "budget_minutes": budget}
+
+    def _do_meal_plan(self, intent: Intent) -> dict[str, Any]:
+        if self.chef is None:
+            return {"kind": "meal_plan", "ok": False, "error": "chef not configured"}
+        msg = intent.query or intent.raw
+        meal = self._meal_name(msg)
+        budget = self._free_budget()
+        plan = self.chef.plan_meal(budget_minutes=budget, meal=meal)
+        return {"kind": "meal_plan", "plan": plan, "meal": meal,
+                "budget_minutes": budget}
+
+    def _do_grocery(self, intent: Intent) -> dict[str, Any]:
+        if self.chef is None:
+            return {"kind": "grocery", "ok": False, "error": "chef not configured"}
+        items = self.chef.grocery_list()
+        return {"kind": "grocery", "items": items}
+
+    @staticmethod
+    def _recipe_query(msg: str) -> str:
+        low = msg.lower()
+        for kw in ("search", "find", "look up", "recipes for", "recipe for", "whats a good"):
+            idx = low.find(kw)
+            if idx >= 0:
+                text = msg[idx + len(kw):]
+                break
+        else:
+            text = msg
+        return re.sub(r"^[\s,:;]+", "", text).strip().strip(".").strip()
+
+    def _do_recipe_search(self, intent: Intent) -> dict[str, Any]:
+        if self.chef is None:
+            return {"kind": "recipe_search", "ok": False, "error": "chef not configured"}
+        query = self._recipe_query(intent.query or intent.raw)
+        results = self.chef.search(query)
+        return {"kind": "recipe_search", "query": query, "results": results}
+
+    def _do_recipe_library(self) -> dict[str, Any]:
+        if self.chef is None:
+            return {"kind": "recipe_library", "ok": False, "error": "chef not configured"}
+        lib = self.chef.library()
+        return {"kind": "recipe_library", "count": len(lib), "recipes": lib}
+
+    def _do_favorites(self) -> dict[str, Any]:
+        if self.chef is None:
+            return {"kind": "favorites", "ok": False, "error": "chef not configured"}
+        favs = self.chef.favorites()
+        return {"kind": "favorites", "count": len(favs), "recipes": favs}
+
+    def _do_recipe_history(self) -> dict[str, Any]:
+        if self.chef is None:
+            return {"kind": "recipe_history", "ok": False, "error": "chef not configured"}
+        hist = self.chef.history()
+        return {"kind": "recipe_history", "count": len(hist), "history": hist}
+
+    def _find_recipe(self, name: str) -> Any | None:
+        if self.chef is None:
+            return None
+        db = getattr(self.chef, "db", None)
+        if db is None:
+            return None
+        row = db.recipe_by_name(name)
+        if row:
+            return row
+        if name:
+            for r in db.recipes():
+                if name.lower() in str(r["name"]).lower():
+                    return r
+        return None
+
+    def _do_recipe_mark(self, intent: Intent) -> dict[str, Any]:
+        if self.chef is None:
+            return {"kind": "recipe_mark", "ok": False, "error": "chef not configured"}
+        msg = (intent.query or intent.raw).strip()
+        low = msg.lower()
+        rating: float | None = None
+        m = re.search(r"\b([0-5](?:\.\d+)?)\b", low)
+        if m and "rate" in low:
+            rating = float(m.group(1))
+        fav = "unfavorite" not in low and "unfav" not in low
+        name = msg
+        if rating is not None:
+            name = re.sub(r"\b[0-5](?:\.\d+)?\b", " ", name)
+        name = re.sub(r"\b(favorite|favou?rite|star|rate|recipe|as|it|to|a)\b",
+                      " ", name, flags=re.I)
+        name = re.sub(r"\s+", " ", name).strip().strip(" .")
+        if not name:
+            return self._do_favorites()
+        row = self._find_recipe(name)
+        if row is None:
+            return {"kind": "recipe_mark", "ok": False, "error": "recipe not found"}
+        rid = int(row["id"])
+        if rating is not None:
+            self.chef.rate(rid, rating)
+        self.chef.set_favorite(rid, fav)
+        return {"kind": "recipe_mark", "recipe_id": rid, "favorite": fav,
+                "rating": rating, "ok": True}
+
+    def _do_nas_ingest(self) -> dict[str, Any]:
+        if self.nas is None:
+            return {"kind": "nas_ingest", "ok": False, "error": "nas not configured"}
+        res = self.nas.ingest_inbox()
+        return {"kind": "nas_ingest", **res}
+
+    def _do_context(self) -> dict[str, Any]:
+        if self.context is None:
+            return {"kind": "context", "ok": False, "error": "context not configured"}
+        return {"kind": "context", "snapshot": self.context.snapshot()}
+
+    def _do_proactive(self) -> dict[str, Any]:
+        if self.proactive is None:
+            return {"kind": "proactive", "ok": False, "error": "proactive not configured"}
+        return {"kind": "proactive", "messages": self.proactive.collect()}
+
+    # ---- Phase 3 helpers ----
+    def _free_budget(self) -> int:
+        if self.context is not None:
+            try:
+                s = self.context.snapshot()
+                free = int(s.get("free_minutes_today", 60))
+                return max(20, min(free, 120))
+            except Exception:  # pragma: no cover
+                pass
+        return 45
+
+    @staticmethod
+    def _first_token(msg: str) -> str:
+        m = re.search(r"\b([A-Z]{2,4}\d{2,4})\b", msg.upper())
+        return m.group(1) if m else ""
+
+    @staticmethod
+    def _course_url(msg: str) -> str:
+        m = re.search(r"(https?://\S+)", msg)
+        if m:
+            return m.group(1).strip()
+        m = re.search(r"(/\S+)", msg)  # an absolute path (offline/local feed)
+        return m.group(1).strip() if m else ""
+
+    @staticmethod
+    def _food_note(intent: Intent) -> str:
+        msg = intent.query or intent.raw
+        low = msg.lower()
+        for kw in ("add", "log", "record", "bought"):
+            idx = low.find(kw)
+            if idx >= 0:
+                msg = msg[idx + len(kw):]
+                break
+        note = msg.strip().lstrip(": ").strip()
+        note = re.sub(r"^(my|to|the|in|into|onto|some)\s+", "", note, flags=re.I)
+        note = re.sub(r"^(pantry|fridge|freezer|kitchen|cabinet|shelf|stock)\b\s*",
+                      "", note, flags=re.I)
+        note = re.sub(r"\s+(to\s+(my|the)?\s*)?(pantry|fridge|freezer|kitchen|cabinet)$",
+                      "", note, flags=re.I)
+        return note.strip()
+
+    @staticmethod
+    def _meal_name(msg: str) -> str:
+        low = msg.lower()
+        for kw in ("breakfast", "lunch", "dinner", "supper"):
+            if kw in low:
+                return kw
+        return "supper"
 
     # ---------------------------------------------------------------- pieces
     def _do_workspace(self, intent: Intent, user: str) -> Plan:

@@ -36,6 +36,8 @@ class Engine:
             self.allowed.append(os.path.realpath(cfg.course_dir))
         if cfg.incoming_dir:
             self.allowed.append(os.path.realpath(cfg.incoming_dir))
+        if cfg.nas_enabled and cfg.nas_dir:
+            self.allowed.append(os.path.realpath(cfg.nas_dir))
         # trash is interior; allow engine to write there
         self.allowed.append(os.path.realpath(cfg.state_dir))
 
@@ -234,7 +236,7 @@ CATEGORY_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("University", tuple(".lecture .slides".split())),
 ]
 
-_COURSE_RE = re.compile(r"\b([A-Z]{2,4}\s?-?\s?\d{2,4})\b")
+_COURSE_RE = re.compile(r"\b([A-Z]{2,4}\s?-?\s?\d{2,4})(?![A-Za-z0-9])")
 
 
 def classify_by_ext(name: str) -> str:

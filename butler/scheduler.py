@@ -20,8 +20,13 @@ from typing import Any
 log = logging.getLogger("butler.scheduler")
 
 
-def _cadence_seconds(spec: str) -> int:
-    """Parse 'daily'|'weekly'|'6h'|'30m'|'900s' into seconds (0 = disabled)."""
+def _cadence_seconds(spec: str | int) -> int:
+    """Parse 'daily'|'weekly'|'6h'|'30m'|'900s' into seconds (0 = disabled).
+
+    An integer is already a number of seconds (e.g. course_monitor_interval).
+    """
+    if isinstance(spec, int):
+        return int(spec)
     spec = (spec or "").strip().lower()
     if not spec:
         return 0
@@ -84,6 +89,10 @@ class Scheduler:
                 ("reindex", self.cfg.reindex_every_hours * 3600, self._run_reindex),
                 ("backup", _cadence_seconds(self.cfg.backup_schedule), self._run_backup),
                 ("digest", _cadence_seconds(self.cfg.digest_schedule), self._run_digest),
+                ("courses", _cadence_seconds(self.cfg.course_monitor_interval),
+                 self._run_courses),
+                ("proactive", _cadence_seconds(self.cfg.proactive_schedule),
+                 self._run_proactive),
             ]
             for name, every, fn in jobs:
                 if every <= 0:
@@ -111,6 +120,25 @@ class Scheduler:
     def _run_backup(self) -> None:
         res = self.container.backup.run()
         log.info("scheduled backup: %s", res.get("dest", res))
+
+    def _run_courses(self) -> None:
+        courses = getattr(self.container, "courses", None)
+        if courses is None:
+            return
+        updates = courses.check_all()
+        if updates:
+            log.info("course monitor: %d update(s)", len(updates))
+            if self.cfg.digest_chat and self.cfg.telegram_token:
+                self._push_digest("📚 New course activity:\n" + "\n".join(
+                    f"• {u.get('course_code','')} {u.get('title','')}"
+                    for u in updates))
+
+    def _run_proactive(self) -> None:
+        proactive = getattr(self.container, "proactive", None)
+        if proactive is None:
+            return
+        res = proactive.run()
+        log.info("proactive check: %s", res)
 
     def _run_digest(self) -> None:
         text = self.build_digest(self.container)

@@ -133,6 +133,20 @@ class Config:
     index_hidden: bool = False
     max_file_size_mb: int = 256
 
+    # --- courses (Phase 3: course intelligence) ---
+    course_monitor_interval: int = 3600   # default seconds between checks
+    # --- food (Phase 3: chef) ---
+    recipe_provider: str = "offline"       # offline | web (see food.py)
+    # --- NAS / file system (Phase 3) ---
+    nas_enabled: bool = False
+    nas_dir: str = ""                      # e.g. /mnt/storage
+    nas_inbox_dir: str = ""                # e.g. /mnt/storage/Inbox
+    samba_share: str = "butler"            # Samba share name to generate
+    # --- proactive (Phase 3: proactive butler) ---
+    proactive_enabled: bool = True
+    proactive_schedule: str = "hourly"     # cadence for background checks
+    notify_chat: int = 0                   # telegram chat id (0 = fall back to digest_chat)
+
     config_path: str = ""
 
     # ------------------------------------------------------------------
@@ -163,6 +177,16 @@ class Config:
             Path(self.incoming_dir).mkdir(parents=True, exist_ok=True)
         if self.links_dir:
             Path(self.links_dir).mkdir(parents=True, exist_ok=True)
+        if self.nas_dir:
+            try:
+                Path(self.nas_dir).mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass
+        if self.nas_inbox_dir and self.nas_inbox_dir != self.nas_dir:
+            try:
+                Path(self.nas_inbox_dir).mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass
 
     @classmethod
     def load(cls, path: str | os.PathLike | None = None) -> "Config":
@@ -257,6 +281,25 @@ class Config:
                                                  cfg.urgency_deadline_days))
         cfg.undo_history_max = int(pl.get("undo_history_max", cfg.undo_history_max))
 
+        crs = page.get("courses", {})
+        cfg.course_monitor_interval = int(
+            crs.get("monitor_interval", cfg.course_monitor_interval))
+
+        fd = page.get("food", {})
+        cfg.recipe_provider = fd.get("recipe_provider", cfg.recipe_provider)
+
+        nas = page.get("nas", {})
+        cfg.nas_enabled = bool(nas.get("enabled", cfg.nas_enabled))
+        cfg.nas_dir = _expand(nas.get("dir", "")) or cfg.nas_dir
+        cfg.nas_inbox_dir = _expand(nas.get("inbox", "")) \
+            or (cfg.nas_dir and str(Path(cfg.nas_dir) / "Inbox") or "")
+        cfg.samba_share = nas.get("samba_share", cfg.samba_share)
+
+        pro = page.get("proactive", {})
+        cfg.proactive_enabled = bool(pro.get("enabled", cfg.proactive_enabled))
+        cfg.proactive_schedule = pro.get("schedule", cfg.proactive_schedule)
+        cfg.notify_chat = int(pro.get("notify_chat", cfg.notify_chat or cfg.digest_chat))
+
         emb = page.get("embed", {})
         cfg.embed_model = emb.get("model", cfg.embed_model)
         cfg.embed_dim = int(emb.get("dim", cfg.embed_dim))
@@ -296,4 +339,13 @@ class Config:
             "min_slot_minutes": self.min_slot_minutes,
             "telegram_configured": bool(self.telegram_token),
             "telegram_allowed": self.telegram_allowed_users,
+            "course_dir": self.course_dir,
+            "course_monitor_interval": self.course_monitor_interval,
+            "recipe_provider": self.recipe_provider,
+            "nas_enabled": self.nas_enabled,
+            "nas_dir": self.nas_dir,
+            "nas_inbox_dir": self.nas_inbox_dir,
+            "proactive_enabled": self.proactive_enabled,
+            "proactive_schedule": self.proactive_schedule,
+            "notify_chat": self.notify_chat,
         }

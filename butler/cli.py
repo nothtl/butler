@@ -32,6 +32,10 @@ def main(argv: list[str] | None = None) -> int:
         "mcp", "daemon",
         "task", "tasks", "day", "now", "done", "skip", "start", "cameup", "why",
         "undo", "reschedule", "calendar",
+        "course", "courses", "checkcourses", "materials", "ingest",
+        "pantry", "food", "addfood", "expiring", "used", "grocery",
+        "meal", "recipe", "searchrecipes", "favorites", "recipelibrary",
+        "mealhistory", "rate", "context",
     ])
     p.add_argument("args", nargs="*")
     p.add_argument("--yes", action="store_true", help="auto-confirm bulk plans")
@@ -208,6 +212,70 @@ def dispatch(container: Container, ns: argparse.Namespace) -> int:
         return emit(container, {"kind": "day", **container.planner.undo()}, ns)
     if cmd == "reschedule":
         return emit(container, {"kind": "day", **container.planner.reschedule()}, ns)
+    # ------------------------------------------------ Phase 3: course / food
+    if cmd == "course":
+        text = " ".join(args)
+        if not text:
+            print("usage: butler course <code> [url]", file=sys.stderr)
+            return 1
+        return emit(container, container.decider.resolve(
+            container.decider.parse(f"add course {text}")), ns)
+    if cmd == "courses":
+        return emit(container, container.decider.resolve(
+            container.decider.parse("show courses")), ns)
+    if cmd == "checkcourses":
+        return emit(container, container.decider.resolve(
+            container.decider.parse("check courses")), ns)
+    if cmd == "materials":
+        code = args[0] if args else ""
+        return emit(container, container.decider.resolve(
+            container.decider.parse(f"course {code} materials" if code else "course materials")), ns)
+    if cmd == "ingest":
+        return emit(container, container.decider.resolve(
+            container.decider.parse("organize inbox")), ns)
+    if cmd == "food":
+        return emit(container, container.decider.resolve(
+            container.decider.parse("what do i have")), ns)
+    if cmd in ("pantry", "inventory"):
+        return emit(container, container.decider.resolve(
+            container.decider.parse("what do i have")), ns)
+    if cmd == "addfood":
+        return emit(container, container.decider.resolve(
+            container.decider.parse("add to pantry " + " ".join(args))), ns)
+    if cmd == "expiring":
+        return emit(container, container.decider.resolve(
+            container.decider.parse("what's expiring soon")), ns)
+    if cmd == "used":
+        return emit(container, container.decider.resolve(
+            container.decider.parse("used " + " ".join(args))), ns)
+    if cmd == "grocery":
+        return emit(container, container.decider.resolve(
+            container.decider.parse("grocery list")), ns)
+    if cmd == "recipe":
+        return emit(container, container.decider.resolve(
+            container.decider.parse("what can i cook")), ns)
+    if cmd == "meal":
+        return emit(container, container.decider.resolve(
+            container.decider.parse("plan " + " ".join(args) + " meal")), ns)
+    if cmd == "searchrecipes":
+        return emit(container, container.decider.resolve(
+            container.decider.parse("search recipes " + " ".join(args))), ns)
+    if cmd == "favorites":
+        return emit(container, container.decider.resolve(
+            container.decider.parse("favorites")), ns)
+    if cmd == "recipelibrary":
+        return emit(container, container.decider.resolve(
+            container.decider.parse("recipe library")), ns)
+    if cmd == "mealhistory":
+        return emit(container, container.decider.resolve(
+            container.decider.parse("meal history")), ns)
+    if cmd == "rate":
+        name = " ".join(args)
+        return emit(container, container.decider.resolve(
+            container.decider.parse("favorite " + name)), ns)
+    if cmd == "context":
+        return emit(container, container.decider.resolve(
+            container.decider.parse("briefing")), ns)
     if cmd == "calendar":
         sub = args[0] if args else ""
         if sub == "connect":
@@ -382,6 +450,74 @@ def render(c: Container, r: dict) -> str:
         return str(r)
     if k == "plan_why":
         return r.get("reason", "no explanation")
+    # ------------------------------------------------ Phase 3 renderers
+    if k == "course_add":
+        if r.get("need_url"):
+            return f"Tracked {r.get('code')}; need a URL — `butler course {r.get('code')} <url>`"
+        return f"Tracking course {r.get('code')}."
+    if k == "course_list":
+        cs = r.get("courses", [])
+        return "\n".join(f"{c['code']} — {c.get('name','')} ({c.get('url') or 'no URL'})"
+                         for c in cs) or "No courses tracked."
+    if k == "course_check":
+        us = r.get("updates", [])
+        return "\n".join(f"{u.get('course_code','')}: {u.get('title','')} "
+                         f"({u.get('doc_type','')})" for u in us) or "No new course activity."
+    if k == "course_docs":
+        ds = r.get("documents", [])
+        return "\n".join(f"{d.get('title','')} ({d.get('doc_type','')}) @ {d.get('local_path','')}"
+                         for d in ds) or f"No materials for {r.get('code','')}."
+    if k == "food_add":
+        return "Stored: " + ", ".join(a.get("name", "") for a in r.get("added", [])) or "nothing"
+    if k == "food_list":
+        return "\n".join(f"{i['name']} — {i.get('quantity','')}{i.get('unit','')}"
+                         for i in r.get("items", [])) or "Pantry is empty."
+    if k == "food_expiring":
+        return "\n".join(f"{i['name']} ({i.get('days_left','')}d)" for i in r.get("items", [])) \
+            or "Nothing expiring soon."
+    if k == "food_consume":
+        name = r.get("name", "")
+        return f"Removed {name}." if r.get("removed") else f"{name} updated to {r.get('quantity')}"
+    if k in ("recipe", "meal_plan"):
+        p = r.get("plan", {})
+        if not p.get("recipe"):
+            return p.get("message", "No recipe fits.")
+        tag = "🍳 " + p["recipe"] if k == "recipe" else f"🍽 {p['meal']}: {p['recipe']}"
+        ms = f"\n  get: {', '.join(p['missing'])}" if p.get("missing") else ""
+        return f"{tag} (~{p['time_minutes']}min, {p['difficulty']}, ¥{p['cost']})\n" \
+               f"have {int(p['have_ratio']*100)}% ingredients{ms}".replace("'", "'")
+    if k == "recipe_search":
+        res = r.get("results", [])
+        return "\n".join(f"• {x['name']} ({x['time_minutes']}min, "
+                         f"source={x.get('source')})" for x in res[:8]) \
+            or f"Nothing found for '{r.get('query','')}'"
+    if k == "recipe_library":
+        rec = r.get("recipes", [])
+        return "\n".join(f"{'⭐' if x.get('favorite') else '•'} {x['name']} "
+                         f"({x['time_minutes']}min, used {x.get('times_used',0)})"
+                         for x in rec[:20]) or "(empty)"
+    if k == "favorites":
+        rec = r.get("recipes", [])
+        return "\n".join(f"⭐ {x['name']} ({x['time_minutes']}min, "
+                         f"rating {float(x.get('rating',0)):.1f})" for x in rec) or "(none yet)"
+    if k == "recipe_history":
+        h = r.get("history", [])
+        return "\n".join(f"• {x.get('recipe_name','?')} — {x.get('meal','')}"
+                         for x in h[:20]) or "No meals planned yet."
+    if k == "recipe_mark":
+        return f"{'⭐ starred' if r.get('favorite') else 'unstarred'} #{r.get('recipe_id')} " \
+               f"rating={r.get('rating')}"
+    if k == "grocery":
+        return "\n".join(f"{i['name']} — {i.get('quantity','')}{i.get('unit','')}"
+                         for i in r.get("items", [])) or "Nothing to buy."
+    if k == "nas_ingest":
+        moved = r.get("moved", [])
+        return "\n".join(f"  {os.path.basename(a)} -> {b}" for a, b in moved) \
+            or "Inbox is empty."
+    if k == "context":
+        return r.get("snapshot_text", "") or str(r.get("snapshot"))
+    if k == "proactive":
+        return "\n".join(r.get("messages", [])) or "All clear."
     return json.dumps(r, indent=2, default=default_json)
 
 

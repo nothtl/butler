@@ -148,6 +148,94 @@ CREATE TABLE IF NOT EXISTS plans(
     json        TEXT           -- serialised PlanState (slots + snapshot)
 );
 CREATE INDEX IF NOT EXISTS idx_plans_created ON plans(created);
+
+-- ---------- Phase 3: courses ----------
+CREATE TABLE IF NOT EXISTS courses(
+    id             INTEGER PRIMARY KEY,
+    code           TEXT UNIQUE NOT NULL,
+    name           TEXT,
+    instructor     TEXT,
+    url            TEXT,
+    platform       TEXT,
+    semester       TEXT,
+    monitoring_enabled INTEGER DEFAULT 1,
+    monitoring_interval INTEGER DEFAULT 3600,   -- seconds
+    created_at     INTEGER,
+    updated_at     INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS course_documents(
+    id          INTEGER PRIMARY KEY,
+    course_id   INTEGER REFERENCES courses(id) ON DELETE CASCADE,
+    title       TEXT,
+    url         TEXT,
+    local_path  TEXT,
+    document_type TEXT,        -- lecture | project | reading | exam | spec | announcement
+    content_hash TEXT,
+    downloaded_at INTEGER,
+    version     INTEGER DEFAULT 1,
+    external_id TEXT           -- dedupe key (e.g. web page url / listing hash)
+);
+CREATE INDEX IF NOT EXISTS idx_cdoc_course ON course_documents(course_id);
+
+-- ---------- Phase 3: food ----------
+CREATE TABLE IF NOT EXISTS food_items(
+    id          INTEGER PRIMARY KEY,
+    name        TEXT NOT NULL,
+    quantity    REAL DEFAULT 1,
+    unit        TEXT DEFAULT '',
+    expiration_date INTEGER,        -- unix day-ts of expiry; 0 = none
+    opened_date INTEGER,
+    category    TEXT,               -- protein | vegetable | dairy | pantry | etc
+    storage_location TEXT,          -- fridge | freezer | pantry
+    notes       TEXT,
+    created_at  INTEGER,
+    updated_at  INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_food_exp ON food_items(expiration_date);
+
+CREATE TABLE IF NOT EXISTS shopping_items(
+    id          INTEGER PRIMARY KEY,
+    name        TEXT NOT NULL,
+    quantity    REAL DEFAULT 1,
+    unit        TEXT DEFAULT '',
+    category    TEXT,
+    needed_for  TEXT,               -- recipe / meal referenced
+    purchased   INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS recipes(
+    id          INTEGER PRIMARY KEY,
+    name        TEXT NOT NULL,
+    source      TEXT DEFAULT 'builtin',
+    source_url  TEXT DEFAULT '',
+    ingredients TEXT DEFAULT '[]',   -- JSON
+    steps       TEXT DEFAULT '[]',   -- JSON
+    tags        TEXT DEFAULT '[]',   -- JSON
+    equipment   TEXT DEFAULT '[]',   -- JSON
+    servings    INTEGER DEFAULT 2,
+    prep_minutes INTEGER DEFAULT 0,
+    cook_minutes INTEGER DEFAULT 0,
+    difficulty  INTEGER DEFAULT 2,
+    cost        REAL DEFAULT 2.0,
+    rating      REAL DEFAULT 0.0,
+    favorite    INTEGER DEFAULT 0,
+    times_used  INTEGER DEFAULT 0,
+    last_used   INTEGER DEFAULT 0,
+    created_at  INTEGER DEFAULT 0,
+    UNIQUE(name, source_url)
+);
+CREATE INDEX IF NOT EXISTS idx_recipes_fav ON recipes(favorite);
+CREATE INDEX IF NOT EXISTS idx_recipes_last ON recipes(last_used);
+
+CREATE TABLE IF NOT EXISTS meal_history(
+    id          INTEGER PRIMARY KEY,
+    recipe_id   INTEGER,
+    meal        TEXT DEFAULT '',
+    ts          INTEGER DEFAULT 0,
+    created_at  INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_meal_history_ts ON meal_history(ts);
 """
 
 
@@ -508,3 +596,266 @@ class DB:
             sql += " LIMIT ?"
             return self.query(sql, (limit,))
         return self.query(sql)
+
+    # ---------- courses (Phase 3) ----------
+    def add_course(self, code: str, name: str = "", instructor: str = "",
+                   url: str = "", platform: str = "", semester: str = "",
+                   monitoring_enabled: int = 1,
+                   monitoring_interval: int = 3600) -> int:
+        now = int(time.time())
+        code = code.strip().upper()
+        existing = self.one("SELECT id FROM courses WHERE code=?", (code,))
+        if existing:
+            self.execute(
+                "UPDATE courses SET name=?, instructor=?, url=?, platform=?, "
+                "semester=?, monitoring_enabled=?, monitoring_interval=?, "
+                "updated_at=? WHERE id=?",
+                (name, instructor, url, platform, semester, monitoring_enabled,
+                 monitoring_interval, now, int(existing["id"])),
+            )
+            return int(existing["id"])
+        cur = self.execute(
+            "INSERT INTO courses(code,name,instructor,url,platform,semester,"
+            "monitoring_enabled,monitoring_interval,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (code, name, instructor, url, platform, semester,
+             monitoring_enabled, monitoring_interval, now, now),
+        )
+        return int(cur.lastrowid)
+
+    def course_by_id(self, course_id: int) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM courses WHERE id=?", (course_id,))
+
+    def course_by_code(self, code: str) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM courses WHERE code=?", (code.strip().upper(),))
+
+    def courses(self) -> list[sqlite3.Row]:
+        return self.query("SELECT * FROM courses ORDER BY code")
+
+    def update_course(self, course_id: int, **fields: Any) -> None:
+        if not fields:
+            return
+        fields = dict(fields)
+        fields["updated_at"] = int(time.time())
+        cols = ", ".join(f"{k}=?" for k in fields)
+        self.execute(
+            f"UPDATE courses SET {cols} WHERE id=?",
+            tuple(fields.values()) + (course_id,),
+        )
+
+    def delete_course(self, course_id: int) -> None:
+        self.execute("DELETE FROM courses WHERE id=?", (course_id,))
+
+    def courses_to_monitor(self) -> list[sqlite3.Row]:
+        return self.query(
+            "SELECT * FROM courses WHERE monitoring_enabled=1 ORDER BY code")
+
+    # ---------- course documents ----------
+    def add_course_document(self, course_id: int, title: str, url: str = "",
+                            local_path: str = "", document_type: str = "reading",
+                            content_hash: str = "", external_id: str = "") -> int:
+        existing = None
+        if external_id:
+            existing = self.one(
+                "SELECT id FROM course_documents WHERE course_id=? AND external_id=?",
+                (course_id, external_id))
+        if existing is None and url:
+            existing = self.one(
+                "SELECT id FROM course_documents WHERE course_id=? AND url=?",
+                (course_id, url))
+        if existing:
+            self.execute(
+                "UPDATE course_documents SET title=?, local_path=?, "
+                "document_type=?, downloaded_at=? WHERE id=?",
+                (title, local_path, document_type, int(time.time()),
+                 int(existing["id"])),
+            )
+            return int(existing["id"])
+        cur = self.execute(
+            "INSERT INTO course_documents(course_id,title,url,local_path,"
+            "document_type,content_hash,downloaded_at,version,external_id) "
+            "VALUES(?,?,?,?,?,?,?,1,?)",
+            (course_id, title, url, local_path, document_type,
+             content_hash, int(time.time()), external_id),
+        )
+        return int(cur.lastrowid)
+
+    def course_documents(self, course_id: int | None = None) -> list[sqlite3.Row]:
+        if course_id is not None:
+            return self.query(
+                "SELECT * FROM course_documents WHERE course_id=? ORDER BY downloaded_at DESC",
+                (course_id,))
+        return self.query("SELECT * FROM course_documents ORDER BY downloaded_at DESC")
+
+    def doc_by_id(self, doc_id: int) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM course_documents WHERE id=?", (doc_id,))
+
+    def update_course_document(self, doc_id: int, **fields: Any) -> None:
+        if not fields:
+            return
+        cols = ", ".join(f"{k}=?" for k in fields)
+        self.execute(
+            f"UPDATE course_documents SET {cols} WHERE id=?",
+            tuple(fields.values()) + (doc_id,),
+        )
+
+    # ---------- food inventory (Phase 3) ----------
+    def add_food(self, name: str, quantity: float = 1.0, unit: str = "",
+                 expiration_date: int = 0, opened_date: int = 0,
+                 category: str = "", storage_location: str = "",
+                 notes: str = "") -> int:
+        now = int(time.time())
+        cur = self.execute(
+            "INSERT INTO food_items(name,quantity,unit,expiration_date,opened_date,"
+            "category,storage_location,notes,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (name.strip().lower(), quantity, unit, expiration_date, opened_date,
+             category, storage_location, notes, now, now),
+        )
+        return int(cur.lastrowid)
+
+    def food_by_id(self, food_id: int) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM food_items WHERE id=?", (food_id,))
+
+    def food(self) -> list[sqlite3.Row]:
+        return self.query("SELECT * FROM food_items ORDER BY name")
+
+    def update_food(self, food_id: int, **fields: Any) -> None:
+        if not fields:
+            return
+        fields = dict(fields)
+        fields["updated_at"] = int(time.time())
+        cols = ", ".join(f"{k}=?" for k in fields)
+        self.execute(
+            f"UPDATE food_items SET {cols} WHERE id=?",
+            tuple(fields.values()) + (food_id,),
+        )
+
+    def delete_food(self, food_id: int) -> None:
+        self.execute("DELETE FROM food_items WHERE id=?", (food_id,))
+
+    def find_food(self, name: str) -> sqlite3.Row | None:
+        return self.one(
+            "SELECT * FROM food_items WHERE name LIKE ? ORDER BY id DESC LIMIT 1",
+            (f"%{name.strip().lower()}%",))
+
+    # ---------- shopping list (Phase 3) ----------
+    def add_shopping(self, name: str, quantity: float = 1.0, unit: str = "",
+                     category: str = "", needed_for: str = "") -> int:
+        name = name.strip().lower()
+        existing = self.one(
+            "SELECT id FROM shopping_items WHERE name=? AND purchased=0", (name,))
+        if existing:
+            self.execute(
+                "UPDATE shopping_items SET quantity=quantity+? WHERE id=?",
+                (quantity, int(existing["id"])),
+            )
+            return int(existing["id"])
+        cur = self.execute(
+            "INSERT INTO shopping_items(name,quantity,unit,category,needed_for) "
+            "VALUES(?,?,?,?,?)",
+            (name, quantity, unit, category, needed_for),
+        )
+        return int(cur.lastrowid)
+
+    def shopping(self, purchased: int = 0) -> list[sqlite3.Row]:
+        if purchased is None:
+            return self.query("SELECT * FROM shopping_items ORDER BY category, name")
+        return self.query(
+            "SELECT * FROM shopping_items WHERE purchased=? ORDER BY category, name",
+            (purchased,))
+
+    def shopping_by_id(self, item_id: int) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM shopping_items WHERE id=?", (item_id,))
+
+    def update_shopping(self, item_id: int, **fields: Any) -> None:
+        if not fields:
+            return
+        cols = ", ".join(f"{k}=?" for k in fields)
+        self.execute(
+            f"UPDATE shopping_items SET {cols} WHERE id=?",
+            tuple(fields.values()) + (item_id,),
+        )
+
+    def clear_shopping(self, purchased: bool = True) -> int:
+        if purchased:
+            cur = self.execute("DELETE FROM shopping_items WHERE purchased=1")
+        else:
+            cur = self.execute("DELETE FROM shopping_items")
+        return int(cur.rowcount)
+
+    # ------------------------------------------------------ recipe library
+    def add_recipe(self, name: str, source: str = "builtin", source_url: str = "",
+                   ingredients: list[str] | None = None,
+                   steps: list[str] | None = None, tags: list[str] | None = None,
+                   equipment: list[str] | None = None, servings: int = 2,
+                   prep_minutes: int = 0, cook_minutes: int = 0,
+                   difficulty: int = 2, cost: float = 2.0) -> int:
+        import json as _json
+        existing = self.one(
+            "SELECT id FROM recipes WHERE name=? AND source_url=?",
+            (str(name), str(source_url)))
+        if existing:
+            return int(existing["id"])
+        cur = self.execute(
+            "INSERT INTO recipes(name,source,source_url,ingredients,steps,tags,"
+            "equipment,servings,prep_minutes,cook_minutes,difficulty,cost,created_at)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (str(name), str(source), str(source_url),
+             _json.dumps(ingredients or [], ensure_ascii=False),
+             _json.dumps(steps or [], ensure_ascii=False),
+             _json.dumps(tags or [], ensure_ascii=False),
+             _json.dumps(equipment or [], ensure_ascii=False),
+             int(servings), int(prep_minutes), int(cook_minutes),
+             int(difficulty), float(cost), int(time.time())))
+        return int(cur.lastrowid)
+
+    def recipe_by_id(self, recipe_id: int) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM recipes WHERE id=?", (recipe_id,))
+
+    def recipe_by_name(self, name: str) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM recipes WHERE name=? ORDER BY id DESC LIMIT 1",
+                        (str(name),))
+
+    def recipe_by_key(self, name: str, source_url: str) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM recipes WHERE name=? AND source_url=?",
+                        (str(name), str(source_url)))
+
+    def recipes(self, favorite_only: int | None = None) -> list[sqlite3.Row]:
+        if favorite_only is not None:
+            return self.query("SELECT * FROM recipes WHERE favorite=? "
+                              "ORDER BY rating DESC, times_used DESC", (favorite_only,))
+        return self.query("SELECT * FROM recipes "
+                          "ORDER BY favorite DESC, rating DESC, times_used DESC")
+
+    def recipes_recent(self, limit: int = 10) -> list[sqlite3.Row]:
+        return self.query("SELECT * FROM recipes WHERE times_used>0 "
+                          "ORDER BY last_used DESC LIMIT ?", (int(limit),))
+
+    def set_favorite(self, recipe_id: int, favorite: bool) -> None:
+        self.execute("UPDATE recipes SET favorite=? WHERE id=?",
+                     (1 if favorite else 0, int(recipe_id)))
+
+    def set_rating(self, recipe_id: int, rating: float) -> None:
+        self.execute("UPDATE recipes SET rating=? WHERE id=?",
+                     (float(rating), int(recipe_id)))
+
+    def touch_usage(self, recipe_id: int) -> None:
+        self.execute("UPDATE recipes SET times_used=times_used+1, last_used=? "
+                     "WHERE id=?", (int(time.time()), int(recipe_id)))
+
+    def delete_recipe(self, recipe_id: int) -> None:
+        self.execute("DELETE FROM recipes WHERE id=?", (int(recipe_id),))
+
+    def add_meal_history(self, recipe_id: int, meal: str = "",
+                         ts: int = 0) -> int:
+        cur = self.execute(
+            "INSERT INTO meal_history(recipe_id, meal, ts, created_at) VALUES(?,?,?,?)",
+            (int(recipe_id), str(meal), int(ts or time.time()), int(time.time())))
+        return int(cur.lastrowid)
+
+    def meal_history(self, limit: int = 20) -> list[sqlite3.Row]:
+        return self.query(
+            "SELECT m.*, r.name AS recipe_name, r.source "
+            "FROM meal_history m LEFT JOIN recipes r ON r.id=m.recipe_id "
+            "ORDER BY m.ts DESC LIMIT ?", (int(limit),))

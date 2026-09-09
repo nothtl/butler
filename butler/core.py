@@ -22,6 +22,11 @@ from .organizer import Organizer
 from .planner import Planner
 from .search import Search
 from .trash import Trash
+from .course import CourseIntelligence
+from .food import Chef, FoodInventory
+from .nas import FileManager
+from .context import ContextEngine
+from .proactive import Proactive
 
 
 class Container:
@@ -35,9 +40,22 @@ class Container:
         self.chat = Chat(self.cfg, self.db, self.search)
         self.organizer = Organizer(self.cfg, self.db, self.engine)
         self.planner = Planner(self)
+        # --- Phase 3 subsystems ---
+        self.courses = CourseIntelligence(self)
+        self.food = FoodInventory(self)
+        self.chef = Chef(self)
+        # NAS dirs must be inside the managed roots for the deterministic engine.
+        if self.cfg.nas_enabled and self.cfg.nas_dir:
+            self.cfg.roots = list(self.cfg.roots) + [self.cfg.nas_dir]
+            self.cfg.index_roots = list(self.cfg.index_roots) + [self.cfg.nas_dir]
+        self.nas = FileManager(self)
+        self.context = ContextEngine(self)
+        self.proactive = Proactive(self)
         self.decider = Decider(self.cfg, self.db, self.engine,
                                self.organizer, self.search, self.chat,
-                               planner=self.planner)
+                               planner=self.planner, courses=self.courses,
+                               food=self.food, chef=self.chef, nas=self.nas,
+                               context=self.context, proactive=self.proactive)
         self.trash = Trash(self.cfg, self.db, self.engine)
         self.indexer = Indexer(self.cfg, self.db, self.embedder)
         self.backup = Backup(self.cfg, self.db)
@@ -81,6 +99,25 @@ class Container:
                 return {"ok": True, **self.planner.why()}
             if route == "/tasks":
                 return {"ok": True, "tasks": [dict(r) for r in self.db.tasks("active")]}
+            if route == "/context":
+                return {"ok": True, "context": self.context.snapshot()}
+            if route == "/courses":
+                return {"ok": True, "courses": self.courses.list_courses()}
+            if route == "/documents":
+                code = args.get("code", "")
+                course = self.courses.course(code) if code else self.courses.list_courses()[:1]
+                docs = []
+                if course:
+                    docs = [dict(r) for r in self.db.course_documents(int(course["id"]))]
+                return {"ok": True, "documents": docs}
+            if route == "/food":
+                return {"ok": True, "items": self.food.all()}
+            if route == "/expiring":
+                return {"ok": True, "items": self.food.expiring(int(args.get("days", 3)))}
+            if route == "/grocery":
+                return {"ok": True, "items": [dict(r) for r in self.db.shopping(0)]}
+            if route == "/nas":
+                return {"ok": True, **self.nas.list_root()}
         elif method == "POST":
             if route == "/organize":
                 plan = self.organizer.plan_organize(args.get("path", "~/Downloads"))
@@ -119,6 +156,26 @@ class Container:
                 return {"ok": True, **self.planner.reschedule()}
             if route == "/connect":
                 return {"ok": False, "error": "Run `butler calendar connect` in a terminal."}
+            if route == "/course/add":
+                return {"ok": True, **self.courses.add_course(
+                    args.get("code", ""), name=args.get("name", ""),
+                    url=args.get("url", ""), platform=args.get("platform", ""),
+                    semester=args.get("semester", ""))}
+            if route == "/course/check":
+                return {"ok": True, "updates": self.courses.check_all()}
+            if route == "/food/add":
+                added = self.food.parse(args.get("note", ""))["added"]
+                return {"ok": True, "added": [self.food.add(i["name"], i["quantity"], i["unit"])
+                                              for i in added]}
+            if route == "/food/consume":
+                return {"ok": True, **self.food.consume(args.get("name", ""))}
+            if route == "/recipe":
+                budget = int(args.get("budget_minutes", 45))
+                return {"ok": True, **self.chef.plan_meal(budget_minutes=budget)}
+            if route == "/nas/ingest":
+                return {"ok": True, **self.nas.ingest_inbox()}
+            if route == "/proactive":
+                return {"ok": True, **self.proactive.run()}
             return {"ok": False, "error": "unknown route"}
         return {"ok": False, "error": "unsupported"}
 
