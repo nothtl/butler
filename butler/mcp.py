@@ -19,7 +19,7 @@ from typing import Any
 log = logging.getLogger("butler.mcp")
 
 SERVER_NAME = "butler"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 PROTOCOL = "2024-11-05"
 
 
@@ -70,7 +70,64 @@ class MCPServer:
             s("recipe_history", "Recently cooked/planned meals.", {}, []),
             s("rate_recipe", "Rate a recipe 0-5 by id or name.",
               {"recipe": {"type": "string"}, "rating": {"type": "integer"}}, []),
-            s("context", "Personal context snapshot (free time, deadlines, expiring food).", {}, []),
+            s("context", "Personal context snapshot (free time, deadlines, expiring food).", {},
+              []),
+            s("presence", "Home presence/location from Home Assistant (if configured).", {}, []),
+            s("health", "Butler subsystem health + run mode.", {}, []),
+            s("day", "Compute the schedule plan for today (read-only preview).",
+              {}, []),
+            s("what_now", "What Butler recommends you do right now.", {},
+              []),
+            s("why", "Explain why the schedule changed (last plan diff).", {}, []),
+            s("tasks", "List active tasks.", {}, []),
+            s("task_add", "Add a task (appears in planning / scheduling).",
+              {"title": {"type": "string"}, "detail": {"type": "string"},
+               "est_minutes": {"type": "integer"}, "deadline": {"type": "integer"},
+               "priority": {"type": "integer"}, "tags": {"type": "string"}},
+              ["title"]),
+            s("task_start", "Move a task to doing (state transition).",
+              {"task_id": {"type": "integer"}}, ["task_id"]),
+            s("task_done", "Complete a task.",
+              {"task_id": {"type": "integer"}}, ["task_id"]),
+            s("task_skip", "Skip a task.",
+              {"task_id": {"type": "integer"}}, ["task_id"]),
+            s("task_defer", "Defer a task.",
+              {"task_id": {"type": "integer"}}, ["task_id"]),
+            s("task_block", "Mark a task blocked.",
+              {"task_id": {"type": "integer"}}, ["task_id"]),
+            s("task_cancel", "Cancel a task.",
+              {"task_id": {"type": "integer"}}, ["task_id"]),
+            s("came_up", "An unplanned urgent thing appeared: add it and re-plan.",
+              {"title": {"type": "string"}, "est_minutes": {"type": "integer"},
+               "deadline": {"type": "integer"}, "priority": {"type": "integer"}},
+              ["title"]),
+            s("reschedule", "Re-solve the planner for the full day.", {}, []),
+            s("undo", "Undo the last schedule change.", {}, []),
+            s("add_course", "Track a new course (creates dir + monitors files).",
+              {"code": {"type": "string"}, "name": {"type": "string"},
+               "url": {"type": "string"}, "platform": {"type": "string"},
+               "semester": {"type": "string"}},
+              ["code"]),
+            s("drop_course", "Stop tracking a course.",
+              {"code": {"type": "string"}}, ["code"]),
+            s("course_check", "Check all tracked courses for new materials/assignments.",
+              {}, []),
+            s("brief", "Morning/standup executive briefing (tasks, deadlines, risks).",
+              {}, []),
+            s("review", "End-of-day executive review (what got done).", {}, []),
+            s("routines_list", "Active + candidate routines.", {}, []),
+            s("scan_routines", "Detect candidate routines from history.",
+              {}, []),
+            s("routines_confirm", "Confirm a candidate routine.",
+              {"routine_id": {"type": "integer"}}, []),
+            s("routines_reject", "Reject a candidate routine.",
+              {"routine_id": {"type": "integer"}}, []),
+            s("rewards", "List the reward library (little treats after tasks).",
+              {}, []),
+            s("suggest_reward", "Suggest a reward scaled to a task's effort.",
+              {"task_id": {"type": "integer"},
+               "est_minutes": {"type": "integer"},
+               "priority": {"type": "integer"}}, []),
         ]
 
     # ------------------------- tool invocation -------------------------
@@ -134,6 +191,86 @@ class MCPServer:
             return c.chef.rate(int(row["id"]), rating)
         if name == "context":
             return c.context.snapshot()
+        if name == "presence":
+            snap = c.context.snapshot()
+            return {"presence": snap.get("presence", {}),
+                    "now": snap.get("now")}
+        if name == "health":
+            return {"ready": c.health.ready(), "liveness": c.health.liveness(),
+                    **c.health.status()}
+        if name == "day":
+            return c.planner.plan_day()
+        if name == "what_now":
+            return c.planner.what_now()
+        if name == "why":
+            return c.planner.why()
+        if name == "tasks":
+            return {"tasks": [dict(r) for r in c.db.tasks("active")]}
+        if name == "task_add":
+            tid = c.planner.add_task(
+                a.get("title", ""), detail=a.get("detail", ""),
+                est_minutes=int(a.get("est_minutes", 60)),
+                deadline=int(a.get("deadline", 0)),
+                priority=int(a.get("priority", 3)), tags=a.get("tags", ""))
+            return {"ok": True, "task_id": tid,
+                    "title": a.get("title"), "state": "todo"}
+        if name == "task_start":
+            return c.planner.start(int(a.get("task_id", 0)))
+        if name == "task_done":
+            return c.planner.done(int(a.get("task_id", 0)))
+        if name == "task_skip":
+            return c.planner.skip(int(a.get("task_id", 0)))
+        if name == "task_defer":
+            return c.planner.defer(int(a.get("task_id", 0)))
+        if name == "task_block":
+            return c.planner.block_task(int(a.get("task_id", 0)))
+        if name == "task_cancel":
+            return c.planner.cancel_task(int(a.get("task_id", 0)))
+        if name == "came_up":
+            return c.planner.came_up(
+                a.get("title", ""), est_minutes=int(a.get("est_minutes", 60)),
+                deadline=int(a.get("deadline", 0)),
+                priority=int(a.get("priority", 4)))
+        if name == "reschedule":
+            return c.planner.reschedule()
+        if name == "undo":
+            return c.planner.undo()
+        if name == "add_course":
+            return c.courses.add_course(
+                a.get("code", ""), name=a.get("name", ""), url=a.get("url", ""),
+                platform=a.get("platform", ""), semester=a.get("semester", ""))
+        if name == "drop_course":
+            return c.courses.remove_course(a.get("code", ""))
+        if name == "course_check":
+            return {"updates": c.courses.check_all()}
+        if name == "brief":
+            return {"briefing": c.executive.briefing()}
+        if name == "review":
+            return {"review": c.executive.review()}
+        if name == "routines_list":
+            return {"active": c.routines.active(), "candidates": c.routines.candidates()}
+        if name == "scan_routines":
+            return c.routines.scan()
+        if name == "routines_confirm":
+            return c.routines.confirm(a.get("routine_id"))
+        if name == "routines_reject":
+            return c.routines.reject(a.get("routine_id"))
+        if name == "rewards":
+            from . import motivation
+            return {"rewards": [dict(r) for r in c.db.rewards()]}
+        if name == "suggest_reward":
+            from . import motivation
+            est = int(a.get("est_minutes", 0))
+            prio = int(a.get("priority", 0))
+            tid = a.get("task_id")
+            if tid:
+                row = c.db.task_by_id(int(tid))
+                if row:
+                    est = est or int(row["est_minutes"] or 0)
+                    prio = prio or int(row["priority"] or 0)
+            importance = motivation.task_importance(est, prio)
+            return {"importance": importance,
+                    "reward": motivation.suggest_reward(c.db, importance)}
         raise ValueError(f"unknown tool: {name}")
 
     # ------------------------- json-rpc -------------------------
