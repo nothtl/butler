@@ -203,6 +203,10 @@ class Config:
     # never GPS coordinates or tokens. ``retention_days`` = 0 keeps everything.
     timeline_enabled: bool = True
     timeline_retention_days: int = 30
+    # Memory write gate (Phase 6): cap how many timeline events Butler may add
+    # per local day before it stops writing to long-term memory (a runaway loop
+    # can't infinite-spam its own history). 0 = unlimited (legacy behaviour).
+    timeline_max_events_per_day: int = 0
 
     # --- learned routines & habits (Phase 4.4) ---
     # Deterministic, explainable pattern detection over the context timeline.
@@ -217,6 +221,30 @@ class Config:
     routines_stale_days: int = 21        # no update for this long -> stale
     routines_max_observations: int = 5   # saturating window for the count term
     routines_affinity_max: int = 4       # cap the soft boost (below explicit +/-6/8)
+
+    # --- reliability, safety & recovery (Phase 6) ---
+    # Centralized retry (bounded exponential backoff). A retry keeps the SAME
+    # run_id + idempotency key so it never duplicates its side effect.
+    retry_max: int = 3                   # max attempts per operation
+    retry_base_delay: float = 0.5        # seconds before first retry
+    retry_max_delay: float = 30.0        # cap on backoff
+    # Rate limiting: token bucket over the consequent-external class so a
+    # runaway/retry storm never overwhelms the outside world.
+    rate_limit_capacity: float = 20.0    # burst allowed in the window
+    rate_limit_window: float = 3600.0    # window seconds (capacity flows back)
+    # Circuit breaker: open a failing class after this many consecutive errors,
+    # then pause it for ``breaker_cooldown`` seconds before allowing a retry.
+    breaker_threshold: int = 5
+    breaker_cooldown: float = 300.0
+    # Health: a heartbeat older than this is reported stale, and the scheduler
+    # reclaims a lease this old (a crashed run).
+    heartbeat_max_age: int = 300
+    # Audit retention: rows finished after this many days are prunable (0 = keep).
+    audit_retention_days: int = 90
+    # Offline mode: never reach the outside world (Telegram/GCal/HA all skip).
+    # Degraded mode: block external calls but keep local Butler-owned work going.
+    offline_mode: bool = False
+    degraded_mode: bool = False
 
     config_path: str = ""
 
@@ -414,6 +442,8 @@ class Config:
         cfg.timeline_enabled = bool(tl.get("enabled", cfg.timeline_enabled))
         cfg.timeline_retention_days = int(tl.get("retention_days",
                                                  cfg.timeline_retention_days))
+        cfg.timeline_max_events_per_day = int(tl.get("max_events_per_day",
+                                                     cfg.timeline_max_events_per_day))
 
         rt = page.get("routines", {})
         cfg.routines_enabled = bool(rt.get("enabled", cfg.routines_enabled))
@@ -435,6 +465,22 @@ class Config:
         emb = page.get("embed", {})
         cfg.embed_model = emb.get("model", cfg.embed_model)
         cfg.embed_dim = int(emb.get("dim", cfg.embed_dim))
+
+        rel = page.get("reliability", {})
+        cfg.retry_max = int(rel.get("retry_max", cfg.retry_max))
+        cfg.retry_base_delay = float(rel.get("retry_base_delay", cfg.retry_base_delay))
+        cfg.retry_max_delay = float(rel.get("retry_max_delay", cfg.retry_max_delay))
+        cfg.rate_limit_capacity = float(rel.get("rate_limit_capacity",
+                                                cfg.rate_limit_capacity))
+        cfg.rate_limit_window = float(rel.get("rate_limit_window",
+                                              cfg.rate_limit_window))
+        cfg.breaker_threshold = int(rel.get("breaker_threshold", cfg.breaker_threshold))
+        cfg.breaker_cooldown = float(rel.get("breaker_cooldown", cfg.breaker_cooldown))
+        cfg.heartbeat_max_age = int(rel.get("heartbeat_max_age", cfg.heartbeat_max_age))
+        cfg.audit_retention_days = int(rel.get("audit_retention_days",
+                                               cfg.audit_retention_days))
+        cfg.offline_mode = bool(rel.get("offline_mode", cfg.offline_mode))
+        cfg.degraded_mode = bool(rel.get("degraded_mode", cfg.degraded_mode))
 
         cfg.ensure_dirs()
         cfg.validate()
@@ -506,6 +552,20 @@ class Config:
             raise ValueError(f"remote_port out of range: {self.remote_port}")
         if self.timezone:
             self._validate_timezone(self.timezone)
+        if self.retry_max < 1:
+            raise ValueError(f"retry_max must be >= 1: {self.retry_max}")
+        if self.retry_base_delay < 0 or self.retry_max_delay < 0:
+            raise ValueError("retry delays must be >= 0")
+        if self.retry_max_delay < self.retry_base_delay:
+            raise ValueError("retry_max_delay must be >= retry_base_delay")
+        if self.rate_limit_capacity <= 0 or self.rate_limit_window <= 0:
+            raise ValueError("rate limit capacity and window must be > 0")
+        if self.heartbeat_max_age < 1:
+            raise ValueError("heartbeat_max_age must be >= 1")
+        if self.audit_retention_days < 0:
+            raise ValueError("audit_retention_days must be >= 0")
+        if self.timeline_max_events_per_day < 0:
+            raise ValueError("timeline_max_events_per_day must be >= 0")
 
     def _validate_timezone(self, tz: str) -> None:
         try:
@@ -584,6 +644,7 @@ class Config:
             "home_assistant_configured": bool(self.home_assistant_token),
             "timeline_enabled": self.timeline_enabled,
             "timeline_retention_days": self.timeline_retention_days,
+            "timeline_max_events_per_day": self.timeline_max_events_per_day,
             "routines_enabled": self.routines_enabled,
             "routines_min_observations": self.routines_min_observations,
             "routines_confidence_min": self.routines_confidence_min,
@@ -593,4 +654,16 @@ class Config:
             "routines_stale_days": self.routines_stale_days,
             "routines_max_observations": self.routines_max_observations,
             "routines_affinity_max": self.routines_affinity_max,
+            "retry_max": self.retry_max,
+            "retry_base_delay": self.retry_base_delay,
+            "retry_max_delay": self.retry_max_delay,
+            "rate_limit_capacity": self.rate_limit_capacity,
+            "rate_limit_window": self.rate_limit_window,
+            "breaker_threshold": self.breaker_threshold,
+            "breaker_cooldown": self.breaker_cooldown,
+            "heartbeat_max_age": self.heartbeat_max_age,
+            "audit_retention_days": self.audit_retention_days,
+            "offline_mode": self.offline_mode,
+            "degraded_mode": self.degraded_mode,
+            "degraded_or_offline": self.degraded_mode or self.offline_mode,
         }

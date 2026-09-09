@@ -81,10 +81,18 @@ class Scheduler:
     # ---------------- main loop ----------------
     def _loop(self) -> None:
         state = self._load_state()
+        # migrate/seed the DB-backed scheduler state so restart keeps last-run.
+        self._seed_state()
         # run any job that is already overdue once on startup
         while not self._stop.wait(60):
             now = int(time.time())
-            changed = False
+            self.db = getattr(self.container, "db", None)
+            # Reclaim any lease left by a crashed run so the job can resume.
+            if self.db is not None:
+                try:
+                    self.db.scheduler_reclaim_stale(now)
+                except Exception:  # noqa: BLE001
+                    pass
             jobs = [
                 ("reindex", self.cfg.reindex_every_hours * 3600, self._run_reindex),
                 ("backup", _cadence_seconds(self.cfg.backup_schedule), self._run_backup),
@@ -103,16 +111,79 @@ class Scheduler:
             for name, every, fn in jobs:
                 if every <= 0:
                     continue
-                last = int(state.get(name, 0) or 0)
-                if last + every <= now:
-                    try:
-                        fn()
-                        state[name] = int(time.time())
-                        changed = True
-                    except Exception as exc:  # noqa: BLE001
-                        log.warning("job %s failed: %s", name, exc)
-            if changed:
-                self._save_state(state)
+                last = self._last_run(name, state, int(now))
+                if last + every > now:
+                    continue
+                if not self._acquire(name):
+                    continue
+                try:
+                    # circuit-breaker guard: pause a job that keeps failing.
+                    if getattr(self.container, "retry", None) and \
+                            getattr(self.container, "retry", None).breaker_open(name):
+                        self._skip(name, "circuit_open")
+                        continue
+                    fn()
+                    state[name] = int(time.time())
+                    self._mark_done(name, ok=True)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("job %s failed: %s", name, exc)
+                    self._mark_done(name, ok=False, error=str(exc))
+            self._save_state(state)
+
+    # ---------------- DB-backed job state (Phase 6 robustness) ----------------
+    def _seed_state(self) -> None:
+        if getattr(self.container, "db", None) is None:
+            return
+        try:
+            self.container.db.upsert_scheduler_state("reindex", self.cfg.reindex_every_hours * 3600)
+            self.container.db.upsert_scheduler_state("backup", _cadence_seconds(self.cfg.backup_schedule))
+            self.container.db.upsert_scheduler_state("digest", _cadence_seconds(self.cfg.digest_schedule))
+            self.container.db.upsert_scheduler_state("courses", _cadence_seconds(self.cfg.course_monitor_interval))
+            self.container.db.upsert_scheduler_state("proactive", _cadence_seconds(self.cfg.proactive_schedule))
+            self.container.db.upsert_scheduler_state("gcal_sync", _cadence_seconds(self.cfg.calendar_sync_schedule))
+            self.container.db.upsert_scheduler_state("briefing", _cadence_seconds(self.cfg.briefing_schedule))
+            self.container.db.upsert_scheduler_state("review", _cadence_seconds(self.cfg.review_schedule))
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _last_run(self, name: str, state: dict, now: int) -> int:
+        """Last run time from the DB scheduler_state (falls back to the legacy
+        state file so an existing install does not re-run everything)."""
+        if getattr(self.container, "db", None) is not None:
+            try:
+                row = self.container.db.scheduler_state(name)
+                if row is not None:
+                    return int(row["last_done"] or 0) or int(row["last_ts"] or 0) \
+                        or int(state.get(name, 0) or 0)
+            except Exception:  # noqa: BLE001
+                pass
+        return int(state.get(name, 0) or 0)
+
+    def _acquire(self, name: str) -> bool:
+        """Acquire the per-job lease so a long/overlapping run is skipped."""
+        db = getattr(self.container, "db", None)
+        if db is None:
+            return True
+        try:
+            return db.scheduler_mark_start(name)
+        except Exception:  # noqa: BLE001
+            return True
+
+    def _mark_done(self, name: str, ok: bool, error: str = "") -> None:
+        db = getattr(self.container, "db", None)
+        if db is not None:
+            try:
+                db.scheduler_mark_done(name, ok, error)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _skip(self, name: str, reason: str) -> None:
+        db = getattr(self.container, "db", None)
+        if db is not None:
+            try:
+                db.scheduler_note_skipped(name, reason)
+            except Exception:  # noqa: BLE001
+                pass
 
     # ---------------- jobs ----------------
     def _run_reindex(self) -> None:

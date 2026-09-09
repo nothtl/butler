@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import shutil
 import time
 from typing import Any
@@ -697,9 +698,19 @@ class TelegramBot:
     async def on_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
         await query.answer()
+        if not self._authorized(update):
+            return
         data = query.data or ""
+        # Callback validation: refuse anything that isn't a known shape, so a
+        # forged/foreign callback_data can never trigger an action.
+        if not re.match(r"^[a-z_]+:[a-z_:0-9-]+$", data):
+            await query.edit_message_text("⚠️ Unrecognised action.")
+            return
         if data.startswith("tact:"):
             _pre, act, tid = data.split(":", 2)
+            if not tid.isdigit():
+                await query.edit_message_text("⚠️ Invalid task id.")
+                return
             _slash = {"start": "begin", "done": "done", "defer": "defer",
                       "skip": "skip", "cancel": "cancel",
                       "block": "block", "resume": "resume"}.get(act, act)
@@ -712,10 +723,22 @@ class TelegramBot:
             if not plan:
                 await query.edit_message_text("Plan expired — please trigger again.")
                 return
+            user = update.effective_user.username or "user"
+            # Safety gate: applying a consequential plan is a destructive
+            # external effect; it must pass the deterministic policy before the
+            # files move. The user tapping Confirm is the recorded consent.
+            safety = getattr(self.container, "safety", None)
+            if safety is not None:
+                decision = safety.check("organize", actor=user,
+                                        confirmed=True, target=plan.title)
+                if not decision.allow:
+                    await query.edit_message_text(
+                        f"⛔ Refused: {decision.reason}")
+                    return
             try:
                 plan.confirmed = True
                 applied = self.container.organizer.apply_plan(
-                    plan, user=update.effective_user.username or "user")
+                    plan, user=user)
                 text = self._apply_text(applied)
                 await query.edit_message_text(f"✅ Applied.\n{text}")
             except Exception as exc:

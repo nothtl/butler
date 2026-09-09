@@ -33,6 +33,12 @@ from .timeline import Timeline
 from .routines import Routines
 from .foodplan import FoodPlanner
 from .executive import Executive
+from .audit import Audit
+from .idempotency import Idempotency
+from .safety import SafetyPolicy
+from .retry import RetryPolicy
+from .health import Health
+from .recovery import Recovery
 
 
 class Container:
@@ -46,6 +52,15 @@ class Container:
             unknown_category=self.cfg.affinity_unknown_category,
         )
         self.db = DB(self.cfg)
+        # --- Phase 6: reliability, safety & recovery (built early so every
+        # subsystem can use the audit / safety / idempotency / retry gates) ---
+        self.audit = Audit(self.db)
+        self.idempotency = Idempotency(self.db)
+        self.retry = RetryPolicy(self.cfg)
+        self.safety = SafetyPolicy(self)
+        self.health = Health(self)
+        self.recovery = Recovery(self)
+        self.health.beat("db", note="container started")
         self.timeline = Timeline(self.cfg, self.db)
         self.routines = Routines(self)
         self.engine = Engine(self.cfg)
@@ -74,7 +89,8 @@ class Container:
                                food=self.food, chef=self.chef, nas=self.nas,
                                context=self.context, proactive=self.proactive,
                                timeline=self.timeline, routines=self.routines,
-                               foodplan=self.foodplan, executive=self.executive)
+                               foodplan=self.foodplan, executive=self.executive,
+                               container=self)
         self.trash = Trash(self.cfg, self.db, self.engine)
         self.indexer = Indexer(self.cfg, self.db, self.embedder)
         self.backup = Backup(self.cfg, self.db)
@@ -110,6 +126,16 @@ class Container:
                 return {"ok": True, "items": self.trash.list()}
             if route == "/backup":
                 return {"ok": True, **self.backup.status()}
+            if route == "/health":
+                return {"ok": self.health.ready(), **self.health.status()}
+            if route == "/audit":
+                action = args.get("action", "")
+                actor = args.get("actor", "")
+                lim = int(args.get("limit", 50))
+                return {"ok": True,
+                        "entries": self.audit.recent(limit=lim, action=action, actor=actor)}
+            if route == "/undo":
+                return {"ok": True, **self.recovery.undo(args.get("id", ""))}
             if route == "/day":
                 return {"ok": True, **self.planner.plan_day()}
             if route == "/now":
@@ -210,6 +236,14 @@ class Container:
                 return self.routines.reject(args.get("id"))
             if route == "/routines/forget":
                 return self.routines.forget(args.get("id"))
+            if route == "/db/backup":
+                return {"ok": True, **self.recovery.db_backup(args.get("note", ""))}
+            if route == "/db/restore":
+                return {"ok": True, **self.recovery.db_restore(args.get("path", ""))}
+            if route == "/mode":
+                return {"ok": True, **self.health.set_mode(
+                    degraded=bool(args.get("degraded")),
+                    offline=bool(args.get("offline")))}
             return {"ok": False, "error": "unknown route"}
         return {"ok": False, "error": "unsupported"}
 

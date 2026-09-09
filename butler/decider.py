@@ -21,6 +21,7 @@ from typing import Any
 
 from .config import Config
 from .db import DB
+from .safety import ActionClass
 from . import affinity
 from .engine import Engine, EngineError, extract_course_code
 from .organizer import Organizer, Plan, PlanItem
@@ -46,10 +47,11 @@ class Decider:
                  planner: Any = None, courses: Any = None, food: Any = None,
                  chef: Any = None, nas: Any = None, context: Any = None,
                  proactive: Any = None, timeline: Any = None, routines: Any = None,
-                 foodplan: Any = None, executive: Any = None):
+                 foodplan: Any = None, executive: Any = None, container: Any = None):
         self.cfg = cfg
         self.db = db
         self.engine = engine
+        self.container = container
         self.organizer = organizer
         self.search = search
         if chat is None:
@@ -71,6 +73,50 @@ class Decider:
         self.routines = routines
         self.foodplan = foodplan
         self.executive = executive
+
+    # ---------------------------------------------------------- safety gate
+    def _gate(self, intent: Any, user: str) -> dict[str, Any] | None:
+        """Phase 6: the deterministic safety boundary.
+
+        The LLM never performs a side effect — it only produces an intent. This
+        gate classifies that intent and refuses to run it when offline/degraded
+        mode blocks it, or when the policy warns the effect is destructive and
+        not (yet) confirmed. A denial is recorded in the audit log before the
+        side effect is skipped, so "what Butler did NOT do" is always provable.
+        Returns a denial response dict, or ``None`` when the action may proceed.
+        """
+        cfg = self.cfg
+        safety = getattr(self.container, "safety", None) if self.container else None
+        audit = getattr(self.container, "audit", None) if self.container else None
+        from . import logging as blog
+        run_id = blog.get_run_id()
+
+        # Offline mode: never reach outside at all.
+        if getattr(cfg, "offline_mode", False):
+            classify = getattr(safety, "classify", None)
+            cls = classify(intent.kind) if classify else ActionClass.CONSEQUENT_EXTERNAL
+            if cls.value != "read":
+                if audit is not None:
+                    audit.deny(intent.kind, run_id=run_id, actor=user,
+                               kind=cls.value,
+                               reason="offline mode: no external effects allowed")
+                return {"kind": intent.kind, "ok": False,
+                        "error": "offline mode: I won't reach the outside world. "
+                                 "Run `butler mode offline no` when ready.",
+                        "decision": "denied"}
+
+        # Consult the deterministic policy. We hard-block on rate-limit /
+        # circuit-breaker / degraded-mode denials (an unsafe or paused
+        # environment), but a "confirmation required" verdict is deferred to the
+        # plan-apply / confirm layer, where the human actually consents.
+        if safety is not None:
+            decision = safety.check(intent.kind, actor=user, run_id=run_id,
+                                    confirmed=getattr(intent, "confirmed", False))
+            if not decision.allow and not decision.needed.startswith("user confirmation"):
+                return {"kind": intent.kind, "ok": False,
+                        "error": "refused: " + decision.reason,
+                        "decision": decision.reason}
+        return None
 
     # ---------------------------------------------------------------- parse
     def parse(self, message: str) -> Intent:
@@ -436,6 +482,9 @@ class Decider:
     def resolve(self, intent: Intent, user: str = "user") -> Any:
         """Run a parsed intent and return a result object / Plan."""
         k = intent.kind
+        gate = self._gate(intent, user)
+        if gate is not None:
+            return gate
         if k == "help":
             return self._help()
         if k == "workspace":

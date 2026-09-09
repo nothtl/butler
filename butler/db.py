@@ -6,6 +6,7 @@ trash registry, duplicate registry, classification, and the operation log.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import time
 from pathlib import Path
@@ -388,6 +389,76 @@ CREATE TABLE IF NOT EXISTS exec_state(
     key     TEXT NOT NULL UNIQUE,
     value   TEXT NOT NULL DEFAULT ''
 );
+
+-- ---------- Phase 6: reliability, safety & recovery ----------
+-- Durable structured audit log. One row per auditable action. ``run_id`` ties
+-- a decision to the exact execution attempt (so a retry shares the run_id and
+-- the audit trail stays coherent). ``actor`` is the responsible entity
+-- (user | scheduler | telegram | cli | proactive | llm); the LLM itself is
+-- NEVER an actor on an external side effect — it only proposes, and the
+-- deterministic policy boundary records the decision.
+CREATE TABLE IF NOT EXISTS audit_log(
+    id          INTEGER PRIMARY KEY,
+    run_id      TEXT NOT NULL,
+    ts          INTEGER NOT NULL,
+    actor       TEXT NOT NULL DEFAULT '',
+    action      TEXT NOT NULL,             -- named operation
+    kind        TEXT DEFAULT '',           -- read | low_risk_write | consequent_external
+    target      TEXT DEFAULT '',           -- file path / event id / task id / ...
+    decision    TEXT DEFAULT 'allowed',    -- allowed | denied | degraded | error
+    reason      TEXT DEFAULT '',           -- human-readable rationale
+    outcome     TEXT DEFAULT '',           -- ok | failed | partial | not_applied
+    detail      TEXT DEFAULT '',           -- json metadata (never secrets)
+    idem_key    TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_audit_run ON audit_log(run_id);
+CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts);
+CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor);
+
+-- Universal idempotency registry: a dedupe key maps to a finished outcome so
+-- a retried/replayed operation returns the SAME result instead of running the
+-- side effect twice. Only successful/exhausted operations are stored here.
+CREATE TABLE IF NOT EXISTS idempotency(
+    id          INTEGER PRIMARY KEY,
+    key         TEXT NOT NULL UNIQUE,
+    hash        TEXT DEFAULT '',
+    actor       TEXT DEFAULT '',
+    action      TEXT DEFAULT '',
+    status      TEXT DEFAULT 'ok',         -- ok | in_progress | failed | exhausted
+    result      TEXT DEFAULT '',           -- json of the canonical payload
+    created     INTEGER DEFAULT 0,
+    expires     INTEGER DEFAULT 0          -- ts; 0 = never expires
+);
+
+-- Scheduler job state: one row per named job so the scheduler knows what is
+-- pending, when it last ran, and whether a run is already in flight (guard
+-- against overlapping/duplicate runs). This makes the scheduler robust across
+-- restarts and against a long-running job being triggered twice.
+CREATE TABLE IF NOT EXISTS scheduler_state(
+    id           INTEGER PRIMARY KEY,
+    job          TEXT NOT NULL UNIQUE,
+    cadence      INTEGER DEFAULT 0,        -- resolved cadence in seconds
+    last_ts      INTEGER DEFAULT 0,        -- last accepted start
+    last_done    INTEGER DEFAULT 0,        -- last successful finish
+    last_status  TEXT DEFAULT '',          -- ok | failed | running | skipped
+    last_error   TEXT DEFAULT '',
+    next_ts      INTEGER DEFAULT 0,        -- next scheduled run
+    locked_until INTEGER DEFAULT 0,        -- in-flight lease; 0 = not running
+    consecutive_failures INTEGER DEFAULT 0, -- for the circuit breaker
+    disabled     INTEGER DEFAULT 0
+);
+
+-- Heartbeat / health record. Kept in the DB (not just process memory) so
+-- ``butler health`` can report last-alive after a crash, and the scheduler
+-- can detect a stale lock (a crashed run) and reclaim it.
+CREATE TABLE IF NOT EXISTS heartbeat(
+    id          INTEGER PRIMARY KEY,
+    source      TEXT NOT NULL UNIQUE,      -- db | scheduler | telebot | gcal | ...
+    ts          INTEGER DEFAULT 0,
+    status      TEXT DEFAULT 'ok',         -- ok | degraded | down
+    note        TEXT DEFAULT '',
+    pid         INTEGER DEFAULT 0
+);
 """
 
 
@@ -433,6 +504,17 @@ class DB:
         except Exception:
             pass
 
+    def reopen(self) -> None:
+        """Re-open the connection (used after a restore replaced the file)."""
+        try:
+            self.conn.close()
+        except Exception:
+            pass
+        self.conn = sqlite3.connect(self.path, check_same_thread=False)
+        self.conn.row_factory = sqlite3.Row
+        self.conn.executescript("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
+        self.conn.commit()
+
     # ---------- generic helpers ----------
     def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
         with self._lock:
@@ -466,6 +548,154 @@ class DB:
     def all_meta(self) -> dict[str, str]:
         return {str(r["key"]): str(r["value"])
                 for r in self.query("SELECT key, value FROM exec_state")}
+
+    # ---------- Phase 6: audit log ----------
+    def log_audit(self, run_id: str, ts: int, actor: str, action: str,
+                  kind: str = "", target: str = "", decision: str = "allowed",
+                  reason: str = "", outcome: str = "", detail: str = "",
+                  idem_key: str = "") -> int:
+        cur = self.execute(
+            "INSERT INTO audit_log(run_id,ts,actor,action,kind,target,decision,"
+            "reason,outcome,detail,idem_key) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (run_id, ts, actor, action, kind, target, decision, reason,
+             outcome, detail, idem_key))
+        return int(cur.lastrowid)
+
+    def audit_recent(self, limit: int = 100, action: str = "",
+                     actor: str = "") -> list[sqlite3.Row]:
+        sql = "SELECT * FROM audit_log WHERE 1=1"
+        params: list[Any] = []
+        if action:
+            sql += " AND action=?"
+            params.append(action)
+        if actor:
+            sql += " AND actor=?"
+            params.append(actor)
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        return self.query(sql, tuple(params))
+
+    def audit_by_run(self, run_id: str) -> list[sqlite3.Row]:
+        return self.query(
+            "SELECT * FROM audit_log WHERE run_id=? ORDER BY id", (run_id,))
+
+    def audit_count(self) -> int:
+        row = self.one("SELECT COUNT(*) AS n FROM audit_log")
+        return int(row["n"]) if row else 0
+
+    def audit_prune(self, before_ts: int) -> int:
+        """Delete rows ending before ``before_ts`` (retention). Returns count."""
+        cur = self.execute("DELETE FROM audit_log WHERE ts < ?", (before_ts,))
+        return int(cur.rowcount)
+
+    # ---------- Phase 6: idempotency ----------
+    def idem_get(self, key: str) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM idempotency WHERE key=?", (key,))
+
+    def idem_put(self, key: str, status: str, result: str = "", hash_: str = "",
+                 actor: str = "", action: str = "", expires: int = 0) -> None:
+        now = int(time.time())
+        self.execute(
+            "INSERT INTO idempotency(key,hash,actor,action,status,result,created,expires) "
+            "VALUES(?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(key) DO UPDATE SET status=excluded.status, "
+            "result=excluded.result, hash=excluded.hash, actor=excluded.actor, "
+            "action=excluded.action, expires=excluded.expires",
+            (key, hash_, actor, action, status, result, now, expires))
+
+    def idem_delete(self, key: str) -> None:
+        self.execute("DELETE FROM idempotency WHERE key=?", (key,))
+
+    def idem_count(self) -> int:
+        row = self.one("SELECT COUNT(*) AS n FROM idempotency")
+        return int(row["n"]) if row else 0
+
+    def idem_prune_expired(self, now: int | None = None) -> int:
+        now = now if now is not None else int(time.time())
+        cur = self.execute("DELETE FROM idempotency WHERE expires>0 AND expires<?",
+                           (now,))
+        return int(cur.rowcount)
+
+    # ---------- Phase 6: scheduler state ----------
+    def scheduler_state(self, job: str) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM scheduler_state WHERE job=?", (job,))
+
+    def scheduler_states(self) -> list[sqlite3.Row]:
+        return self.query("SELECT * FROM scheduler_state ORDER BY job")
+
+    def upsert_scheduler_state(self, job: str, cadence: int = 0,
+                               last_status: str = "", next_ts: int = 0) -> None:
+        now = int(time.time())
+        self.execute(
+            "INSERT INTO scheduler_state(job,cadence,last_status,next_ts,"
+            "last_done,locked_until,last_error,consecutive_failures,disabled) "
+            "VALUES(?,?,?,?,?,?,?,0,0) "
+            "ON CONFLICT(job) DO UPDATE SET cadence=excluded.cadence, "
+            "last_status=excluded.last_status, next_ts=excluded.next_ts",
+            (job, cadence, last_status, next_ts, now, 0, ""))
+
+    def scheduler_mark_start(self, job: str) -> bool:
+        """Acquire a lease so overlapping/duplicate runs are prevented.
+        Returns True if the caller may run, False if another run holds the lock
+        or past_due lease has not yet been reclaimed."""
+        now = int(time.time())
+        row = self.one("SELECT locked_until FROM scheduler_state WHERE job=?", (job,))
+        if row is not None and int(row["locked_until"]) > now:
+            return False
+        self.execute(
+            "UPDATE scheduler_state SET locked_until=?, last_status='running' "
+            "WHERE job=?",
+            (now + 300, job))
+        return True
+
+    def scheduler_mark_done(self, job: str, ok: bool, error: str = "") -> None:
+        now = int(time.time())
+        row = self.one("SELECT consecutive_failures, disabled FROM scheduler_state "
+                       "WHERE job=?", (job,))
+        failures = (int(row["consecutive_failures"]) if row else 0)
+        failures = 0 if ok else failures + 1
+        self.execute(
+            "UPDATE scheduler_state SET last_done=?, last_status=?, "
+            "locked_until=0, last_error=?, consecutive_failures=? WHERE job=?",
+            (now, "ok" if ok else "failed", error if not ok else "", failures,
+             job))
+
+    def scheduler_note_skipped(self, job: str, reason: str = "") -> None:
+        now = int(time.time())
+        self.execute(
+            "UPDATE scheduler_state SET last_status='skipped', locked_until=0, "
+            "last_error=? WHERE job=?",
+            (reason, job))
+
+    def scheduler_reclaim_stale(self, now: int | None = None) -> int:
+        """Reclaim a lease left by a crashed run (older than the lease TTL)."""
+        now = now if now is not None else int(time.time())
+        cur = self.execute(
+            "UPDATE scheduler_state SET locked_until=0 WHERE locked_until>0 "
+            "AND locked_until<?",
+            (now,))
+        return int(cur.rowcount)
+
+    # ---------- Phase 6: heartbeat ----------
+    def heartbeat(self, source: str, ts: int | None = None, status: str = "ok",
+                  note: str = "", pid: int = 0) -> None:
+        ts = ts if ts is not None else int(time.time())
+        pid = pid or os.getpid()
+        self.execute(
+            "INSERT INTO heartbeat(source,ts,status,note,pid) VALUES(?,?,?,?,?) "
+            "ON CONFLICT(source) DO UPDATE SET ts=excluded.ts, status=excluded.status, "
+            "note=excluded.note, pid=excluded.pid",
+            (source, ts, status, note, pid))
+
+    def heartbeats(self) -> list[sqlite3.Row]:
+        return self.query("SELECT * FROM heartbeat ORDER BY source")
+
+    def heartbeat_age(self, source: str, now: int | None = None) -> int | None:
+        row = self.one("SELECT ts FROM heartbeat WHERE source=?", (source,))
+        if not row:
+            return None
+        now = now if now is not None else int(time.time())
+        return max(0, now - int(row["ts"]))
 
     # ---------- files ----------
     def upsert_file(

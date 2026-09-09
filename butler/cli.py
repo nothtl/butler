@@ -38,6 +38,7 @@ def main(argv: list[str] | None = None) -> int:
         "meal", "recipe", "searchrecipes", "favorites", "recipelibrary",
         "mealhistory", "rate", "context", "where", "around",
         "briefing", "review",
+        "health", "audit", "restore", "mode",
     ])
     p.add_argument("args", nargs="*")
     p.add_argument("--yes", action="store_true", help="auto-confirm bulk plans")
@@ -143,6 +144,22 @@ def dispatch(container: Container, ns: argparse.Namespace) -> int:
         return apply_plan(container, plan, ns)
     if cmd == "backup":
         return emit(container, {"kind": "backup", **container.backup.status()}, ns)
+    if cmd == "health":
+        return emit(container, {"kind": "health", **container.health.status()}, ns)
+    if cmd == "audit":
+        limit = int(args[0]) if args and args[0].isdigit() else 50
+        return emit(container, {"kind": "audit",
+                                "entries": container.audit.recent(limit)}, ns)
+    if cmd == "restore":
+        backup = args[0] if args else None
+        if not backup:
+            return emit(container, {"kind": "restore", "ok": False,
+                                    "detail": "usage: butler restore <backup-file>"}, ns)
+        return emit(container, {"kind": "restore",
+                                **container.recovery.db_restore(backup)}, ns)
+    if cmd == "mode":
+        mode = args[0] if args else ""
+        return emit(container, {"kind": "mode", **container.health.set_mode(mode)}, ns)
     if cmd == "monitor":
         from .monitor import CourseMonitor
         mon = CourseMonitor(container)
@@ -219,6 +236,9 @@ def dispatch(container: Container, ns: argparse.Namespace) -> int:
         return emit(container, {"kind": "why_this", **container.planner.explain_now(
             " ".join(args))}, ns)
     if cmd == "undo":
+        if args and args[0].isdigit():
+            return emit(container, {"kind": "undo",
+                                    **container.recovery.undo(args[0])}, ns)
         return emit(container, {"kind": "day", **container.planner.undo()}, ns)
     if cmd == "reschedule":
         return emit(container, {"kind": "day", **container.planner.reschedule()}, ns)

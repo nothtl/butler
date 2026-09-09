@@ -282,6 +282,14 @@ class Timeline:
                 zone_to: str | None = None, source: str | None = None,
                 external_id: str | None = None, title: str | None = None,
                 note: str | None = None) -> dict[str, Any]:
+        cap = int(getattr(self.cfg, "timeline_max_events_per_day", 0) or 0)
+        if cap > 0:
+            day_start = _now_ts() - (_now_ts() % 86400)
+            used = self.db.one(
+                "SELECT COUNT(*) AS n FROM timeline_events WHERE ts>=?", (day_start,))
+            if used and int(used["n"]) >= cap:
+                log.warning("timeline memory write gate: daily budget reached (%d)", cap)
+                return {"ok": False, "gate": True}
         cur = self.db.execute(
             "INSERT INTO timeline_events(ts, type, zone_from, zone_to, source, "
             "external_id, title, note) VALUES(?,?,?,?,?,?,?,?)",
