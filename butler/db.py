@@ -174,7 +174,9 @@ CREATE TABLE IF NOT EXISTS course_documents(
     content_hash TEXT,
     downloaded_at INTEGER,
     version     INTEGER DEFAULT 1,
-    external_id TEXT           -- dedupe key (e.g. web page url / listing hash)
+    external_id TEXT,          -- dedupe key (e.g. web page url / listing hash)
+    task_id     INTEGER DEFAULT 0,  -- linked scheduler task id (0 = not yet understood)
+    understanding TEXT DEFAULT ''   -- JSON of the assignment model the LLM proposed
 );
 CREATE INDEX IF NOT EXISTS idx_cdoc_course ON course_documents(course_id);
 
@@ -223,6 +225,9 @@ CREATE TABLE IF NOT EXISTS recipes(
     times_used  INTEGER DEFAULT 0,
     last_used   INTEGER DEFAULT 0,
     created_at  INTEGER DEFAULT 0,
+    time_estimated   INTEGER DEFAULT 0,   -- 1 => time is an estimate, not verified
+    cost_estimated   INTEGER DEFAULT 0,   -- 1 => cost is an estimate, not verified
+    nutrition_source TEXT DEFAULT '',     -- '' = unverified/no source
     UNIQUE(name, source_url)
 );
 CREATE INDEX IF NOT EXISTS idx_recipes_fav ON recipes(favorite);
@@ -246,9 +251,34 @@ class DB:
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(self.path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
-        self.conn.executescript(SCHEMA)
-        self.conn.commit()
         self._lock = __import__("threading").Lock()
+        self.conn.executescript(SCHEMA)
+        self._migrate()
+        self.conn.commit()
+
+    def _migrate(self) -> None:
+        """Idempotently add newly-introduced columns to pre-existing tables.
+
+        ``CREATE TABLE IF NOT EXISTS`` only helps fresh databases; we use
+        ``ALTER TABLE ... ADD COLUMN`` for tables a running install may already
+        have created without the newer columns.
+        """
+        pending: dict[str, list[tuple[str, str]]] = {
+            "recipes": [
+                ("time_estimated", "INTEGER DEFAULT 0"),
+                ("cost_estimated", "INTEGER DEFAULT 0"),
+                ("nutrition_source", "TEXT DEFAULT ''"),
+            ],
+            "course_documents": [
+                ("task_id", "INTEGER DEFAULT 0"),
+                ("understanding", "TEXT DEFAULT ''"),
+            ],
+        }
+        for table, cols in pending.items():
+            existing = {r["name"] for r in self.query(f"PRAGMA table_info({table})")}
+            for name, ddl in cols:
+                if name not in existing:
+                    self.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
 
     def close(self) -> None:
         try:
@@ -790,7 +820,9 @@ class DB:
                    steps: list[str] | None = None, tags: list[str] | None = None,
                    equipment: list[str] | None = None, servings: int = 2,
                    prep_minutes: int = 0, cook_minutes: int = 0,
-                   difficulty: int = 2, cost: float = 2.0) -> int:
+                   difficulty: int = 2, cost: float = 2.0,
+                   time_estimated: int = 0, cost_estimated: int = 0,
+                   nutrition_source: str = "") -> int:
         import json as _json
         existing = self.one(
             "SELECT id FROM recipes WHERE name=? AND source_url=?",
@@ -799,15 +831,18 @@ class DB:
             return int(existing["id"])
         cur = self.execute(
             "INSERT INTO recipes(name,source,source_url,ingredients,steps,tags,"
-            "equipment,servings,prep_minutes,cook_minutes,difficulty,cost,created_at)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "equipment,servings,prep_minutes,cook_minutes,difficulty,cost,"
+            "time_estimated,cost_estimated,nutrition_source,created_at)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (str(name), str(source), str(source_url),
              _json.dumps(ingredients or [], ensure_ascii=False),
              _json.dumps(steps or [], ensure_ascii=False),
              _json.dumps(tags or [], ensure_ascii=False),
              _json.dumps(equipment or [], ensure_ascii=False),
              int(servings), int(prep_minutes), int(cook_minutes),
-             int(difficulty), float(cost), int(time.time())))
+             int(difficulty), float(cost),
+             int(time_estimated), int(cost_estimated), str(nutrition_source),
+             int(time.time())))
         return int(cur.lastrowid)
 
     def recipe_by_id(self, recipe_id: int) -> sqlite3.Row | None:

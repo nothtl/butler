@@ -101,6 +101,11 @@ class Decider:
         if re.search(r"\bcourse(s)?\b.*\b(materials?|files|docs?|notes|slides)\b", low):
             code = extract_course_code(msg) or ""
             return Intent("course_docs", query=code, raw=msg)
+        if re.search(r"\b(sync|digest|update|check|fetch)\b.*\b(assignments?|deadlines?|due dates)\b" +
+                     r"|\b(assignment|project|assignment tasks)\b.*\b(brief|digest|sync)\b" +
+                     r"|\bwhats? (due|coming up|upcoming)\b.*(assignment|deadline)", low):
+            code = extract_course_code(msg) or ""
+            return Intent("course_assignments", query=code, raw=msg)
 
         # --- Phase 3: food / chef ---
         if re.search(r"\b(from the pantry|in the fridge|in my kitchen|what do i have)\b", low):
@@ -368,6 +373,8 @@ class Decider:
             return self._do_course_check()
         if k == "course_docs":
             return self._do_course_docs(intent)
+        if k == "course_assignments":
+            return self._do_course_assignments(intent)
         if k == "food_add":
             return self._do_food_add(intent)
         if k == "food_list":
@@ -425,6 +432,19 @@ class Decider:
             return {"kind": "course_check", "ok": False, "error": "courses not configured"}
         updates = self.courses.check_all()
         return {"kind": "course_check", "updates": updates, "count": len(updates)}
+
+    def _do_course_assignments(self, intent: Intent) -> dict[str, Any]:
+        if self.courses is None:
+            return {"kind": "course_assignments", "ok": False,
+                    "error": "courses not configured"}
+        code = (intent.query or "").strip().upper()
+        codes = [code] if code else [str(c["code"]) for c in self.courses.list_courses()]
+        if not codes:
+            return {"kind": "course_assignments", "ok": False,
+                    "error": "no courses to sync"}
+        results = {c: self.courses.sync_assignments(c) for c in codes}
+        total = sum(r.get("count", 0) for r in results.values())
+        return {"kind": "course_assignments", "results": results, "count": total}
 
     def _do_course_docs(self, intent: Intent) -> dict[str, Any]:
         if self.courses is None:

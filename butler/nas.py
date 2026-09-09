@@ -66,47 +66,98 @@ class FileManager:
         return {"ok": True, "nas_dir": self.cfg.nas_dir,
                 "inbox": self.inbox_dir()}
 
+    def _route_dest(self, path: str) -> dict[str, Any]:
+        """Two-stage classification: deterministic first, LLM only if ambiguous.
+
+        Returns an enriched routing record; ``confirm=True`` items must not be
+        applied without explicit user confirmation.
+        """
+        chat = getattr(self.container, "chat", None)
+        record = self.organizer.route_semantic(path, chat=chat)
+        record["dest"] = self._bind_into_nas(record.get("dest") or self.cfg.nas_dir)
+        return record
+
     # ------------------------------------------------------------- organize
     def organize_file(self, path: str) -> dict[str, Any]:
         """Route a single file into the NAS classification tree and index it."""
         if not self.enabled() or self.organizer is None:
             return {"ok": False, "error": "NAS disabled"}
-        dest_dir = self.organizer.route_file(path) or self.cfg.nas_dir
-        dest_dir = self._bind_into_nas(dest_dir)
-        target = self._move(path, dest_dir)
+        route = self._route_dest(path)
+        if route.get("confirm"):
+            return {"ok": False, "confirm": True, "checkpoint": route}
+        target = self._move(path, route["dest"])
         if not target:
             return {"ok": False, "error": "unable to move file"}
         self._index(target)
-        return {"ok": True, "source": path, "dest": target}
+        return {"ok": True, "source": path, "dest": target,
+                "method": route.get("method")}
 
     def ingest_inbox(self) -> dict[str, Any]:
-        """Move every file from the NAS Inbox into its classified home."""
+        """Move every file from the NAS Inbox into its classified home.
+
+        Low-confidence / ambiguous files are *not* moved — they are returned in
+        ``pending`` for confirmation, so nothing is bulk-placed on a guess.
+        """
         if not self.enabled():
             return {"ok": False, "error": "NAS disabled"}
         inbox = self.inbox_dir()
         if not os.path.isdir(inbox):
             return {"ok": False, "error": f"inbox not found: {inbox}"}
         moved: list[tuple[str, str]] = []
+        pending: list[Any] = []
         for e in self.engine.list_dir(inbox)["entries"]:
             if e["dir"]:
                 continue
-            dest_dir = self.organizer.route_file(e["path"]) or self.cfg.nas_dir
-            dest_dir = self._bind_into_nas(dest_dir)
-            target = self._move(e["path"], dest_dir)
+            route = self._route_dest(e["path"])
+            if route.get("confirm"):
+                pending.append({"path": e["path"],
+                                "route": {"dest": route["dest"],
+                                          "method": route.get("method"),
+                                          "confidence": route.get("confidence")}})
+                continue
+            target = self._move(e["path"], route["dest"])
             if target:
                 moved.append((e["path"], target))
                 self._index(target)
-        return {"ok": True, "moved": moved, "count": len(moved)}
+        return {"ok": True, "moved": moved, "count": len(moved),
+                "pending": pending, "pending_count": len(pending)}
 
     def _bind_into_nas(self, dest_dir: str) -> str:
-        """Ensure a routed destination stays inside the NAS root."""
-        nas = self.cfg.nas_dir
-        # organizer.route_file returns course/category dirs rooted at course_dir
-        # (or data_dir). Re-root under the NAS root when it differs.
-        if not dest_dir.startswith(nas):
-            dest_dir = os.path.join(nas, os.path.relpath(dest_dir, "/") if False
-                                    else os.path.basename(dest_dir))
-        return dest_dir
+        """Re-root a routed destination *inside* the NAS root, preserving the
+        full relative directory hierarchy (never flatten it, never escape NAS).
+
+        The organizer routes course/category trees under ``course_dir`` (or
+        ``data_dir``). We anchor the relative path at the *parent* of that local
+        routing base so the top-level folder (e.g. ``University``) is preserved
+        as a namespace under the NAS root.
+
+        Example (course root ``/home/user/University``, NAS root ``/mnt/storage``):
+            /home/user/University/CS168/Projects  ->  /mnt/storage/University/CS168/Projects
+        """
+        nas = os.path.realpath(self.cfg.nas_dir)
+        real = os.path.realpath(dest_dir)
+        # Already inside the NAS — leave it untouched.
+        if real == nas or real.startswith(nas + os.sep):
+            return real
+        base = os.path.realpath(self.cfg.course_dir or self.cfg.data_dir)
+        try:
+            inside_base = os.path.commonpath([real, base]) == base
+        except ValueError:
+            inside_base = False
+        if inside_base and base != os.path.dirname(base):
+            anchor = os.path.dirname(base)
+            rel = os.path.relpath(real, anchor)
+            # Never allow traversal back above the anchor.
+            if rel == ".." or rel.startswith(".." + os.sep):
+                rel = os.path.basename(real)
+            target = os.path.join(nas, rel)
+        else:
+            target = os.path.join(nas, os.path.basename(real))
+        target = os.path.realpath(target)
+        # Final guard: the result must be strictly inside the NAS root.
+        if not (target == nas or target.startswith(nas + os.sep)):
+            target = os.path.join(nas, os.path.basename(real))
+        return target
 
     def _move(self, path: str, dest_dir: str) -> str:
         try:

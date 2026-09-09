@@ -117,7 +117,11 @@ class Organizer:
         return plan
 
     def route_file(self, path: str) -> str:
-        """Decide where a single dropped file belongs (course vs category)."""
+        """Decide where a single dropped file belongs (course vs category).
+
+        Deterministic, always-safe first pass: a course code in the filename (or,
+        failing that, the file's text) wins; otherwise route by extension.
+        """
         base = self.cfg.course_dir or self.cfg.data_dir
         name = os.path.basename(path)
         # course code in filename
@@ -128,6 +132,105 @@ class Organizer:
             return self.course_dir_for(code)
         cat = classify_by_ext(name)
         return self.category_dir_for(cat)
+
+    # ---------------- second-stage semantic classifier ----------------
+    def route_semantic(self, path: str, chat: Any = None) -> dict[str, Any]:
+        """Two-stage classification.
+
+        Stage 1 (deterministic, always on, the safety layer): a course code in
+        the filename is the strongest signal; next, an explicit category by
+        extension. These are routed with ``confirm=False``.
+
+        Stage 2 (LLM, only for the truly ambiguous): a file that yields no course
+        code and no useful extension (e.g. ``document123.pdf`` whose *content*
+        says "CS168 Project 2 ...") is passed to the model to guess a course
+        code + sub-folder. Anything below a confidence threshold requires
+        ``confirm=True`` so it is never applied without the user's OK.
+        """
+        name = os.path.basename(path)
+        text = self._peek_text(path) if self._has_text(path) else ""
+        # Stage 1a: course code from the filename (highest confidence).
+        fn_code = extract_course_code(name)
+        if fn_code:
+            return {"dest": self._course_dest(fn_code, text),
+                    "method": "filename", "confidence": 0.95, "confirm": False}
+        # Stage 1b: course code from the content (medium-high confidence).
+        cc_code = extract_course_code(text)
+        if cc_code:
+            return {"dest": self._course_dest(cc_code, text),
+                    "method": "content", "confidence": 0.75, "confirm": True}
+        # Stage 1c: explicit category by extension. A high-signal category
+        # (Images/Videos/Audio/Archives/Code/... ) is authoritative; a generic
+        # bucket (Documents/Other) is only a provisional guess.
+        cat = classify_by_ext(name)
+        generic = cat in ("Other", "Documents")
+        if not generic:
+            return {"dest": self.category_dir_for(cat),
+                    "method": "category", "confidence": 0.9, "confirm": False}
+        # Stage 2: LLM semantic classification for the provisionally-generic case.
+        # A content-derived course trumps the generic bucket; anything below the
+        # confidence threshold still requires user confirmation.
+        if text and chat is not None and self._chat_ready(chat):
+            guess = self._semantic_chat(text, name, chat)
+            if guess and guess.get("code"):
+                conf = float(guess.get("confidence") or 0.4)
+                dest = self._course_dest(guess["code"], text,
+                                         sub=guess.get("subfolder") or "Readings")
+                return {"dest": dest, "method": "semantic", "confidence": conf,
+                        "confirm": conf < 0.8}
+        # Generic bucket stands (or, if truly unrecognised, demands confirmation).
+        if cat == "Other":
+            return {"dest": self.category_dir_for("Other"),
+                    "method": "ambiguous", "confidence": 0.25, "confirm": True}
+        return {"dest": self.category_dir_for(cat),
+                "method": "category", "confidence": 0.6, "confirm": False}
+
+    def _course_dest(self, code: str, text: str, sub: str = "") -> str:
+        root = self.course_dir_for(code)
+        sub = sub or self._content_subfolder(text)
+        return os.path.join(root, sub) if sub and os.path.basename(root) != sub else root
+
+    @staticmethod
+    def _content_subfolder(text: str) -> str:
+        t = (text or "").lower()
+        if any(k in t for k in ("project", "assignment", "hw", "homework",
+                                "milestone", "due", "pa 1", "pa1")):
+            return "Projects"
+        if any(k in t for k in ("exam", "midterm", "final", "quiz", "test")):
+            return "Exams"
+        if any(k in t for k in ("lecture", "slide", "lesson", "week 1", "module")):
+            return "Lectures"
+        return "Readings"
+
+    @staticmethod
+    def _chat_ready(chat: Any) -> bool:
+        return bool(getattr(chat, "_llm_ready", lambda: False)())
+
+    @staticmethod
+    def _semantic_chat(text: str, name: str, chat: Any) -> dict[str, Any]:
+        prompt = (
+            "Classify a document. Return only JSON with keys: code (course code "
+            "like CS168, '' if none), subfolder (one of Projects/Exams/"
+            "Lectures/Readings), confidence (0..1). No prose.",
+            f"filename: {name}\n---content---\n{text[:3000]}",
+        )
+        try:
+            raw = chat._llm(prompt)
+        except Exception:  # noqa: BLE001
+            return {}
+        if not raw:
+            return {}
+        m = re.search(r"\{.*\}", raw, re.S)
+        if not m:
+            return {}
+        try:
+            import json as _json
+            data = _json.loads(m.group(0))
+            return {"code": str(data.get("code", "")).strip().upper(),
+                    "subfolder": str(data.get("subfolder", "")),
+                    "confidence": float(data.get("confidence", 0) or 0)}
+        except Exception:  # noqa: BLE001
+            return {}
 
     def course_dir_for(self, code: str) -> str:
         code = code.upper()

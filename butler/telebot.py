@@ -461,12 +461,27 @@ class TelegramBot:
             await msg.reply_text("🛒 Shopping list:\n" + "\n".join(lines))
         elif kind == "nas_ingest":
             moved = result.get("moved", [])
-            if not moved:
+            pending = result.get("pending", [])
+            if not moved and not pending:
                 await msg.reply_text("📥 Inbox is empty (or NAS not enabled).")
                 return
             lines = [f"  {os.path.basename(a)} → {b}" for a, b in moved]
-            await msg.reply_text(f"📦 filed {result.get('count', len(moved))} item(s):\n"
-                                 + "\n".join(lines))
+            reply = f"📦 filed {result.get('count', len(moved))} item(s):\n" + "\n".join(lines)
+            if pending:
+                hold = [f"  {os.path.basename(p.get('path',''))} → "
+                        f"{p.get('route',{}).get('dest','')} (needs confirmation)"
+                        for p in pending]
+                reply += "\n⏳ held for confirmation:\n" + "\n".join(hold)
+            await msg.reply_text(reply)
+        elif kind == "course_assignments":
+            if not result.get("ok", True):
+                await msg.reply_text(str(result.get("error", "no assignments")))
+                return
+            lines = []
+            for code, res in (result.get("results") or {}).items():
+                for item in res.get("created", []):
+                    lines.append(f"{code} → task #{item['task_id']} {item['title']}")
+            await msg.reply_text("\n".join(lines) or "No un-understood assignments found.")
         elif kind == "context":
             await msg.reply_text(self._context_text(result.get("snapshot", {})))
         elif kind == "proactive":

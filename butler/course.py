@@ -143,23 +143,22 @@ class CourseIntelligence:
         """Locate candidate asset URLs in page HTML (PDFs, office docs, slides)."""
         exts = r"(?:pdf|ppt|pptx|doc|docx|zip|txt|md|csv)"
         hrefs = re.findall(r'href\s*=\s*["\']([^"\']+)["\']', html)
+        from urllib.parse import urljoin
         out: list[str] = []
         for h in hrefs:
             if not re.search(rf"\.{exts}\b", h, re.I):
                 continue
-            if h.startswith(("http://", "https://")):
+            if base_url.startswith(("http://", "https://")):
+                # Resolve absolute, protocol-relative (//host/...), root-relative
+                # (/path), dot-relative (../) and query URLs against the site.
+                joined = urljoin(base_url, h)
+                out.append(joined)
+            elif h.startswith(("http://", "https://")):
+                # An http URL inside a local (offline) feed — keep it verbatim.
                 out.append(h)
-            elif h.startswith("/"):
-                # absolute path on the site
-                base = base_url.rstrip("/")
-                if base.startswith(("http://", "https://")):
-                    from urllib.parse import urlparse
-                    u = urlparse(base_url)
-                    out.append(f"{u.scheme}://{u.netloc}{h}")
-                else:
-                    out.append(os.path.join(base_url, h.lstrip("/")))
             else:
-                out.append(os.path.join(base_url, h))
+                # Local directory feed: treat as an on-disk path under base_url.
+                out.append(os.path.join(base_url, h.lstrip("/")))
         # dedupe, preserve order
         seen: set[str] = set()
         return [u for u in out if not (u in seen or seen.add(u))]
@@ -230,11 +229,24 @@ class CourseIntelligence:
             updates.append(self._announce(course, "unchanged",
                                           f"{code}: checked, nothing meaningful changed."))
         # Always process newly discovered assets (deterministic), even first run.
+        new_docs = []
         for u in new_assets:
             doc = self._process_asset(int(course["id"]), u, code)
             if doc:
+                new_docs.append(doc)
                 updates.append(self._announce(course, "new",
                                               f"New material detected: {u}", doc=doc))
+
+        # Course -> Assignment -> Task: have DeepSeek *propose* an assignment
+        # model for any newly detected project/spec and materialise a task. The
+        # scheduler remains deterministic; this is deduped by task_id.
+        if new_docs and self._llm_ready():
+            result = self.sync_assignments(code)
+            for item in result.get("created", []):
+                updates.append({
+                    "kind": "assignment", "code": code,
+                    "message": f"{code} — assignment understood: {item['title']}",
+                    "task": item})
 
         self._state[key] = {
             "page_hash": page_hash,
@@ -359,9 +371,81 @@ class CourseIntelligence:
             "official_doc_id": doc_id,
         }
 
-    # ------------------------------------------------------------ conflict logic
-    def resolve_deadline(self, official: int | None, other: int | None,
-                         other_source: str = "search") -> dict[str, Any]:
+    # ------------------------------------------------------ assignment -> task
+    def sync_assignments(self, code: str) -> dict[str, Any]:
+        """Course -> Assignment -> Task pipeline.
+
+        For every course document that looks like an assignment/spec but has no
+        linked task yet, ask DeepSeek to *propose* a structured assignment model
+        (title, official deadline, estimated workload, requirements,
+        dependencies, milestones). The deterministic DB layer then creates the
+        task. DeepSeek never schedules — it only describes; the scheduler/planner
+        places the resulting task.
+
+        Deduping is hard: ``course_documents.task_id`` records which document
+        already produced a task, so re-discovery never creates a duplicate.
+        Skipped entirely when no deadline isproduced or the LLM is unavailable.
+        """
+        course = self.db.course_by_code(code)
+        if not course:
+            return {"ok": False, "error": f"no course {code}"}
+        cid = int(course["id"])
+        created: list[dict[str, Any]] = []
+        for doc in self.db.course_documents(cid):
+            row = dict(doc)
+            if int(row.get("task_id") or 0):
+                continue
+            if str(row.get("document_type") or "") not in (
+                    "project", "assignment", "spec", "reading"):
+                continue
+            model = self.understand(cid, int(row["id"]))
+            if not model or not model.get("deadline"):
+                continue
+            task_id = self._create_task_from_model(code, row, model)
+            if not task_id:
+                continue
+            import json as _json
+            self.db.update_course_document(int(row["id"]), task_id=int(task_id),
+                                           understanding=_json.dumps(model))
+            created.append({"doc_id": int(row["id"]), "task_id": task_id,
+                            "title": model.get("title"),
+                            "deadline": model.get("deadline"),
+                            "est_hours": model.get("est_hours")})
+        return {"ok": True, "code": code, "created": created,
+                "count": len(created)}
+
+    def _create_task_from_model(self, code: str, doc: dict[str, Any],
+                                model: dict[str, Any]) -> int:
+        """Deterministically materialise a scheduler task from an assignment
+        model. Priority derives from deadline proximity (never from the LLM)."""
+        deadline = int(model.get("deadline") or 0)
+        est_hours = float(model.get("est_hours") or 1.0)
+        est_minutes = min(8 * 60, max(15, int(est_hours * 60)))
+        now = int(datetime.now().timestamp())
+        days = max(0, (deadline - now) // 86400)
+        if days <= 2:
+            priority = 5
+        elif days <= 5:
+            priority = 4
+        elif days <= 10:
+            priority = 3
+        elif days <= 20:
+            priority = 2
+        else:
+            priority = 1
+        reqs = model.get("requirements") or []
+        detail = "Source: %s" % (doc.get("local_path") or doc.get("url") or "")
+        if reqs:
+            detail += "\n" + "\n".join("- %s" % r for r in reqs)
+        deps = model.get("dependencies") or []
+        if deps and not reqs:
+            detail += "\n" + "\n".join("- depends: %s" % d for d in deps)
+        return self.db.add_task(str(model.get("title") or doc["title"]),
+                                detail=detail, deadline=deadline,
+                                priority=priority, est_minutes=est_minutes,
+                                tags=f"{code} assignment")
+
+
         """:class:`A4`: the course website is authoritative. Never replace the
         official deadline with a search-derived one."""
         if official is None:

@@ -124,6 +124,9 @@ class Recipe:
     last_used: int = 0       # unix ts of last time it was planned
     prep_minutes: int = 0
     cook_minutes: int = 0
+    time_estimated: bool = False   # True => cook time is an estimate, unverified
+    cost_estimated: bool = False   # True => cost is an estimate, unverified
+    nutrition_source: str = ""     # '' | 'author' | 'verified' | 'missing'
 
 
 def _recipe_to_dict(r: Any) -> dict[str, Any]:
@@ -136,6 +139,9 @@ def _recipe_to_dict(r: Any) -> dict[str, Any]:
         "recipe_id": r.recipe_id, "servings": r.servings, "rating": r.rating,
         "favorite": r.favorite, "times_used": r.times_used, "last_used": r.last_used,
         "prep_minutes": r.prep_minutes, "cook_minutes": r.cook_minutes,
+        "time_estimated": bool(getattr(r, "time_estimated", False)),
+        "cost_estimated": bool(getattr(r, "cost_estimated", False)),
+        "nutrition_source": getattr(r, "nutrition_source", "") or "",
     }
     # normalise stored JSON columns
     for k in ("ingredients", "steps", "tags", "equipment"):
@@ -169,6 +175,9 @@ def _row_to_recipe(row: Any) -> Recipe:
         bool(row.get("favorite", 0)), int(row.get("times_used", 0) or 0),
         int(row.get("last_used", 0) or 0),
         prep, cook,
+        bool(row.get("time_estimated", 0)),
+        bool(row.get("cost_estimated", 0)),
+        str(row.get("nutrition_source", "") or ""),
     )
 
 
@@ -383,19 +392,32 @@ class Chef:
     def recipes(self, available: dict[str, float] | None = None,
                 preferences: list[str] | None = None,
                 constraints: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        """Rank recipes by fit (ingredients, time, difficulty, cost, tags)."""
+        """Rank the full recipe pool by fit (ingredients, time, difficulty,
+        cost, tags, ratings, favourites, prior usage, expiration pressure)."""
+        available = available if available is not None else self.inventory.inventory_map()
+        return self.rank(self._recipes(), available, preferences, constraints)
+
+    def rank(self, candidates: list[Recipe], available: dict[str, float] | None = None,
+             preferences: list[str] | None = None,
+             constraints: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        """Score + order an arbitrary candidate set (used by both the full-pool
+        ranker and the narrowed recipe-search result set)."""
         available = available if available is not None else self.inventory.inventory_map()
         preferences = preferences or []
         constraints = constraints or {}
-        pool = self._recipes()
-        ranked = []
-        for r in pool:
-            score = self._score(r, available, preferences, constraints)
-            ranked.append({"recipe": r, "score": score,
-                           "have": _have_ratio(r, available)})
-        ranked.sort(key=lambda x: (-x["score"], x["recipe"].difficulty,
-                                   x["recipe"].time_minutes))
-        return ranked
+        expire = self._expiring_names()
+        out: list[dict[str, Any]] = []
+        for r in candidates:
+            score = self._score(r, available, preferences, constraints, expire)
+            out.append({"recipe": r, "score": score,
+                        "have": _have_ratio(r, available)})
+        out.sort(key=lambda x: (-x["score"], x["recipe"].difficulty,
+                                x["recipe"].time_minutes))
+        return out
+
+    def _expiring_names(self, within_days: int = 3) -> set[str]:
+        return {_stem(i.get("name", "")) for i in
+                self.inventory.expiring(within_days) if i.get("name")} if self.inventory else set()
 
     def _seed_library(self) -> None:
         """Persist the built-in pantry recipes into the Recipe Library once."""
@@ -405,7 +427,8 @@ class Chef:
                                    ingredients=r.ingredients, steps=r.steps,
                                    tags=r.tags, equipment=r.equipment,
                                    servings=2, cook_minutes=r.time_minutes,
-                                   difficulty=r.difficulty, cost=r.cost)
+                                   difficulty=r.difficulty, cost=r.cost,
+                                   nutrition_source="author")
             except Exception as exc:  # noqa: BLE001
                 log.debug("seed recipe %s skipped: %s", r.name, exc)
 
@@ -464,7 +487,9 @@ class Chef:
             ingredients=r.ingredients, steps=r.steps, tags=r.tags,
             equipment=r.equipment, servings=r.servings,
             prep_minutes=r.prep_minutes, cook_minutes=r.time_minutes,
-            difficulty=r.difficulty, cost=r.cost)
+            difficulty=r.difficulty, cost=r.cost,
+            time_estimated=int(r.time_estimated), cost_estimated=int(r.cost_estimated),
+            nutrition_source=r.nutrition_source)
 
     def _pick(self, r: Recipe) -> dict[str, Any]:
         """Persist a chosen recipe and record usage + meal history."""
@@ -516,11 +541,11 @@ class Chef:
             for w in web:
                 w.recipe_id = self.import_recipe(w)
             out = self._dedupe(web + out)
-        ranked = self.recipes(available=self.inventory.inventory_map())
-        scored = {r["recipe"].name: r for r in ranked}
-        ordered = sorted(out, key=lambda r: -scored.get(r.name, {"score": 0.0})["score"])
-        return [_recipe_to_dict(r) if r.recipe_id else _recipe_to_dict(r)
-                for r in ordered[:limit]]
+        # "Search" returns the matching candidates; "rank" orders them by the
+        # rich recipe-fit score (ingredients, time, difficulty, rating,
+        # favourite, prior usage, expiration pressure, cost, preferences).
+        ranked = self.rank(out, available=self.inventory.inventory_map())
+        return [_recipe_to_dict(r) for r in (x["recipe"] for x in ranked)][:limit]
 
     @staticmethod
     def _local_match(query: str, name: str, hay: str) -> bool:
@@ -534,7 +559,8 @@ class Chef:
 
     @staticmethod
     def _score(r: Recipe, available: dict[str, float],
-               preferences: list[str], constraints: dict[str, Any]) -> float:
+               preferences: list[str], constraints: dict[str, Any],
+               expire: set[str] | None = None) -> float:
         have = _have_ratio(r, available)
         score = have * 5.0
         # constraints
@@ -556,7 +582,21 @@ class Chef:
             score += max(0.0, (30 - r.time_minutes) / 30.0)
         # qualities: easy + inexpensive get a small bonus (user's intent)
         score += (5 - r.difficulty) * 0.2     # easier is better
-        score += (4.0 - min(r.cost, 4.0)) * 0.2  # cheaper is better
+        # cheaper is better — but only when cost is a real value, never reward
+        # a fabricated/estimated cost over an unknown one.
+        if not r.cost_estimated:
+            score += (4.0 - min(r.cost, 4.0)) * 0.2
+        # user affinity: rating, favourites, production familiarity
+        if r.rating:
+            score += min(r.rating, 5.0) * 0.6
+        if r.favorite:
+            score += 1.0
+        if r.times_used:
+            score += min(r.times_used, 10) * 0.1
+        # expiration pressure: using soon-to-expire ingredients is rewarded
+        if expire:
+            exp_hit = sum(1 for ing in r.ingredients if _stem(ing) in expire) if expire else 0
+            score += exp_hit * 0.8
         # available-ingredient synergy: bonus when ingredients fully on hand
         if have >= 0.999:
             score += 1.5
@@ -716,11 +756,15 @@ def _meal_detail(meal_id: str) -> Recipe | None:
             dedup.append(t)
     tags = dedup
     n = len(ingredients) or 1
+    # TheMealDB does not publish cook/nutrition/cost data, so any numeric value
+    # we carry is an *estimate* and must be flagged as such (never presented as
+    # a verified fact). We estimate cook time from the complexity of the steps.
     time_minutes = min(90, max(15, n * 6 + 10))
     return Recipe(
         (m.get("strMeal") or "").strip(), ingredients, time_minutes, 2,
         ["pan"], 2.0, tags[:6], steps[:15], "themealdb",
         f"https://www.themealdb.com/meal/{meal_id}", 0, 2,
+        time_estimated=True, cost_estimated=True, nutrition_source="",
     )
 
 

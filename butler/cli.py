@@ -467,6 +467,15 @@ def render(c: Container, r: dict) -> str:
         ds = r.get("documents", [])
         return "\n".join(f"{d.get('title','')} ({d.get('doc_type','')}) @ {d.get('local_path','')}"
                          for d in ds) or f"No materials for {r.get('code','')}."
+    if k == "course_assignments":
+        if not r.get("ok", True):
+            return str(r.get("error", "no assignments"))
+        lines = []
+        for code, res in (r.get("results") or {}).items():
+            for item in res.get("created", []):
+                lines.append(f"{code} → task #{item['task_id']} {item['title']} "
+                             f"(due {item['deadline']}, ~{item['est_hours']}h)")
+        return "\n".join(lines) or "No un-understood assignments found."
     if k == "food_add":
         return "Stored: " + ", ".join(a.get("name", "") for a in r.get("added", [])) or "nothing"
     if k == "food_list":
