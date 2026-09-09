@@ -186,6 +186,9 @@ def dispatch(container: Container, ns: argparse.Namespace) -> int:
         return 0
     if cmd == "bot":
         from .telebot import TelegramBot
+        import logging as _logging
+        _logging.basicConfig(level=_logging.INFO,
+                             format="%(asctime)s %(name)s %(levelname)s %(message)s")
         bot = TelegramBot(container)
         bot.run_forever()
         return 0
@@ -246,10 +249,11 @@ def dispatch(container: Container, ns: argparse.Namespace) -> int:
     if cmd == "course":
         text = " ".join(args)
         if not text:
-            print("usage: butler course <code> [url]", file=sys.stderr)
+            print("usage: butler course <code> [url] | butler course drop <code>",
+                  file=sys.stderr)
             return 1
         return emit(container, container.decider.resolve(
-            container.decider.parse(f"add course {text}")), ns)
+            container.decider.parse(f"/course {text}")), ns)
     if cmd == "courses":
         return emit(container, container.decider.resolve(
             container.decider.parse("show courses")), ns)
@@ -524,6 +528,8 @@ def render(c: Container, r: dict) -> str:
         if r.get("need_url"):
             return f"Tracked {r.get('code')}; need a URL — `butler course {r.get('code')} <url>`"
         return f"Tracking course {r.get('code')}."
+    if k == "course_help":
+        return r.get("message", "Course help.")
     if k == "course_list":
         cs = r.get("courses", [])
         return "\n".join(f"{c['code']} — {c.get('name','')} ({c.get('url') or 'no URL'})"
@@ -533,6 +539,8 @@ def render(c: Container, r: dict) -> str:
         return "\n".join(f"{u.get('course_code','')}: {u.get('title','')} "
                          f"({u.get('doc_type','')})" for u in us) or "No new course activity."
     if k == "course_docs":
+        if r.get("ok") is False:
+            return str(r.get("error", "No materials."))
         ds = r.get("documents", [])
         return "\n".join(f"{d.get('title','')} ({d.get('doc_type','')}) @ {d.get('local_path','')}"
                          for d in ds) or f"No materials for {r.get('code','')}."

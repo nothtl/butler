@@ -41,6 +41,54 @@ class Intent:
     scope: str = ""   # timeline/context scoping, e.g. "today" | "day"
 
 
+def _chat_greeting() -> str:
+    return ("Hey 👋 I'm Butler. I watch your folders, find stuff, organise things, "
+            "and sort out your day. Ask me anything or type `/help`.")
+
+_GM = {
+    "morning": "Good morning ☀️",
+    "afternoon": "Good afternoon 🌤",
+    "evening": "Good evening 🌙",
+    "night": "Good night 🌙",
+}
+
+
+def _chat_smalltalk(low: str) -> str | None:
+    """Deterministic replies to casual chat. Returns None if not small talk."""
+    g = re.search(r"\bgood\s+(morning|afternoon|evening|night)\b", low)
+    if g:
+        return _GM[g.group(1)]
+    if re.search(r"\b(hi|hello|hey|yo|howdy|hiya|sup|whats up)\b", low) \
+            or re.fullmatch(r"(hi|hello|hey|yo)\W*", low):
+        if re.search(r"\bhow are you\b|\bhow r u\b|\bhow's it going\b", low):
+            return ("Doing well, thanks! Everything's indexed and ready. "
+                    "How about you?")
+        return ("Hey! What can I do for you? I can find, search, organise, or "
+                "sort your files — just ask.")
+    if re.search(r"\bhow are you\b|\bhow r u\b|\bhow'?s it going\b|\bhow do you do\b", low):
+        return ("All good on my end 👍 Ready to help. What are you up to?")
+    if re.search(r"\b(who are you|what are you|what can you do|your name|"
+                 r"what do you do|what are your (capabilities|features))\b", low):
+        return ("I'm Butler — a local file assistant. I search, organise, de-dupe, "
+                "and plan your day, all on-device. Try `/storage` or `/help`.")
+    if re.search(r"\bthank(s| you)\b|\bthanks\b|\bty\b|\bthx\b", low):
+        return "You're welcome! 😊"
+    if re.search(r"\b(bye|goodbye|good night|see you|gtg|good night)\b", low):
+        return "Bye for now — I'll be here. 👋"
+    if re.search(r"\b(i'?m|i am|im)\b\s+(so\s+)?(tired|sad|stressed|overwhelmed|"
+                 r"exhausted|drained|frustrated)\b", low):
+        return "That sounds rough. Want me to lighten today's plan a bit?"
+    if re.search(r"\b(i'?m|i'am)\b\s+(so\s+)?(happy|great|good|excited|awesome)\b", low):
+        return "Love to hear it! 🎉 Want me to help with anything?"
+    if re.search(r"\b(good|love|nice)\b", low):
+        return "😊"
+    if re.search(r"\b(o[k]?ay|sounds good|alright|sure|got it|okay?)\b", low):
+        return "👍"
+    return None
+    plan: Plan | None = None
+    scope: str = ""   # timeline/context scoping, e.g. "today" | "day"
+
+
 class Decider:
     def __init__(self, cfg: Config, db: DB, engine: Engine,
                  organizer: Organizer, search: Search, chat: Any = None,
@@ -220,9 +268,19 @@ class Decider:
             return Intent("course_add", query=msg, raw=msg)
         if re.search(r"\b(check|scan|monitor|update)\b.*\bcourse(s)?\b", low):
             return Intent("course_check", raw=msg)
-        if re.search(r"\bmy courses\b|\blist courses\b|\bshow courses\b", low):
+        if re.search(r"\b(drop|untrack|remove|delete|stop tracking|don'?t track)\b.*\bcourse(s)?\b", low):
+            code = extract_course_code(msg) or ""
+            return Intent("course_drop", query=code, raw=msg)
+        if (re.search(r"\b(my courses|list courses|show courses)\b"
+                      r"|\bwhat\b.*\b(tracking|taking)\b"
+                      r"|\bhow many\b.*\b(courses?|classes?)\b.*\b(tracking|taking|monitor\w*)\b"
+                      r"|\bhow many (courses?|classes?)\b"
+                      r"|\btracking\b.*\b(courses?|class|any)\b", low)):
             return Intent("course_list", raw=msg)
-        if re.search(r"\bcourse(s)?\b.*\b(materials?|files|docs?|notes|slides)\b", low):
+        if (re.search(r"\b(materials?|documents?|notes|slides|files|content|readings)\b.*\b(in there|inside|there|in it)\b", low)
+                or re.search(r"\b(materials?|documents?|notes|slides|files|content|readings)\b.*\b(in|for|inside)\s+[a-z]{2,4}\s?\d{2,4}\b", low)
+                or re.search(r"\bcourse(s)?\b.*\b(materials?|documents?|notes|slides|files|content)\b", low)
+                or re.search(r"\bwhats? (in|inside|on)\b.*\b(course(s)?|class|there)\b", low)):
             code = extract_course_code(msg) or ""
             return Intent("course_docs", query=code, raw=msg)
         if re.search(r"\b(sync|digest|update|check|fetch)\b.*\b(assignments?|deadlines?|due dates)\b" +
@@ -401,9 +459,16 @@ class Decider:
             return Intent("connect", arg, raw=raw)
         # --- Phase 3: course intelligence ---
         if cmd in ("course", "course-add", "addcourse", "track", "add_course"):
-            return Intent("course_add", query=target or arg, raw=raw)
+            sub = (target or arg).strip()
+            if cmd == "course" and re.search(r"^(drop|remove|untrack|delete|rm|stop)\b", sub, re.I):
+                code = re.sub(r"^(drop|remove|untrack|delete|rm|stop)\b\s*", "", sub,
+                              flags=re.I).strip()
+                return Intent("course_drop", query=code, raw=raw)
+            return Intent("course_add", query=sub, raw=raw)
         if cmd in ("courses", "course-list", "listcourses"):
             return Intent("course_list", raw=raw)
+        if cmd in ("course-drop", "dropcourse", "removecourse", "untrack"):
+            return Intent("course_drop", query=target or arg, raw=raw)
         if cmd in ("checkcourses", "checkcourse", "monitor", "scan"):
             return Intent("course_check", raw=raw)
         if cmd in ("materials", "coursedocs", "course-docs"):
@@ -468,6 +533,10 @@ class Decider:
         if cmd in ("timeline", "history"):
             return Intent("timeline_today", scope=target or "today", raw=raw)
         # --- Phase 4.4: routines ---
+        if cmd == "routine" or cmd == "routine-add":
+            q = (target or arg).strip()
+            q = re.sub(r"^(add|create|learn|set up|new)\b\s*", "", q, flags=re.I).strip()
+            return Intent("routine_add", query=q, raw=raw)
         if cmd in ("routines", "showroutines", "myroutines"):
             return Intent("routine_show", raw=raw)
         if cmd in ("routine-confirm", "confirmroutine"):
@@ -503,6 +572,8 @@ class Decider:
             if not q:
                 return {"kind": "help"}
             return {"kind": "chat", "mode": "teach", "answer": self.chat.teach(q)}
+        if k == "chat":
+            return {"kind": "chat", "mode": "chat", "answer": self._do_chat(intent)}
         if k == "resume":
             return {"results": self.search.latest_resume(), "kind": "resume"}
         if k == "duplicates":
@@ -585,8 +656,12 @@ class Decider:
         # --- Phase 3: course / food / nas / context / proactive ---
         if k == "course_add":
             return self._do_course_add(intent)
+        if k == "course_help":
+            return self._do_course_help()
         if k == "course_list":
             return self._do_course_list()
+        if k == "course_drop":
+            return self._do_course_drop(intent)
         if k == "course_check":
             return self._do_course_check()
         if k == "course_docs":
@@ -653,6 +728,8 @@ class Decider:
             return self._do_routine_forget()
         if k == "routine_explicit":
             return self._do_routine_explicit(intent)
+        if k == "routine_add":
+            return self._do_routine_add(intent)
         return {"kind": "help"}
 
     # ---------------------------------------------------------------- Phase 3
@@ -662,11 +739,14 @@ class Decider:
         msg = intent.query or intent.raw
         code = extract_course_code(msg) or self._first_token(msg)
         url = self._course_url(msg)
-        res = self.courses.add_course(code or "", url=url)
+        if not re.match(r"^[A-Z]{2,4}\d{1,4}$", (code or "").upper()):
+            return self._do_course_help()
+        res = self.courses.add_course(code, url=url)
         if res.get("need_url"):
             return {"kind": "course_add", "ok": True,
                     "question": f"Added {code}. What is the course website URL?",
-                    "need_url": True, "course_id": res["course_id"]}
+                    "need_url": True, "course_id": res["course_id"],
+                    "code": (code or "").upper()}
         return {"kind": "course_add", "ok": True,
                 "course": res.get("course"), "code": code.upper()}
 
@@ -674,6 +754,35 @@ class Decider:
         if self.courses is None:
             return {"kind": "course_list", "ok": False, "error": "courses not configured"}
         return {"kind": "course_list", "courses": self.courses.list_courses()}
+
+    def _do_course_help(self) -> dict[str, Any]:
+        tracked = []
+        if self.courses is not None:
+            tracked = [str(c.get("code")) for c in self.courses.list_courses()]
+        text = ("I can track course websites, download their materials and estimate "
+                "the workload.\n"
+                "• Add — `track this course <CODE> <site url>`\n"
+                "• What I'm tracking — `my courses`\n"
+                "• Materials — `what materials are in <CODE>`\n"
+                "• Stop — `drop course <CODE>`\n")
+        if tracked:
+            text += "\nI'm currently tracking: " + ", ".join(tracked) + "."
+        return {"kind": "course_help", "ok": True, "message": text, "courses": tracked}
+
+    def _do_course_drop(self, intent: Intent) -> dict[str, Any]:
+        if self.courses is None:
+            return {"kind": "course_drop", "ok": False, "error": "courses not configured"}
+        code = extract_course_code(intent.query or intent.raw) or ""
+        code = code.upper()
+        if not code:
+            return {"kind": "course_drop", "ok": False,
+                    "error": "Usage: /course_drop <COURSE_CODE>"}
+        res = self.courses.remove_course(code)
+        if not res.get("ok"):
+            return {"kind": "course_drop", "ok": False,
+                    "error": res.get("error", f"no course {code}")}
+        return {"kind": "course_drop", "ok": True,
+                "text": f"❌ Dropped {code}. I'll stop monitoring it."}
 
     def _do_course_check(self) -> dict[str, Any]:
         if self.courses is None:
@@ -698,12 +807,20 @@ class Decider:
         if self.courses is None:
             return {"kind": "course_docs", "ok": False, "error": "courses not configured"}
         code = (intent.query or "").strip()
+        shown = code.upper()
+        if not code:
+            courses = self.courses.list_courses()
+            if not courses:
+                return {"kind": "course_docs", "ok": False,
+                        "error": "I'm not tracking any courses yet — `my courses` to check."}
+            last = max(courses, key=lambda c: c.get("id", 0))
+            code = str(last.get("code", ""))
+            shown = code.upper()
         docs = []
-        if code:
-            course = self.courses.course(code)
-            if course:
-                docs = [dict(r) for r in self.db.course_documents(int(course["id"]))]
-        return {"kind": "course_docs", "code": code.upper(), "documents": docs}
+        course = self.courses.course(code)
+        if course:
+            docs = [dict(r) for r in self.db.course_documents(int(course["id"]))]
+        return {"kind": "course_docs", "code": shown, "documents": docs}
 
     def _do_food_add(self, intent: Intent) -> dict[str, Any]:
         if self.food is None:
@@ -1129,6 +1246,20 @@ class Decider:
         return {"kind": "routines", "text": f"Got it — I'll treat \"{r['title']}\" "
                 f"as a routine from now on.", "routine": r}
 
+    def _do_routine_add(self, intent: Intent) -> dict[str, Any]:
+        """Manual /routine add <text> — same learning path as an explicit routine."""
+        if self.routines is None:
+            return {"kind": "routines", "ok": False, "error": "routines not configured"}
+        res = self.routines.create_explicit(intent.query or intent.raw)
+        if not res.get("ok"):
+            return {"kind": "routines", "ok": False, "error": res.get("error", "none")}
+        if res["action"] == "disable":
+            return {"kind": "routines", "text": "Understood — I'll stop matching that "
+                    "as a routine."}
+        r = res["routine"]
+        return {"kind": "routines", "text": f"Got it — I'll treat \"{r['title']}\" "
+                f"as a routine from now on.", "routine": r}
+
     # ------------------------------------------------------- Phase 4.2
     def _do_location_change(self, intent: Intent) -> dict[str, Any]:
         """Recognise a context shift from an explicit "I'm at <place>" and
@@ -1400,6 +1531,29 @@ class Decider:
     def _do_list(self, intent: Intent) -> dict[str, Any]:
         target = intent.target or os.path.abspath(os.path.expanduser("~/Downloads"))
         return {"kind": "list", **self.engine.list_dir(target)}
+
+    def _do_chat(self, intent: Intent) -> str:
+        """Natural conversational reply for free-text that matched nothing else.
+
+        Priority: 1) explicit small-talk patterns (deterministic, offline-safe),
+        2) real LLM chat if one is configured, 3) a friendly, honest fallback.
+        We never fabricate facts or claim to know the user's files here.
+        """
+        msg = (intent.raw or intent.query or "").strip()
+        low = msg.lower().strip()
+        if not msg:
+            return _chat_greeting()
+        reply = _chat_smalltalk(low)
+        if reply is not None:
+            return reply
+        llm = self.chat.converse(msg)
+        if llm:
+            return llm
+        return (
+            "I'm here — but that's not something I have a command for yet. "
+            "Tell me what's on your mind, or try `/find`, `/search`, `/organize`, "
+            "`/dupes`, or `/help` for ideas."
+        )
 
     def _help(self) -> dict[str, Any]:
         return {"kind": "help", "text": (

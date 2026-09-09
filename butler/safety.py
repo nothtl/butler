@@ -41,6 +41,7 @@ _KNOWN_RISK: dict[str, str] = {
     # --- read / inspect ---
     "help": "read", "storage": "read", "status": "read", "list": "read",
     "find": "read", "search": "read", "dupes": "read", "trash_list": "read",
+    "chat": "read",
     "day": "read", "now": "read", "tasks": "read", "why": "read",
     "context": "read", "timeline": "read", "briefing": "read", "review": "read",
     "recipe": "read", "recipe_search": "read", "recipe_library": "read",

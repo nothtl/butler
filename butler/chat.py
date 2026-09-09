@@ -12,6 +12,7 @@ we say so instead of guessing.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from collections import Counter
@@ -96,15 +97,52 @@ class Chat:
         ctx = self._context(question, ranked)
         if not ctx:
             return (
-                "I couldn't find anything about that in your files yet.\n"
-                "Try adding it to a managed folder and running `butler index`, "
-                "or rephrase the question."
+                "I searched your notes and folders but couldn't find a match for that. "
+                "Index a folder with `butler index` and I'll be able to ground an answer "
+                "in it. For your own data just ask `my courses` or `what materials are in <course>`."
             )
         if self._llm_ready():
             body = self._llm(self._rag_prompt(question, ctx, "answer"))
             if body:
-                return body
+                return self._cite(body, ranked)
         return self._extractive(question, ctx)
+
+    @staticmethod
+    def _cite(answer: str, ranked) -> str:
+        """Append the sources the answer was grounded in, so it's verifiable."""
+        srcs, seen = [], set()
+        for _, path, _ in ranked:
+            if len(srcs) >= 3:
+                break
+            label = os.path.basename(path) if path else ""
+            if label and label not in seen:
+                seen.add(label)
+                srcs.append(label)
+        if not srcs:
+            return answer
+        return answer + "\n\n📎 " + " · ".join(f"`{s}`" for s in srcs)
+
+    # --------------------- compose replies from live data ---------------------
+    def respond_kind(self, kind: str, data: Any) -> str | None:
+        """Write a natural reply from freshly-retrieved structured data.
+
+        Returns ``None`` when there's no LLM so the caller can fall back to its
+        deterministic template. The reply is grounded strictly in ``data`` and
+        never prettifies or invents anything not present in it.
+        """
+        if not self._llm_ready():
+            return None
+        payload = _compact(data)
+        system = (
+            "You are Butler, a warm, concise assistant living in the user's Telegram. "
+            "The system just pulled FRESH live data for the user's request. "
+            "Write a short, natural, human reply (1-4 sentences) that reflects that data. "
+            "Use ONLY the data given. If it's empty, say so plainly in your own words. "
+            "Never invent courses, files, hours, numbers, names or dates. "
+            "Never mention that you were given data or that you are an AI."
+        )
+        user = f"The user's live data ({kind}):\n{payload}\n\nWrite your reply:"
+        return self._llm((system, user))
 
     def teach(self, topic: str) -> str:
         ranked = self.retrieve(topic)
@@ -119,6 +157,24 @@ class Chat:
             if body:
                 return body
         return self._study_guide(topic, ctx)
+
+    # ------------------------- free-form chat -------------------------
+    def converse(self, message: str) -> str | None:
+        """A short, natural conversational reply (no file grounding).
+
+        Only used when an LLM is configured; otherwise returns ``None`` so the
+        caller can fall back to a deterministic small-talk reply. We never
+        fabricate claim the LLM "knows" the user's files here.
+        """
+        if not self._llm_ready():
+            return None
+        system = (
+            "You are Butler, a friendly on-device assistant living in the user's "
+            "Telegram. Reply briefly and naturally to casual chat (greetings, "
+            "small talk, how-are-you). Do not invent facts about the user's "
+            "files or actions. Keep it to 1-2 short sentences."
+        )
+        return self._llm((system, message))
 
     # ------------------------- offline fallbacks -------------------------
     def _extractive(self, question: str, ctx: list[tuple[str, str, str]]) -> str:
@@ -203,3 +259,11 @@ class Chat:
             return text.strip()
         except Exception:
             return None
+
+
+def _compact(data: Any, limit: int = 2400) -> str:
+    try:
+        s = json.dumps(data, default=str, ensure_ascii=False, indent=1)
+    except Exception:
+        s = str(data)
+    return s if len(s) <= limit else s[:limit] + "\n… (truncated)"

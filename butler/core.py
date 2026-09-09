@@ -52,6 +52,9 @@ class Container:
             unknown_category=self.cfg.affinity_unknown_category,
         )
         self.db = DB(self.cfg)
+        # --- Settings + reward library (motivation). Seed the default treats. ---
+        from . import motivation
+        motivation.seed_rewards(self.db)
         # --- Phase 6: reliability, safety & recovery (built early so every
         # subsystem can use the audit / safety / idempotency / retry gates) ---
         self.audit = Audit(self.db)

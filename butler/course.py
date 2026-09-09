@@ -97,12 +97,69 @@ class CourseIntelligence:
         return {"ok": True, "course_id": int(course["id"]), "code": code,
                 "url": url.strip()}
 
+    def suggest_url(self, code: str, name: str = "") -> list[dict[str, Any]]:
+        """Propose candidate official course-site URLs for the user to verify.
+
+        Uses the LLM (when configured) to propose the most-likely OFFICIAL
+        course page(s) for a course code, then probes reachability. Pure read;
+        nothing is written — the user confirms via inline buttons.
+        """
+        code = code.strip().upper()
+        if not self._llm_ready():
+            return []
+        subject = f"{code}" + (f" ({name})" if name else "")
+        prompt = (
+            f"Academic course: {subject}. Return ONLY JSON of the form "
+            "{\"urls\": [{\"url\": \"https://...\", \"title\": \"...\"}]} with the 2-3 "
+            "most likely OFFICIAL course website URLs (the course's own homepage, a "
+            "course site, or the instructor's course page). Use real plausible URLs "
+            "for this course code/university. No prose outside the JSON.",
+            f"course: {subject}",
+        )
+        raw = self._llm(prompt)
+        data = _safe_json(raw)
+        candidates: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for u in (data.get("urls") or [])[:3]:
+            url = str(u.get("url") or "").strip()
+            if url and url not in seen:
+                seen.add(url)
+                candidates.append({"url": url,
+                                   "title": str(u.get("title") or url)})
+        for c in candidates:
+            c["reachable"] = self._http_ok(c["url"])
+        return candidates
+
+    def _http_ok(self, url: str) -> bool:
+        """Lightweight reachability probe; returns the last-start tag header
+        too so a reachable-but-header-less page still counts as reachable."""
+        try:
+            import requests
+            r = requests.head(url, allow_redirects=True, timeout=12)
+            if r.status_code < 400:
+                return True
+            r = requests.get(url, allow_redirects=True, timeout=12,
+                             headers={"User-Agent": "Butler/3"}, stream=True)
+            return r.status_code < 400
+        except Exception:
+            return False
+
     def list_courses(self) -> list[dict[str, Any]]:
         return [dict(r) for r in self.db.courses()]
 
     def course(self, code: str) -> dict[str, Any] | None:
         row = self.db.course_by_code(code)
         return dict(row) if row else None
+
+    def remove_course(self, code: str) -> dict[str, Any]:
+        code = code.strip().upper()
+        course = self.db.course_by_code(code)
+        if not course:
+            return {"ok": False, "error": f"no course {code}"}
+        self.db.delete_course(int(course["id"]))
+        self._state.pop(f"course:{code}", None)
+        self._save_state()
+        return {"ok": True, "code": code}
 
     # ----------------------------------------------------------- directories
     def course_dir(self, code: str) -> str:

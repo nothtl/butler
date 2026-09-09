@@ -236,7 +236,7 @@ CATEGORY_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("University", tuple(".lecture .slides".split())),
 ]
 
-_COURSE_RE = re.compile(r"\b([A-Z]{2,4}\s?-?\s?\d{2,4})(?![A-Za-z0-9])")
+_COURSE_RE = re.compile(r"\b([A-Z]{2,4}\s?-?\s?\d{2,4})(?![A-Za-z0-9])", re.IGNORECASE)
 
 
 def classify_by_ext(name: str) -> str:

@@ -459,6 +459,38 @@ CREATE TABLE IF NOT EXISTS heartbeat(
     note        TEXT DEFAULT '',
     pid         INTEGER DEFAULT 0
 );
+
+-- Per-topic configuration for forum topics (topic routing + daily push).
+CREATE TABLE IF NOT EXISTS topic_settings(
+    id          INTEGER PRIMARY KEY,
+    chat_id     INTEGER NOT NULL,
+    thread_id   INTEGER NOT NULL DEFAULT 0,
+    topic       TEXT DEFAULT '',           -- resolved topic title (cache)
+    routing     TEXT DEFAULT '',           -- default intent kind for free text
+    push_on     INTEGER DEFAULT 0,         -- 1 => push to this topic
+    push_time   TEXT DEFAULT '',           -- HH:MM local
+    push_freq   TEXT DEFAULT 'daily',      -- daily | weekdays | weekly
+    updated_ts  INTEGER DEFAULT 0,
+    UNIQUE(chat_id, thread_id)
+);
+
+-- Reward library (small treats / rest breaks the agent suggests on completion).
+CREATE TABLE IF NOT EXISTS rewards(
+    id          INTEGER PRIMARY KEY,
+    name        TEXT NOT NULL,
+    kind        TEXT DEFAULT 'rest',       -- rest | treat
+    weight      INTEGER DEFAULT 1,         -- 1..5; scales the suggested reward to task size
+    stock_food  TEXT DEFAULT '',           -- if set & treat, add to shopping list when low
+    times_used  INTEGER DEFAULT 0,
+    last_used   INTEGER DEFAULT 0,
+    created_at  INTEGER DEFAULT 0
+);
+
+-- Application-level settings (push timezone, reward streak, defaults).
+CREATE TABLE IF NOT EXISTS app_settings(
+    key     TEXT PRIMARY KEY,
+    value   TEXT DEFAULT ''
+);
 """
 
 
@@ -1412,3 +1444,106 @@ class DB:
         cur = self.execute("DELETE FROM meal_suggestions WHERE day_ts=?",
                            (int(day_ts),))
         return int(cur.rowcount)
+
+    # ------------------------------------------------------ topic settings
+    def topic_setting(self, chat_id: int, thread_id: int) -> sqlite3.Row | None:
+        return self.one(
+            "SELECT * FROM topic_settings WHERE chat_id=? AND thread_id=?",
+            (int(chat_id), int(thread_id)))
+
+    def topic_settings_all(self) -> list[sqlite3.Row]:
+        return self.query("SELECT * FROM topic_settings ORDER BY topic, chat_id")
+
+    def topic_setting_by_title(self, title: str) -> sqlite3.Row | None:
+        return self.one(
+            "SELECT * FROM topic_settings WHERE lower(topic)=? ORDER BY id LIMIT 1",
+            (str(title).strip().lower(),))
+
+    def set_title_routing(self, title: str, routing: str) -> None:
+        """Preset a routing command for every topic with this title.
+
+        Uses a unique negative thread_id as the global-by-title sentinel so it
+        never collides with a real forum thread (thread_id >= 0) or the main
+        chat (thread_id == 0).
+        """
+        title = str(title).strip()
+        if not title:
+            return
+        routing = str(routing).strip()[:24]
+        row = self.topic_setting_by_title(title)
+        if row is not None:
+            self.execute("UPDATE topic_settings SET routing=? WHERE id=?",
+                         (routing, int(row["id"])))
+            return
+        used = {int(r["thread_id"]) for r in
+                self.query("SELECT thread_id FROM topic_settings WHERE thread_id<0")}
+        tid = -1
+        while tid in used:
+            tid -= 1
+        self.execute(
+            "INSERT INTO topic_settings(chat_id, thread_id, topic, routing,"
+            " updated_ts) VALUES(0,?,?,?,?)",
+            (tid, title, routing, int(time.time())))
+
+    def upsert_topic_setting(self, chat_id: int, thread_id: int,
+                             **fields: Any) -> None:
+        cols = ["chat_id", "thread_id", "updated_ts"]
+        vals: list[Any] = [int(chat_id), int(thread_id), int(time.time())]
+        for k, f in fields.items():
+            if k not in {"chat_id", "thread_id"}:
+                cols.append(k)
+                vals.append(f)
+        placeholders = ", ".join(["?"] * len(cols))
+        updates = ", ".join(f"{c}=excluded.{c}" for c in cols if c not
+                            in {"chat_id", "thread_id"})
+        self.execute(
+            f"INSERT INTO topic_settings({','.join(cols)}) VALUES({placeholders}) "
+            f"ON CONFLICT(chat_id, thread_id) DO UPDATE SET {updates}",
+            tuple(vals))
+
+    def delete_topic_setting(self, chat_id: int, thread_id: int) -> None:
+        self.execute("DELETE FROM topic_settings WHERE chat_id=? AND thread_id=?",
+                     (int(chat_id), int(thread_id)))
+
+    # ------------------------------------------------------ reward library
+    def add_reward(self, name: str, kind: str = "rest", weight: int = 1,
+                   stock_food: str = "") -> int:
+        cur = self.execute(
+            "INSERT INTO rewards(name, kind, weight, stock_food, created_at) "
+            "VALUES(?,?,?,?,?)",
+            (str(name).strip()[:120], str(kind).strip()[:8],
+             int(weight), str(stock_food).strip()[:120], int(time.time())))
+        return int(cur.lastrowid)
+
+    def rewards(self) -> list[sqlite3.Row]:
+        return self.query("SELECT * FROM rewards ORDER BY weight DESC, id")
+
+    def reward_by_id(self, reward_id: int) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM rewards WHERE id=?", (int(reward_id),))
+
+    def update_reward(self, reward_id: int, **fields: Any) -> None:
+        if not fields:
+            return
+        cols = ", ".join(f"{k}=?" for k in fields)
+        self.execute(
+            f"UPDATE rewards SET {cols} WHERE id=?",
+            tuple(fields.values()) + (int(reward_id),))
+
+    def delete_reward(self, reward_id: int) -> None:
+        self.execute("DELETE FROM rewards WHERE id=?", (int(reward_id),))
+
+    def touch_reward(self, reward_id: int) -> None:
+        self.execute(
+            "UPDATE rewards SET times_used=times_used+1, last_used=? WHERE id=?",
+            (int(time.time()), int(reward_id)))
+
+    # ------------------------------------------------------ app settings
+    def get_setting(self, key: str, default: str = "") -> str:
+        row = self.one("SELECT value FROM app_settings WHERE key=?", (str(key),))
+        return str(row["value"]) if row and row["value"] is not None else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        self.execute(
+            "INSERT INTO app_settings(key, value) VALUES(?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (str(key), str(value)))
