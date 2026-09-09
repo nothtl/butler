@@ -31,6 +31,7 @@ from .context import ContextEngine
 from .proactive import Proactive
 from .timeline import Timeline
 from .routines import Routines
+from .foodplan import FoodPlanner
 
 
 class Container:
@@ -64,12 +65,14 @@ class Container:
         self.ha = HomeAssistant(self.cfg)
         self.context = ContextEngine(self)
         self.proactive = Proactive(self)
+        self.foodplan = FoodPlanner(self)
         self.decider = Decider(self.cfg, self.db, self.engine,
                                self.organizer, self.search, self.chat,
                                planner=self.planner, courses=self.courses,
                                food=self.food, chef=self.chef, nas=self.nas,
                                context=self.context, proactive=self.proactive,
-                               timeline=self.timeline, routines=self.routines)
+                               timeline=self.timeline, routines=self.routines,
+                               foodplan=self.foodplan)
         self.trash = Trash(self.cfg, self.db, self.engine)
         self.indexer = Indexer(self.cfg, self.db, self.embedder)
         self.backup = Backup(self.cfg, self.db)

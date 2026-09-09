@@ -13,6 +13,21 @@ from typing import Any
 
 from .config import Config
 
+
+def _day_bounds(ts: int) -> tuple[int, int]:
+    """Start-of-day and start-of-next-day unix timestamps for a unix ts."""
+    try:
+        lt = time.localtime(int(ts))
+        day_start = int(time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday,
+                                     0, 0, 0, 0, 0, -1)))
+        day_end = int(time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday + 1,
+                                   0, 0, 0, 0, 0, -1)))
+    except Exception:  # pragma: no cover - defensive
+        day_start = int(ts)
+        day_end = int(ts) + 86400
+    return day_start, day_end
+
+
 SCHEMA = """
 PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
@@ -297,6 +312,23 @@ CREATE TABLE IF NOT EXISTS routines(
     signature   TEXT UNIQUE
 );
 CREATE INDEX IF NOT EXISTS idx_routines_state ON routines(state);
+
+-- ---------- Phase 4.5: food + schedule + context integration ----------
+-- A durable meal *suggestion* (not a committed decision). It is keyed by
+-- (day, recipe) so repeated/restarted requests never produce duplicate rows.
+-- The suggestion is advisory: it never mutates the schedule and never causes a
+-- purchase on its own (grocery additions are explicit user confirmations).
+CREATE TABLE IF NOT EXISTS meal_suggestions(
+    id          INTEGER PRIMARY KEY,
+    day_ts      INTEGER NOT NULL,        -- calendar day-ts
+    recipe_id   INTEGER NOT NULL,
+    meal        TEXT DEFAULT '',
+    budget_minutes INTEGER DEFAULT 0,
+    reason      TEXT,
+    created_at  INTEGER DEFAULT 0,
+    UNIQUE(day_ts, recipe_id)
+);
+CREATE INDEX IF NOT EXISTS idx_meal_sugg_day ON meal_suggestions(day_ts);
 """
 
 
@@ -975,3 +1007,40 @@ class DB:
             "SELECT m.*, r.name AS recipe_name, r.source "
             "FROM meal_history m LEFT JOIN recipes r ON r.id=m.recipe_id "
             "ORDER BY m.ts DESC LIMIT ?", (int(limit),))
+
+    def meal_history_on_day(self, recipe_id: int, day_ts: int) -> sqlite3.Row | None:
+        """Already logged this recipe this day? (avoids dup rows on restart)."""
+        y0, y1 = _day_bounds(day_ts)
+        return self.one(
+            "SELECT id FROM meal_history WHERE recipe_id=? AND ts BETWEEN ? AND ?",
+            (int(recipe_id), y0, y1))
+
+    # -------------------------------------------------- meal suggestions
+    def add_meal_suggestion(self, day_ts: int, recipe_id: int, meal: str = "",
+                            budget_minutes: int = 0, reason: str = "") -> int:
+        """Idempotent: repeated requests never create duplicate rows."""
+        existing = self.one(
+            "SELECT id FROM meal_suggestions WHERE day_ts=? AND recipe_id=?",
+            (int(day_ts), int(recipe_id)))
+        if existing:
+            self.execute(
+                "UPDATE meal_suggestions SET meal=?, budget_minutes=?, reason=? "
+                "WHERE id=?", (str(meal), int(budget_minutes), str(reason),
+                               int(existing["id"])))
+            return int(existing["id"])
+        cur = self.execute(
+            "INSERT INTO meal_suggestions(day_ts, recipe_id, meal, budget_minutes,"
+            "reason, created_at) VALUES(?,?,?,?,?,?)",
+            (int(day_ts), int(recipe_id), str(meal), int(budget_minutes),
+             str(reason), int(time.time())))
+        return int(cur.lastrowid)
+
+    def meal_suggestions(self, day_ts: int) -> list[sqlite3.Row]:
+        return self.query(
+            "SELECT * FROM meal_suggestions WHERE day_ts=? ORDER BY id",
+            (int(day_ts),))
+
+    def clear_meal_suggestions(self, day_ts: int) -> int:
+        cur = self.execute("DELETE FROM meal_suggestions WHERE day_ts=?",
+                           (int(day_ts),))
+        return int(cur.rowcount)

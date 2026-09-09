@@ -80,6 +80,7 @@ class Proactive:
         msgs += self._food_alerts()
         msgs += self._course_alerts()
         msgs += self._event_alerts()
+        msgs += self._meal_suggestion()
         if not msgs:
             return []
         return msgs
@@ -129,6 +130,49 @@ class Proactive:
                 hm = datetime.fromtimestamp(start).strftime("%H:%M")
                 out.append(f"📅 {e['title']} at {hm}")
         return out
+
+    # -------------------------------------------------- Phase 4.5 meal nudge
+    def _meal_suggestion(self) -> list[str]:
+        """A context-aware, *soft*, never-purchasing meal suggestion.
+
+        Only fires on a meaningful reason — expiring ingredients that a meal
+        could use, OR it being a typical meal time with enough room — and only
+        if the hard budget is positive. It never records a meal, imports a
+        recipe, or adds groceries (uses :meth:`FoodPlanner.peek`).
+        """
+        fp = getattr(self.container, "foodplan", None)
+        if fp is None:
+            return []
+        b = fp.budget()
+        budget = b.get("budget_minutes", 0)
+        if budget <= 0:
+            return []
+        now_local = self.cfg.now_local()
+        now_min = now_local.hour * 60 + now_local.minute
+        meal_window = _MEAL_WINDOW(now_min)
+        expiring: set[str] = set()
+        inv = self.food if hasattr(self.food, "expiring") else \
+            (self.chef.inventory if self.chef else None)
+        if inv is not None:
+            for item in inv.expiring(3):
+                name = (item.get("name") or "").strip()
+                if name:
+                    expiring.add(name)
+        if not expiring and meal_window is None:
+            return []  # no meaningful reason — don't nag
+        try:
+            res = fp.peek()
+        except Exception as exc:  # noqa: BLE001 — never break the cadence
+            log.debug("proactive meal peek failed: %s", exc)
+            return []
+        plan = res.get("plan") or {}
+        if not plan.get("recipe"):
+            return []
+        how = "Uses ingredients that will expire soon." if expiring else \
+            (f"It's {meal_window} time and you have {budget} min free.")
+        return [f"🍳 {plan['recipe']} (~{plan['time_minutes']}min). {how} "
+                f"Want me to cook it?\n"
+                f"[Cook this] / [Another option] / [Not tonight]"]
 
     # ---------------------------------------------------------- send
     def run(self) -> dict[str, Any]:
@@ -182,3 +226,17 @@ class Proactive:
 
 def _fmt(ts: int) -> str:
     return datetime.fromtimestamp(ts).strftime("%b %-d") if ts else "?"
+
+
+_MEAL_WINDOWS = {
+    "breakfast": (6 * 60, 10 * 60),
+    "lunch": (11 * 60, 14 * 60),
+    "dinner": (17 * 60, 21 * 60),
+}
+
+
+def _MEAL_WINDOW(now_min: int) -> str | None:
+    for meal, (lo, hi) in _MEAL_WINDOWS.items():
+        if lo <= now_min <= hi:
+            return meal
+    return None

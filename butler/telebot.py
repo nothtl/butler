@@ -417,7 +417,8 @@ class TelegramBot:
             ms = f"\n     get: {', '.join(p['missing'])}" if p.get("missing") else ""
             await msg.reply_text(
                 f"🍳 {p['recipe']} (~{p['time_minutes']}min, {p['difficulty']}, ¥{p['cost']})\n"
-                f"have {int(p['have_ratio']*100)}% of ingredients{ms}")
+                f"have {int(p['have_ratio']*100)}% of ingredients{ms}",
+                reply_markup=self._food_buttons(result.get("recipe_id") or p.get("recipe_id")))
         elif kind == "meal_plan":
             p = result.get("plan", {})
             if not p.get("recipe"):
@@ -427,7 +428,8 @@ class TelegramBot:
             await msg.reply_text(
                 f"🍽 {p['meal']}: {p['recipe']} (~{p['time_minutes']}min, "
                 f"{p['difficulty']}, ¥{p['cost']})\n"
-                f"have {int(p['have_ratio']*100)}% of ingredients{ms}")
+                f"have {int(p['have_ratio']*100)}% of ingredients{ms}",
+                reply_markup=self._food_buttons(result.get("recipe_id") or p.get("recipe_id")))
         elif kind == "recipe_search":
             results = result.get("results", [])
             if not results:
@@ -470,6 +472,38 @@ class TelegramBot:
             lines = [f"• {i['name']} — {i.get('quantity','')}{i.get('unit','')}"
                      for i in items]
             await msg.reply_text("🛒 Shopping list:\n" + "\n".join(lines))
+        elif kind == "meal_cook":
+            if result.get("ok") is False:
+                await msg.reply_text("⚠️ " + str(result.get("error", "couldn't do that.")))
+                return
+            await msg.reply_text(
+                f"👨‍🍳 Cooking {result.get('meal', 'dinner')} later. "
+                f"I'll keep a slot free if I can — nothing else changed. 👍")
+        elif kind == "meal_another":
+            p = result.get("plan", {})
+            if not p.get("recipe"):
+                await msg.reply_text(p.get("message", "No other recipe fits."))
+                return
+            ms = f"\n     get: {', '.join(p['missing'])}" if p.get("missing") else ""
+            await msg.reply_text(
+                f"🔁 {p['recipe']} (~{p['time_minutes']}min, {p['difficulty']}, ¥{p['cost']})\n"
+                f"have {int(p['have_ratio']*100)}% of ingredients{ms}",
+                reply_markup=self._food_buttons(result.get("recipe_id") or p.get("recipe_id")))
+        elif kind == "meal_add_missing":
+            if result.get("ok") is False:
+                await msg.reply_text("⚠️ " + str(result.get("error", "couldn't do that.")))
+                return
+            added = result.get("added", [])
+            if not added:
+                await msg.reply_text("🛒 Nothing to add — all ingredients are already on the list. 👍")
+                return
+            await msg.reply_text("🛒 Added to shopping list:\n• "
+                                 + "\n• ".join(added))
+        elif kind == "meal_not_tonight":
+            if result.get("ok") is False:
+                await msg.reply_text("⚠️ " + str(result.get("error", "couldn't do that.")))
+                return
+            await msg.reply_text("🌙 Noted — I won't suggest that tonight. Nothing was changed.")
         elif kind == "nas_ingest":
             moved = result.get("moved", [])
             pending = result.get("pending", [])
@@ -586,6 +620,24 @@ class TelegramBot:
         ])
         return kb
 
+    def _food_buttons(self, recipe_id: Any) -> InlineKeyboardMarkup:
+        rid = str(recipe_id or "")
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton("🍳 Cook this",
+                                     callback_data=f"meal_cook:{rid}"),
+                InlineKeyboardButton("🔁 Another option",
+                                     callback_data=f"meal_another:{rid}"),
+            ],
+            [
+                InlineKeyboardButton("🛒 Add missing",
+                                     callback_data=f"meal_add_missing:{rid}"),
+                InlineKeyboardButton("🌙 Not tonight",
+                                     callback_data=f"meal_not_tonight:{rid}"),
+            ],
+        ])
+        return kb
+
     async def on_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
         await query.answer()
@@ -607,6 +659,13 @@ class TelegramBot:
         elif action == "cancel":
             self.pending.pop(plan_id, None)
             await query.edit_message_text("Cancelled — nothing was changed.")
+        elif action in ("meal_cook", "meal_another", "meal_add_missing",
+                        "meal_not_tonight"):
+            cmd = {"meal_cook": "cookthis", "meal_another": "another",
+                   "meal_add_missing": "addmissing",
+                   "meal_not_tonight": "nottonight"}[action]
+            await self._dispatch(update, f"/{cmd} {plan_id}",
+                                 user=update.effective_user.username or "telegram")
 
     def _apply_text(self, applied: dict) -> str:
         lines = []

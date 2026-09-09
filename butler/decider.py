@@ -12,6 +12,7 @@ Recognised intents:
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from dataclasses import dataclass, field
@@ -24,6 +25,8 @@ from . import affinity
 from .engine import Engine, EngineError, extract_course_code
 from .organizer import Organizer, Plan, PlanItem
 from .search import Search
+
+log = logging.getLogger(__name__)
 
 # Map "Project_1A" style names to a friendly project folder (Test 1)
 @dataclass
@@ -42,7 +45,8 @@ class Decider:
                  organizer: Organizer, search: Search, chat: Any = None,
                  planner: Any = None, courses: Any = None, food: Any = None,
                  chef: Any = None, nas: Any = None, context: Any = None,
-                 proactive: Any = None, timeline: Any = None, routines: Any = None):
+                 proactive: Any = None, timeline: Any = None, routines: Any = None,
+                 foodplan: Any = None):
         self.cfg = cfg
         self.db = db
         self.engine = engine
@@ -65,6 +69,7 @@ class Decider:
         self.proactive = proactive
         self.timeline = timeline
         self.routines = routines
+        self.foodplan = foodplan
 
     # ---------------------------------------------------------------- parse
     def parse(self, message: str) -> Intent:
@@ -110,6 +115,14 @@ class Decider:
                      r"\b(gym|exercise|workout|run|jog|study|library|cook|shop|grocery)\b[^.]*"
                      r"\b(on )?(mon|tue|wed|thu|fri|sat|sun|every day)\b", low):
             return Intent("routine_explicit", query=msg, raw=msg)
+
+        # --- Phase 4.5: natural-language meal (routed before Phase 2 "what should") ---
+        if re.search(r"\b(what should i|what can i|what do i|what to|i want to|"
+                     r"help me|decide)\b[^.]*\b(make|cook|eat|have)\b[^.]*\b"
+                     r"(dinner|lunch|breakfast|supper|tonight|for tea)" +
+                     r"|\b(make|cook) (dinner|lunch|breakfast|supper|tonight)\b" +
+                     r"|\b(for|whats for|what's for) (dinner|lunch|supper)\b", low):
+            return Intent("meal_plan", query=msg, raw=msg)
 
         # --- planner / scheduler intents (Phase 2) ---
         if re.search(r"\b(what should|what to do|what now|what do i do|what next|whats next)\b", low):
@@ -162,6 +175,22 @@ class Decider:
         if re.search(r"\b(i'?m|i am|im now)\b[\s\S]{0,25}\b(at|in|near)\b\s+\S", low) \
                 and "where" not in low:
             return Intent("location_change", query=msg, raw=msg)
+
+        # --- Phase 4.5: food follow-ups (buttons / replies to a suggestion) ---
+        # These are matched first so "cook this" is not stolen by the generic
+        # food_consume ("cooked ...") rule below.
+        if re.search(r"\b(not tonight|not today|not this evening|maybe later|"
+                     r"skip it|no thanks|cook something else|cancel the meal)\b", low):
+            return Intent("meal_not_tonight", query=msg, raw=msg)
+        if re.search(r"\b(add|get|buy|pick up)\b[\s\S]{0,25}\b(missing|the ingredients|"
+                     r"what we need|to the (shopping|cart)|grocer(ies|y))\b", low):
+            return Intent("meal_add_missing", query=msg, raw=msg)
+        if re.search(r"\b(cook (this|that|it)|i'?ll cook|lets cook|let's cook|make (it|that)|"
+                     r"go ahead|yes cook|do it)\b", low):
+            return Intent("meal_cook", query=msg, raw=msg)
+        if re.search(r"\b(another (option|recipe|one)|something else|give me another|"
+                     r"next one|different one|nothing that)\b", low):
+            return Intent("meal_another", query=msg, raw=msg)
 
         # --- Phase 3: food / chef ---
         if re.search(r"\b(from the pantry|in the fridge|in my kitchen|what do i have)\b", low):
@@ -328,6 +357,19 @@ class Decider:
             return Intent("recipe_mark", query=target or arg, raw=raw)
         if cmd in ("rate",):
             return Intent("recipe_mark", query=target or arg, raw=raw)
+        # --- Phase 4.5: food follow-ups ---
+        if cmd in ("cookthis", "cook", "yes"):
+            return Intent("meal_cook", query=target or arg,
+                          params={"recipe_id": self._as_int(target or "")}, raw=raw)
+        if cmd in ("another", "anotherrecipe", "next"):
+            return Intent("meal_another", query=target or arg,
+                          params={"exclude": target or ""}, raw=raw)
+        if cmd in ("addmissing", "shop", "buy"):
+            return Intent("meal_add_missing", query=target or arg,
+                          params={"recipe_id": self._as_int(target or "")}, raw=raw)
+        if cmd in ("nottonight", "skipmeal", "nothanks"):
+            return Intent("meal_not_tonight", query=target or arg,
+                          params={"recipe_id": self._as_int(target or "")}, raw=raw)
         # --- Phase 3: NAS + context + proactive ---
         if cmd in ("ingest", "processinbox"):
             return Intent("nas_ingest", raw=raw)
@@ -476,6 +518,14 @@ class Decider:
             return self._do_recipe_history()
         if k == "recipe_mark":
             return self._do_recipe_mark(intent)
+        if k == "meal_cook":
+            return self._do_meal_cook(intent)
+        if k == "meal_another":
+            return self._do_meal_another(intent)
+        if k == "meal_add_missing":
+            return self._do_meal_add_missing(intent)
+        if k == "meal_not_tonight":
+            return self._do_meal_not_tonight(intent)
         if k == "meal_plan":
             return self._do_meal_plan(intent)
         if k == "grocery":
@@ -598,6 +648,16 @@ class Decider:
     def _do_recipe(self, intent: Intent) -> dict[str, Any]:
         if self.chef is None:
             return {"kind": "recipe", "ok": False, "error": "chef not configured"}
+        msg = intent.query or intent.raw
+        if self.foodplan is not None:
+            try:
+                res = self.foodplan.suggest(meal="", message=msg)
+                return {"kind": "recipe", "plan": res["plan"],
+                        "budget_minutes": res["budget_minutes"],
+                        "window": res.get("window"), "reason": res.get("reason"),
+                        "recipe_id": res.get("recipe_id")}
+            except Exception as exc:  # noqa: BLE001 — degrade to the classic path
+                log.debug("foodplan.suggest failed (%s); falling back", exc)
         budget = self._free_budget()
         plan = self.chef.plan_meal(budget_minutes=budget)
         return {"kind": "recipe", "plan": plan, "budget_minutes": budget}
@@ -607,6 +667,15 @@ class Decider:
             return {"kind": "meal_plan", "ok": False, "error": "chef not configured"}
         msg = intent.query or intent.raw
         meal = self._meal_name(msg)
+        if self.foodplan is not None:
+            try:
+                res = self.foodplan.suggest(meal=meal, message=msg)
+                return {"kind": "meal_plan", "plan": res["plan"], "meal": meal,
+                        "budget_minutes": res["budget_minutes"],
+                        "window": res.get("window"), "reason": res.get("reason"),
+                        "recipe_id": res.get("recipe_id")}
+            except Exception as exc:  # noqa: BLE001 — degrade to the classic path
+                log.debug("foodplan.suggest failed (%s); falling back", exc)
         budget = self._free_budget()
         plan = self.chef.plan_meal(budget_minutes=budget, meal=meal)
         return {"kind": "meal_plan", "plan": plan, "meal": meal,
@@ -617,6 +686,112 @@ class Decider:
             return {"kind": "grocery", "ok": False, "error": "chef not configured"}
         items = self.chef.grocery_list()
         return {"kind": "grocery", "items": items}
+
+    # ------------------------------------------------- Phase 4.5 follow-ups
+    def _do_meal_cook(self, intent: Intent) -> dict[str, Any]:
+        if self.foodplan is None:
+            return {"kind": "meal_cook", "ok": False,
+                    "error": "food planner not configured"}
+        rid = self._meal_target_id(intent)
+        if not rid:
+            return {"kind": "meal_cook", "ok": False,
+                    "error": "Which recipe should I cook?"}
+        res = self.foodplan.cook_this(rid)
+        return {"kind": "meal_cook", "recipe_id": rid, **res}
+
+    def _do_meal_another(self, intent: Intent) -> dict[str, Any]:
+        if self.foodplan is None:
+            return {"kind": "meal_another", "ok": False,
+                    "error": "food planner not configured"}
+        exclude = self._exclude_ids(intent)
+        res = self.foodplan.suggest(exclude_ids=exclude)
+        return {"kind": "meal_another", "plan": res["plan"],
+                "budget_minutes": res["budget_minutes"],
+                "window": res.get("window"), "reason": res.get("reason"),
+                "recipe_id": res.get("recipe_id")}
+
+    def _do_meal_add_missing(self, intent: Intent) -> dict[str, Any]:
+        if self.foodplan is None:
+            return {"kind": "meal_add_missing", "ok": False,
+                    "error": "food planner not configured"}
+        rid = self._meal_target_id(intent)
+        if not rid:
+            return {"kind": "meal_add_missing", "ok": False,
+                    "error": "Which recipe needs ingredients?"}
+        res = self.foodplan.add_missing(rid)
+        return {"kind": "meal_add_missing", "recipe_id": rid, **res}
+
+    def _do_meal_not_tonight(self, intent: Intent) -> dict[str, Any]:
+        if self.foodplan is None:
+            return {"kind": "meal_not_tonight", "ok": False,
+                    "error": "food planner not configured"}
+        rid = self._meal_target_id(intent)
+        if not rid:
+            return {"kind": "meal_not_tonight", "ok": False,
+                    "error": "Which recipe should I skip?"}
+        res = self.foodplan.not_tonight(rid)
+        return {"kind": "meal_not_tonight", "recipe_id": rid, **res}
+
+    def _meal_target_id(self, intent: Intent) -> int | None:
+        params = intent.params or {}
+        rid = params.get("recipe_id")
+        if rid:
+            return int(rid)
+        q = intent.query or intent.raw or ""
+        m = re.search(r"\b(\d+)\b", q)
+        if m:
+            return int(m.group(1))
+        if q:
+            return self._recipe_id_by_text(q)
+        day_ts = self._today_ts()
+        sugg = self.db.meal_suggestions(day_ts)
+        if sugg:
+            return int(sugg[-1]["recipe_id"])
+        hist = self.db.meal_history(1)
+        if hist:
+            return int(hist[0]["recipe_id"])
+        return None
+
+    def _exclude_ids(self, intent: Intent) -> set[int]:
+        exclude: set[int] = set()
+        params = intent.params or {}
+        p = params.get("exclude")
+        if p:
+            num = self._as_int(str(p))
+            if num:
+                exclude.add(num)
+            else:
+                rid = self._recipe_id_by_text(str(p))
+                if rid:
+                    exclude.add(rid)
+        day_ts = self._today_ts()
+        sugg = self.db.meal_suggestions(day_ts)
+        if sugg:
+            exclude.add(int(sugg[-1]["recipe_id"]))
+        return exclude
+
+    def _recipe_id_by_text(self, text: str) -> int | None:
+        low = text.lower()
+        for row in self.db.recipes():
+            name = str(row["name"]).lower()
+            if name in low:
+                return int(row["id"])
+        for row in self.db.recipes():
+            name = str(row["name"]).lower()
+            if any(len(tok) > 3 and tok in low for tok in name.split()):
+                return int(row["id"])
+        return None
+
+    def _today_ts(self) -> int:
+        try:
+            return int(self.cfg.local_midnight(int(self.cfg.now_local().timestamp())))
+        except Exception:  # pragma: no cover
+            return int(self.cfg.now_local().timestamp())
+
+    @staticmethod
+    def _as_int(text: str) -> int | None:
+        m = re.match(r"^(\d+)$", str(text).strip())
+        return int(m.group(1)) if m else None
 
     @staticmethod
     def _recipe_query(msg: str) -> str:
