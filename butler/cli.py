@@ -472,9 +472,20 @@ def render(c: Container, r: dict) -> str:
             return str(r.get("error", "no assignments"))
         lines = []
         for code, res in (r.get("results") or {}).items():
-            for item in res.get("created", []):
-                lines.append(f"{code} → task #{item['task_id']} {item['title']} "
-                             f"(due {item['deadline']}, ~{item['est_hours']}h)")
+            for item in res.get("created", []) + res.get("updated", []):
+                action = "updated" if item in res.get("updated", []) else "created"
+                sched = item.get("schedule") or {}
+                slots = ", ".join(
+                    f"{_hm(s['start_min'])}-{_hm(s['end_min'])}" for s in sched.get("slots", []))
+                conflict = sched.get("conflict")
+                line = (f"{code} → {action} task #{item['task_id']} {item['title']} "
+                        f"(due {item['deadline']}, ~{item['est_hours']}h")
+                if slots:
+                    line += f", study {slots}"
+                line += ")"
+                if conflict:
+                    line += f" | ⚠ conflict: {sched.get('deficit')}m short before deadline"
+                lines.append(line)
         return "\n".join(lines) or "No un-understood assignments found."
     if k == "food_add":
         return "Stored: " + ", ".join(a.get("name", "") for a in r.get("added", [])) or "nothing"
@@ -537,6 +548,11 @@ def _fmt_res(results) -> list[str]:
         f"  {r.get('path')}"
         for r in results
     ]
+
+
+def _hm(minutes: int) -> str:
+    minutes = max(0, min(minutes, 1439))
+    return f"{minutes // 60:02d}:{minutes % 60:02d}"
 
 
 def default_json(o):

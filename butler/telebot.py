@@ -63,6 +63,11 @@ def human_size(n: int | None) -> str:
     return f"{n:.1f} PB"
 
 
+def _hm(minutes: int) -> str:
+    minutes = max(0, min(minutes, 1439))
+    return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+
 class TelegramBot:
     def __init__(self, container: Container):
         self.container = container
@@ -479,8 +484,18 @@ class TelegramBot:
                 return
             lines = []
             for code, res in (result.get("results") or {}).items():
-                for item in res.get("created", []):
-                    lines.append(f"{code} → task #{item['task_id']} {item['title']}")
+                for item in res.get("created", []) + res.get("updated", []):
+                    action = "updated" if item in res.get("updated", []) else "created"
+                    sched = item.get("schedule") or {}
+                    slots = ", ".join(
+                        f"{_hm(s['start_min'])}-{_hm(s['end_min'])}" for s in sched.get("slots", []))
+                    line = f"{code} → {action} task #{item['task_id']} {item['title']}"
+                    if slots:
+                        line += f" · study {slots}"
+                    if sched.get("conflict"):
+                        line += (f" · ⚠ conflict: {sched.get('deficit')}m "
+                                 f"short before deadline")
+                    lines.append(line)
             await msg.reply_text("\n".join(lines) or "No un-understood assignments found.")
         elif kind == "context":
             await msg.reply_text(self._context_text(result.get("snapshot", {})))

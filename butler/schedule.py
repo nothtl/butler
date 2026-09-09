@@ -199,6 +199,29 @@ def free_intervals(day_start: int, day_end: int, sleep_start: int,
     return gaps
 
 
+def day_capacity(day_start: int, day_end: int, events: list[Event],
+                 buffer_fraction: float, buffer_minutes: int,
+                 min_slot_minutes: int, sleep_start: int,
+                 sleep_end: int, deadline_min: int | None = None) -> int:
+    """Deterministic usable minutes for one waking day.
+
+    Free time is the day window minus sleep minus hard events; each gap keeps
+    ``buffer_minutes`` of breathing room on top of the ``buffer_fraction``
+    applied to the total. ``deadline_min`` (a minute-within-day) clamps every
+    gap so nothing is counted after an earlier deadline. Pure: no side effects.
+    """
+    total = 0
+    for a, b in free_intervals(day_start, day_end, sleep_start, sleep_end, events):
+        b = b if deadline_min is None else min(b, deadline_min)
+        if b - a <= 0:
+            continue
+        usable = (b - a) - buffer_minutes
+        if usable < min_slot_minutes:
+            continue
+        total += usable
+    return max(0, int(total * (1.0 - buffer_fraction)))
+
+
 # ---------------------------------------------------------------------------
 # core solver (pure)
 # ---------------------------------------------------------------------------

@@ -310,6 +310,86 @@ class Planner:
             return "Tasks adjusted to keep buffer and respect hard events: " + ", ".join(names)
         return "Tasks were re-prioritised to fit the available time."
 
+    # ------------------------------------------------- assignment placement
+    def capacity_before(self, est_minutes: int, deadline: int,
+                        day_ts: int | None = None) -> dict[str, Any]:
+        """Deterministic deadline-aware capacity envelope.
+
+        Sums the usable free minutes across every waking day from ``day_ts`` up
+        to the assignment deadline (clamping each day at the deadline). Purely
+        additive and deterministic; the solver/LLM never enters. Returns whether
+        the job fits and the shortfall if it does not (used to *report* a
+        conflict instead of silently overbooking).
+        """
+        day_ts = day_ts or self._today()
+        now = datetime.now().timestamp()
+        deadline = int(deadline or 0)
+        est_minutes = max(0, int(est_minutes or 0))
+        if deadline and deadline <= now:
+            return {"needed": est_minutes, "available": 0, "days": 0,
+                    "deficit": est_minutes, "conflict": est_minutes > 0,
+                    "headroom": est_minutes <= 0}
+        horizon = min(deadline, int(now) + 30 * 86400) if deadline else int(now) + 30 * 86400
+        start = self._day_start_ts(day_ts)
+        total = 0
+        days = 0
+        day = start
+        while day < horizon:
+            events = self._day_events(day)
+            deadline_min = None
+            if deadline:
+                dl = datetime.fromtimestamp(deadline)
+                d = datetime.fromtimestamp(day)
+                if dl.date() == d.date():
+                    deadline_min = dl.hour * 60 + dl.minute
+            total += sch.day_capacity(
+                self.day_start, self.day_end, events, self.cfg.buffer_fraction,
+                self.cfg.buffer_minutes, self.cfg.min_slot_minutes,
+                int(self.cfg.sleep_start), int(self.cfg.sleep_end), deadline_min)
+            days += 1
+            day += 86400
+        if total < 0:
+            total = 0
+        deficit = max(0, est_minutes - total)
+        return {"needed": est_minutes, "available": total, "days": days,
+                "deficit": deficit, "conflict": deficit > 0,
+                "headroom": total >= est_minutes}
+
+    def schedule_assignment_blocks(self, items: list[dict[str, Any]],
+                                   day_ts: int | None = None) -> dict[str, Any]:
+        """Deterministically place a set of assignment tasks and report them.
+
+        ``items`` is a list of ``{task_id, est_minutes, deadline}``. For each we
+        run a pure deadline-aware capacity check, then re-solve today's plan
+        exactly once (the solver chooses every start/end — the LLM has no say),
+        and return, per task, its placed slots together with the capacity result.
+        Idempotent: re-running re-solves from scratch, so blocks never accumulate.
+        """
+        out: dict[str, Any] = {}
+        if not items:
+            return out
+        day_ts = day_ts or self._today()
+        caps = {it["task_id"]: self.capacity_before(it.get("est_minutes", 0),
+                                                    it.get("deadline", 0), day_ts)
+                for it in items}
+        self.reschedule(day_ts)
+        plan = self.db.latest_plan()
+        slots: list[sch.Slot] = []
+        if plan:
+            try:
+                state = sch.PlanState.from_json(plan["json"])
+                slots = state.slots
+            except Exception as exc:  # noqa: BLE001
+                log.warning("parse active plan failed: %s", exc)
+        for it in items:
+            tid = int(it["task_id"])
+            mine = [s.to_dict() for s in slots if s.task_id == tid]
+            cap = caps.get(tid, {})
+            out[tid] = {"task_id": tid, "slots": mine,
+                        "placed_minutes": sum(s["end_min"] - s["start_min"] for s in mine),
+                        **cap}
+        return out
+
     # ------------------------------------------------------------------ undo
     def undo(self) -> dict[str, Any]:
         history = self.db.history_plans(1)
@@ -363,6 +443,11 @@ class Planner:
         for n in state.notes:
             lines.append(f"  ! {n}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _day_start_ts(ts: int) -> int:
+        d = datetime.fromtimestamp(ts)
+        return int(datetime(d.year, d.month, d.day, 0, 0).timestamp())
 
     @staticmethod
     def _today() -> int:

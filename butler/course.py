@@ -242,10 +242,11 @@ class CourseIntelligence:
         # scheduler remains deterministic; this is deduped by task_id.
         if new_docs and self._llm_ready():
             result = self.sync_assignments(code)
-            for item in result.get("created", []):
+            for item in result.get("created", []) + result.get("updated", []):
+                state = "updated" if item in result.get("updated", []) else "understood"
                 updates.append({
                     "kind": "assignment", "code": code,
-                    "message": f"{code} — assignment understood: {item['title']}",
+                    "message": f"{code} — assignment {state}: {item['title']}",
                     "task": item})
 
         self._state[key] = {
@@ -372,52 +373,119 @@ class CourseIntelligence:
         }
 
     # ------------------------------------------------------ assignment -> task
-    def sync_assignments(self, code: str) -> dict[str, Any]:
-        """Course -> Assignment -> Task pipeline.
+    def sync_assignments(self, code: str, force: bool = False) -> dict[str, Any]:
+        """Course -> Assignment -> Task -> Schedule pipeline.
 
-        For every course document that looks like an assignment/spec but has no
-        linked task yet, ask DeepSeek to *propose* a structured assignment model
-        (title, official deadline, estimated workload, requirements,
-        dependencies, milestones). The deterministic DB layer then creates the
-        task. DeepSeek never schedules — it only describes; the scheduler/planner
-        places the resulting task.
+        For every course document that looks like an assignment/spec, ask
+        DeepSeek to *propose* a structured assignment model (title, official
+        deadline, estimated workload, requirements, dependencies, milestones).
+        The deterministic DB layer then creates (or updates) the task and the
+        deterministic planner places its study blocks. DeepSeek never schedules
+        — it only describes; the solver decides every start/end.
 
-        Deduping is hard: ``course_documents.task_id`` records which document
-        already produced a task, so re-discovery never creates a duplicate.
-        Skipped entirely when no deadline isproduced or the LLM is unavailable.
+        Idempotency & updates:
+          * a doc that already produced a task is re-understood only when its
+            content hash changed (or ``force=True``); if the model shifted (e.g.
+            a revised deadline) the EXISTING task is updated in place, never
+            recreated — so no duplicate task ever appears;
+          * the planner re-solves today's plan from scratch, so no duplicate
+            schedule blocks accumulate;
+          * with no official deadline, or when the LLM is unavailable/invalid,
+            the doc is skipped — Butler never invents a task.
+
+        Returns ``{created, updated, count}``; each entry carries a ``schedule``
+        dict (its placed study slots + deadline capacity / conflict report).
         """
         course = self.db.course_by_code(code)
         if not course:
             return {"ok": False, "error": f"no course {code}"}
         cid = int(course["id"])
         created: list[dict[str, Any]] = []
+        updated: list[dict[str, Any]] = []
+        to_place: list[dict[str, Any]] = []
         for doc in self.db.course_documents(cid):
             row = dict(doc)
-            if int(row.get("task_id") or 0):
-                continue
             if str(row.get("document_type") or "") not in (
                     "project", "assignment", "spec", "reading"):
                 continue
-            model = self.understand(cid, int(row["id"]))
+            doc_id = int(row["id"])
+            stored = self._stored_understanding(row.get("understanding") or "")
+            link_changed = str(row.get("content_hash") or "") != stored.get("content_hash")
+            task_id = int(row.get("task_id") or 0)
+            if task_id and not (link_changed or force):
+                continue  # unchanged + already pipeline'd -> idempotent no-op
+            model = self.understand(cid, doc_id)
             if not model or not model.get("deadline"):
-                continue
-            task_id = self._create_task_from_model(code, row, model)
-            if not task_id:
-                continue
-            import json as _json
-            self.db.update_course_document(int(row["id"]), task_id=int(task_id),
-                                           understanding=_json.dumps(model))
-            created.append({"doc_id": int(row["id"]), "task_id": task_id,
-                            "title": model.get("title"),
-                            "deadline": model.get("deadline"),
-                            "est_hours": model.get("est_hours")})
-        return {"ok": True, "code": code, "created": created,
-                "count": len(created)}
+                continue  # no official deadline / LLM unavailable -> no bogus task
+            fields = self._task_fields(code, row, model)
+            if task_id:
+                if self._apply_update(task_id, fields):
+                    item = {"doc_id": doc_id, "task_id": task_id,
+                            "title": fields["title"], "deadline": fields["deadline"],
+                            "est_hours": model.get("est_hours"),
+                            "est_minutes": fields["est_minutes"]}
+                    updated.append(item)
+                    to_place.append({"task_id": task_id,
+                                     "est_minutes": fields["est_minutes"],
+                                     "deadline": fields["deadline"]})
+                    self._record_understanding(doc_id, row, model, task_id)
+            else:
+                task_id = self.db.add_task(fields["title"], detail=fields["detail"],
+                                           deadline=fields["deadline"],
+                                           priority=fields["priority"],
+                                           est_minutes=fields["est_minutes"],
+                                           tags=fields["tags"])
+                if not task_id:
+                    continue
+                item = {"doc_id": doc_id, "task_id": task_id,
+                        "title": fields["title"], "deadline": fields["deadline"],
+                        "est_hours": model.get("est_hours"),
+                        "est_minutes": fields["est_minutes"]}
+                created.append(item)
+                to_place.append({"task_id": task_id,
+                                 "est_minutes": fields["est_minutes"],
+                                 "deadline": fields["deadline"]})
+                self._record_understanding(doc_id, row, model, task_id)
+        schedule = self._place_affected(to_place)
+        for item in created + updated:
+            item["schedule"] = schedule.get(item["task_id"], {})
+        return {"ok": True, "code": code, "created": created, "updated": updated,
+                "count": len(created) + len(updated)}
 
-    def _create_task_from_model(self, code: str, doc: dict[str, Any],
-                                model: dict[str, Any]) -> int:
-        """Deterministically materialise a scheduler task from an assignment
-        model. Priority derives from deadline proximity (never from the LLM)."""
+    def _place_affected(self, items: list[dict[str, Any]]) -> dict[str, Any]:
+        """Hand the newly created/updated tasks to the deterministic planner.
+        Returns ``{task_id: {slots, capacity report}}`` (or {} when offline)."""
+        planner = getattr(self.container, "planner", None)
+        if not planner or not items:
+            return {}
+        try:
+            return planner.schedule_assignment_blocks(items)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("assignment scheduling failed: %s", exc)
+            return {}
+
+    def _record_understanding(self, doc_id: int, row: dict[str, Any],
+                              model: dict[str, Any], task_id: int = 0) -> None:
+        payload = {"content_hash": str(row.get("content_hash") or ""),
+                   "version": int(row.get("version") or 1), "model": model}
+        fields: dict[str, Any] = {"understanding": json.dumps(payload)}
+        if task_id:
+            fields["task_id"] = int(task_id)
+        self.db.update_course_document(doc_id, **fields)
+
+    def _stored_understanding(self, raw: str) -> dict[str, Any]:
+        if not raw:
+            return {}
+        try:
+            data = json.loads(raw)
+        except Exception:  # noqa: BLE001
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _task_fields(self, code: str, doc: dict[str, Any],
+                     model: dict[str, Any]) -> dict[str, Any]:
+        """Deterministically derive the task columns from an assignment model.
+        Priority derives from deadline proximity (never from the LLM)."""
         deadline = int(model.get("deadline") or 0)
         est_hours = float(model.get("est_hours") or 1.0)
         est_minutes = min(8 * 60, max(15, int(est_hours * 60)))
@@ -440,21 +508,34 @@ class CourseIntelligence:
         deps = model.get("dependencies") or []
         if deps and not reqs:
             detail += "\n" + "\n".join("- depends: %s" % d for d in deps)
-        return self.db.add_task(str(model.get("title") or doc["title"]),
-                                detail=detail, deadline=deadline,
-                                priority=priority, est_minutes=est_minutes,
-                                tags=f"{code} assignment")
+        return {"title": str(model.get("title") or doc["title"]),
+                "detail": detail, "deadline": deadline, "priority": priority,
+                "est_minutes": est_minutes, "tags": f"{code} assignment"}
 
+    def _apply_update(self, task_id: int, fields: dict[str, Any]) -> int:
+        """Update an existing task in place (never create a duplicate). Returns
+        1 when something changed, 0 when the task already matches (no-op)."""
+        cur = self.db.task_by_id(task_id)
+        if cur and (str(cur["title"]) == str(fields["title"])
+                    and int(cur["deadline"] or 0) == int(fields["deadline"] or 0)
+                    and int(cur["est_minutes"] or 0) == int(fields["est_minutes"] or 0)
+                    and int(cur["priority"] or 3) == int(fields["priority"] or 3)):
+            return 0
+        self.db.update_task(task_id, title=fields["title"], detail=fields["detail"],
+                            deadline=fields["deadline"], priority=fields["priority"],
+                            est_minutes=fields["est_minutes"], tags=fields["tags"])
+        return 1
 
-        """:class:`A4`: the course website is authoritative. Never replace the
-        official deadline with a search-derived one."""
-        if official is None:
-            if other is not None:
-                return {"deadline": other, "used": other_source}
-            return {"deadline": None, "used": None}
-        return {"deadline": official, "used": "official", "conflict":
-                other is not None and other != official and
-                {"official": _fmt_day(official), "other": _fmt_day(other)}}
+    def _create_task_from_model(self, code: str, doc: dict[str, Any],
+                                model: dict[str, Any]) -> int:
+        """Deterministically materialise a scheduler task from an assignment
+        model. Priority derives from deadline proximity (never from the LLM)."""
+        fields = self._task_fields(code, doc, model)
+        return self.db.add_task(fields["title"], detail=fields["detail"],
+                                deadline=fields["deadline"],
+                                priority=fields["priority"],
+                                est_minutes=fields["est_minutes"],
+                                tags=fields["tags"])
 
     # -------------------------------------------------------------- notification
     def _announce(self, course: Any, kind: str, message: str,
