@@ -40,12 +40,24 @@ class Task:
     status: str = "todo"            # todo | doing  (done/skipped are excluded)
     color: str = ""
     tags: str = ""
+    # Phase 4.2: a soft, context-derived tie-breaker (0 = context-neutral).
+    # It only affects ordering among otherwise-equivalent tasks; feasibility is
+    # never changed by it. Higher => preferred sooner, lower is sooner in the
+    # urgency key below.
+    affinity: int = 0
 
     def urgency_key(self) -> tuple:
-        """Lower is sooner. Deterministic tiebreak by id."""
+        """Lower is sooner. Deterministic tiebreak by affinity then id.
+
+        ``affinity`` is consulted *after* deadline/priority/remaining so the
+        pure geometry (which tasks are actually feasible, and how urgent they
+        are) is never bent by context — it only decides the order of otherwise
+        equivalent tasks. A default affinity of ``0`` reproduces the pre-4.2
+        ordering exactly.
+        """
 
         d = self.deadline if self.deadline is not None else 10**9
-        return (d, -self.priority, self.remaining_minutes, self.id)
+        return (d, -self.priority, self.remaining_minutes, -self.affinity, self.id)
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -59,6 +71,7 @@ class Task:
             deadline=int(d["deadline"]) if d.get("deadline") else None,
             priority=int(d.get("priority", 3)), status=str(d.get("status", "todo")),
             color=str(d.get("color", "")), tags=str(d.get("tags", "")),
+            affinity=int(d.get("affinity", 0)),
         )
 
 

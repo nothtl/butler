@@ -19,6 +19,7 @@ from typing import Any
 
 from .config import Config
 from .db import DB
+from . import affinity
 from .engine import Engine, EngineError, extract_course_code
 from .organizer import Organizer, Plan, PlanItem
 from .search import Search
@@ -112,6 +113,15 @@ class Decider:
             return Intent("where_am_i", raw=msg)
         if re.search(r"\b(around me|near me|whats around me|whats near me)\b", low):
             return Intent("around_me", raw=msg)
+
+        # --- Phase 4.2: context-aware recommendations ---
+        if re.search(r"\bwhy\b.*\b(this|that)\b|\bwhy\b.*\b(recommend|suggest|pick|chose)\b", low):
+            return Intent("why_this", raw=msg)
+        if re.search(r"\bmove\b.*\bblock\b", low):
+            return Intent("move_block", query=msg, raw=msg)
+        if re.search(r"\b(i'?m|i am|im now)\b[\s\S]{0,25}\b(at|in|near)\b\s+\S", low) \
+                and "where" not in low:
+            return Intent("location_change", query=msg, raw=msg)
 
         # --- Phase 3: food / chef ---
         if re.search(r"\b(from the pantry|in the fridge|in my kitchen|what do i have)\b", low):
@@ -234,6 +244,8 @@ class Decider:
             return Intent("came_up", query=target, raw=raw)
         if cmd == "why":
             return Intent("why", raw=raw)
+        if cmd == "whythis":
+            return Intent("why_this", raw=raw)
         if cmd == "undo":
             return Intent("undo", raw=raw)
         if cmd in ("resched", "reschedule", "replan"):
@@ -353,7 +365,13 @@ class Decider:
         if k == "day":
             return {"kind": "day", **self.planner.plan_day()}
         if k == "now":
-            return {"kind": "now", **self.planner.what_now()}
+            return {"kind": "now", **self.planner.what_now(intent.raw)}
+        if k == "why_this":
+            return {"kind": "why_this", **self.planner.explain_now()}
+        if k == "location_change":
+            return self._do_location_change(intent)
+        if k == "move_block":
+            return self._do_move_block(intent)
         if k == "tasks":
             return {"kind": "plan_tasks", "tasks": [dict(r) for r in self.db.tasks("active")]}
         if k == "add_task":
@@ -640,6 +658,74 @@ class Decider:
         return {"kind": "around_me", "presence": snap.get("presence", {}),
                 "events_today": snap.get("events_today", []),
                 "free_minutes_today": snap.get("free_minutes_today", 0)}
+
+    # ------------------------------------------------------- Phase 4.2
+    def _do_location_change(self, intent: Intent) -> dict[str, Any]:
+        """Recognise a context shift from an explicit "I'm at <place>" and
+        offer to move a conflicting soft block — never silently reschedule."""
+        msg = intent.query or intent.raw
+        zone = self._location_name(msg)
+        pres = self._presence()
+        zw = affinity.zone_weights_for(zone.lower() if zone else "")
+        context_cats = sorted(zw.keys())
+        now_res = self.planner.what_now()
+        scheduled_now = now_res.get("now")
+        offer = None
+        if scheduled_now and context_cats:
+            cat_ctx = set(affinity.classify(scheduled_now.get("title", "")))
+            if cat_ctx.isdisjoint(context_cats):
+                offer = {"task_id": scheduled_now.get("task_id"),
+                         "title": scheduled_now.get("title"),
+                         "start": scheduled_now.get("start"),
+                         "end": scheduled_now.get("end")}
+        answer = f"Got it — you're at {zone or 'a new place'}."
+        if context_cats:
+            answer += f" That suits {', '.join(context_cats)}."
+        if offer:
+            answer += (f" You have {offer['title']} ({offer['start']}-{offer['end']})"
+                       " scheduled now — want me to move that block?")
+        else:
+            answer += " I won't change your schedule unless you ask."
+        return {"kind": "location_change", "zone": zone, "presence": pres,
+                "context_categories": context_cats, "scheduled_now": scheduled_now,
+                "offer": offer, "moved": False, "answer": answer}
+
+    def _do_move_block(self, intent: Intent) -> dict[str, Any]:
+        """Honour an explicit "move my <task> block" by re-solving the day with
+        the existing deterministic scheduler (the single source of truth)."""
+        msg = intent.query or intent.raw
+        target = self._move_target(msg)
+        self.planner.reschedule()
+        moved = self.planner.why().get("moved", [])
+        titles = [m.get("title") for m in moved if m.get("new")]
+        answer = "Rescheduled the day."
+        if titles:
+            answer += " Moved: " + ", ".join(str(t) for t in titles[:4]) + "."
+        if target:
+            answer += f" (requested: {target})"
+        return {"kind": "move_block", "target": target, "moved": moved,
+                "answer": answer}
+
+    @staticmethod
+    def _location_name(msg: str) -> str:
+        low = (msg or "").lower()
+        m = re.search(r"\b(?:at|in|near)\s+(.+)$", msg)
+        if not m:
+            return ""
+        name = m.group(1).strip().strip(" .").strip()
+        name = re.sub(r"^(the|a|my)\s+", "", name, flags=re.I)
+        name = re.split(r"\b(so|because|and|then|now|today|wanna|want to)\b",
+                        name, flags=re.I)[0]
+        return name.strip().strip(" .").strip()
+
+    @staticmethod
+    def _move_target(msg: str) -> str:
+        m = re.search(r"\bmove\b.*?\b([a-zA-Z0-9][a-zA-Z0-9' -]{1,40}?)\s+block\b",
+                      msg, re.I)
+        if m:
+            return m.group(1).strip()
+        m = re.search(r"\bmove\b.*?\b([a-zA-Z0-9][a-zA-Z0-9' -]{1,40})", msg, re.I)
+        return m.group(1).strip() if m else ""
 
     def _snapshot(self) -> dict[str, Any]:
         if self.context is None:

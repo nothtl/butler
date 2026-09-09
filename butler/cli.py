@@ -31,7 +31,7 @@ def main(argv: list[str] | None = None) -> int:
         "mkdir", "move", "rename", "apply", "backup", "bot", "monitor", "remote",
         "mcp", "daemon",
         "task", "tasks", "day", "now", "done", "skip", "start", "cameup", "why",
-        "undo", "reschedule", "calendar",
+        "whythis", "undo", "reschedule", "calendar",
         "course", "courses", "checkcourses", "materials", "ingest",
         "pantry", "food", "addfood", "expiring", "used", "grocery",
         "meal", "recipe", "searchrecipes", "favorites", "recipelibrary",
@@ -189,7 +189,8 @@ def dispatch(container: Container, ns: argparse.Namespace) -> int:
     if cmd == "day":
         return emit(container, {"kind": "day", **container.planner.plan_day()}, ns)
     if cmd == "now":
-        return emit(container, {"kind": "now", **container.planner.what_now()}, ns)
+        return emit(container, {"kind": "now",
+                                **container.planner.what_now(" ".join(args))}, ns)
     if cmd in ("done", "skip", "start"):
         tid = _taskid(container, args)
         if tid is None:
@@ -208,6 +209,9 @@ def dispatch(container: Container, ns: argparse.Namespace) -> int:
                                 " block(s)"}, ns)
     if cmd == "why":
         return emit(container, {"kind": "plan_why", **container.planner.why()}, ns)
+    if cmd == "whythis":
+        return emit(container, {"kind": "why_this", **container.planner.explain_now(
+            " ".join(args))}, ns)
     if cmd == "undo":
         return emit(container, {"kind": "day", **container.planner.undo()}, ns)
     if cmd == "reschedule":
@@ -557,6 +561,15 @@ def render(c: Container, r: dict) -> str:
             nearby = ", ".join(str(e.get("title", "event")) for e in events[:5])
             line += f" · today: {nearby}"
         return line
+    # ------------------------------------------------ Phase 4.2 renderers
+    if k == "why_this":
+        cand = r.get("candidate") or {}
+        head = f"Why {cand.get('title', 'this')}?" if cand.get("title") else "Why this?"
+        return head + (r.get("reason", "") or "")
+    if k == "location_change":
+        return r.get("answer", str(r))
+    if k == "move_block":
+        return r.get("answer", str(r))
     return json.dumps(r, indent=2, default=default_json)
 
 

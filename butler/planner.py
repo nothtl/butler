@@ -24,6 +24,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from . import schedule as sch
+from . import affinity
 from .agent import Agent
 from .gcal import GCalError, GoogleCalendar
 
@@ -257,8 +258,11 @@ class Planner:
         return out
 
     # ------------------------------------------------------------------ solve
-    def _solve(self, day_ts: int) -> sch.PlanState:
+    def _solve(self, day_ts: int, affinities: dict[int, int] | None = None) -> sch.PlanState:
         tasks = self._active_tasks(day_ts)
+        if affinities:
+            for t in tasks:
+                t.affinity = int(affinities.get(t.id, 0))
         events = self._day_events(day_ts)
         state = sch.solve(
             self.day_start, self.day_end, events, tasks,
@@ -306,21 +310,168 @@ class Planner:
     def reschedule(self, day_ts: int | None = None) -> dict[str, Any]:
         return self.plan_day(day_ts)
 
-    def what_now(self, day_ts: int | None = None) -> dict[str, Any]:
+    def what_now(self, message: str = "", day_ts: int | None = None,
+                 now_min: int | None = None) -> dict[str, Any]:
+        """Recommend the next thing to do, using soft context when available.
+
+        Context (presence zone, the user's explicit words, energy) is applied
+        only as a *soft* affinity tie-breaker inside the pure solver; it never
+        overrides a hard constraint (a lecture, a deadline, sleep, the buffer),
+        and never silently changes the day's committed plan (``plan_day`` and
+        ``reschedule`` remain context-neutral). When HA is unknown/unavailable,
+        or when no preference is expressed, the recommendation is exactly the
+        deterministic baseline.
+
+        ``now_min`` lets a caller pin the current minute-of-day (default: real
+        clock), which is what makes the acceptance tests reproducible.
+        """
         day_ts = day_ts or self._today()
-        state = self._solve(day_ts)
-        now = datetime.fromtimestamp(day_ts)  # reference
-        now_min = datetime.now().hour * 60 + datetime.now().minute
+        r = self._recommend(message, day_ts, now_min)
+        return {"ok": True, "now": r["now"], "answer": r["answer"],
+                "reason": r["reason"], "factors": r["factors"],
+                "context_influenced": r["context_influenced"],
+                "user_override": r["user_override"],
+                "ha_influence": r["ha_influence"],
+                "candidate": r["candidate"], "decision_log": r["decision_log"]}
+
+    def explain_now(self, message: str = "", day_ts: int | None = None,
+                    now_min: int | None = None) -> dict[str, Any]:
+        """Why is this task the current recommendation? (``why this?``)."""
+        day_ts = day_ts or self._today()
+        r = self._recommend(message, day_ts, now_min)
+        return {"ok": True, "candidate": r["candidate"], "reason": r["reason"],
+                "factors": r["factors"], "context_influenced": r["context_influenced"],
+                "user_override": r["user_override"], "ha_influence": r["ha_influence"],
+                "decision_log": r["decision_log"]}
+
+    # ------------------------------------------------------- recommendation
+    def _recommend(self, message: str, day_ts: int,
+                   now_min: int | None = None) -> dict[str, Any]:
+        pres = self._presence_safe()
+        zone_raw = (pres.get("zone") or "").strip()
+        zone = zone_raw.lower()
+        preferences = affinity.preference_weights(message)
+        tired = affinity.is_tired(message)
+        tasks = self._active_tasks(day_ts)
+        aff_map = {t.id: affinity.task_affinity(t.title, t.tags, zone,
+                                                preferences, tired)
+                   for t in tasks}
+        state = self._solve(day_ts, aff_map)
+        tasks_by_id = {t["id"]: t for t in state.snapshot.get("tasks", [])}
+        if now_min is None:
+            now_min = datetime.now().hour * 60 + datetime.now().minute
         slots = sorted((s for s in state.slots if s.end_min > now_min),
                        key=lambda s: s.start_min)
-        if not slots:
+        chosen: sch.Slot | None = None
+        for s in slots:
+            t = tasks_by_id.get(s.task_id)
+            if t and t.get("deadline") is not None and s.end_min > t["deadline"]:
+                continue  # never recommend a task after its deadline
+            chosen = s
+            break
+        base_log = {"presence_known": bool(pres.get("known")), "zone": zone_raw,
+                    "tired": tired, "preference_weights": dict(preferences),
+                    "affinity": {str(k): v for k, v in aff_map.items()}}
+        if chosen is None:
             return {"ok": True, "now": None,
-                    "answer": "Nothing left to do right now. Enjoy the buffer."}
-        s = slots[0]
-        await_ = max(0, s.start_min - now_min)
-        return {"ok": True, "now": {"task_id": s.task_id, "title": s.title,
-                                    "start": _hm(s.start_min), "end": _hm(s.end_min)},
-                "answer": f"Now: {s.title} ({_hm(s.start_min)}-{_hm(s.end_min)})."}
+                    "answer": "Nothing left to do right now. Enjoy the buffer.",
+                    "reason": "", "factors": {}, "context_influenced": False,
+                    "user_override": False, "ha_influence": False,
+                    "candidate": None, "decision_log": base_log}
+        task = tasks_by_id[chosen.task_id]
+        cats = list(affinity.classify(task.get("title", ""), task.get("tags", "")))
+        zw = affinity.zone_weights_for(zone)
+        loc_fit = next((c for c in cats if zw.get(c, 0) > 0), None)
+        pref_fit = next((c for c in cats if preferences.get(c, 0) != 0), None)
+        factors = self._factors(task, chosen, pres, zw, cats, loc_fit, pref_fit,
+                                tired, preferences, tasks_by_id, now_min, day_ts)
+        reason = self._explain_reason(task, chosen, zone_raw, loc_fit, pref_fit,
+                                      tired, factors)
+        candidate = {"task_id": chosen.task_id, "title": chosen.title,
+                     "start": _hm(chosen.start_min), "end": _hm(chosen.end_min)}
+        answer = f"Now: {chosen.title} ({_hm(chosen.start_min)}-{_hm(chosen.end_min)})."
+        if loc_fit or pref_fit or tired:
+            answer += " " + reason
+        return {"ok": True, "now": candidate, "answer": answer, "reason": reason,
+                "factors": factors,
+                "context_influenced": bool(loc_fit or pref_fit),
+                "user_override": bool(pref_fit),
+                "ha_influence": bool(pres.get("known") and loc_fit),
+                "candidate": candidate,
+                "decision_log": {**base_log,
+                                 "candidate": candidate, "factors": factors,
+                                 "context_influenced": bool(loc_fit or pref_fit),
+                                 "user_override": bool(pref_fit),
+                                 "ha_influence": bool(pres.get("known") and loc_fit)}}
+
+    def _factors(self, task: dict[str, Any], sample: sch.Slot, pres: dict[str, Any],
+                 zw: dict[str, int], cats: list[str], loc_fit: str | None,
+                 pref_fit: str | None, tired: bool,
+                 preferences: dict[str, int], tasks_by_id: dict[int, dict[str, Any]],
+                 now_min: int, day_ts: int) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        deadline = task.get("deadline")
+        out["deadline"] = None
+        if deadline is not None:
+            if deadline == 0:
+                out["deadline"] = "overdue (due earlier today)"
+            else:
+                out["deadline"] = f"due by {_hm(deadline)}"
+        out["next_commitment"] = self._next_commitment(now_min, day_ts)
+        if loc_fit:
+            zone_disp = (pres.get("zone") or "").strip()
+            out["location"] = f"{zone_disp} favours {loc_fit}"
+        else:
+            out["location"] = None
+        if pref_fit:
+            w = preferences.get(pref_fit, 0)
+            out["preference"] = f"you want to {pref_fit}" if w > 0 else \
+                                f"you'd rather not {pref_fit}"
+        else:
+            out["preference"] = None
+        if tired:
+            out["energy"] = "low — heavier tasks deprioritised"
+        else:
+            out["energy"] = "ok"
+        out["category"] = cats
+        out["affinity"] = int(task.get("affinity", 0))
+        return out
+
+    def _next_commitment(self, now_min: int, day_ts: int) -> str | None:
+        ends = [e.end_min for e in self._day_events(day_ts) if e.end_min > now_min]
+        nxt = min(ends) if ends else None
+        return _hm(nxt) if nxt is not None else None
+
+    def _explain_reason(self, task: dict[str, Any], sample: sch.Slot,
+                        zone_raw: str, loc_fit: str | None, pref_fit: str | None,
+                        tired: bool, factors: dict[str, Any]) -> str:
+        bits: list[str] = []
+        if loc_fit:
+            bits.append(f"you're at {zone_raw}, which suits {loc_fit}")
+        if pref_fit:
+            bits.append(f"you wanted to do that")
+        if tired:
+            bits.append("you're a bit tired, so lighter tasks come first")
+        dl = factors.get("deadline")
+        if dl:
+            bits.append(f"it's {dl}")
+        nc = factors.get("next_commitment")
+        if nc and not loc_fit and not pref_fit:
+            bits.append(f"it fits before the next commitment at {nc}")
+        if not bits:
+            return ("This is the next clearly-available task in the plan.")
+        return " — " + ", ".join(bits) + "."
+
+    def _presence_safe(self) -> dict[str, Any]:
+        ha = getattr(self.container, "ha", None)
+        if ha is None or not hasattr(ha, "presence"):
+            return {"known": False, "zone": "", "status": "unknown",
+                    "battery": None, "available": False, "source": "home_assistant"}
+        try:
+            return ha.presence()
+        except Exception:  # noqa: BLE001 — presence must never break what_now
+            return {"known": False, "zone": "", "status": "unknown",
+                    "battery": None, "available": False, "source": "home_assistant"}
 
     # ------------------------------------------------------------------ state
     def add_task(self, title: str, detail: str = "", est_minutes: int = 60,

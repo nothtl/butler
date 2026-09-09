@@ -519,6 +519,14 @@ class TelegramBot:
                 nearby = ", ".join(str(e.get("title", "event")) for e in events[:5])
                 line += f"\n📅 today: {nearby}"
             await msg.reply_text(line)
+        elif kind == "why_this":
+            cand = result.get("candidate") or {}
+            head = f"🤔 Why {cand.get('title', 'this')}?" if cand.get("title") else "🤔 Why this?"
+            await msg.reply_text(head + "\n" + (result.get("reason", "") or ""))
+        elif kind == "location_change":
+            await msg.reply_text("📍 " + (result.get("answer", str(result))))
+        elif kind == "move_block":
+            await msg.reply_text("🔀 " + (result.get("answer", str(result))))
         else:
             await msg.reply_text(str(result.get("text", result)))
 
