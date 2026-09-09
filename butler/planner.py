@@ -771,11 +771,21 @@ class Planner:
             lines.append(f"  ! {n}")
         return "\n".join(lines)
 
-    @staticmethod
-    def _day_start_ts(ts: int) -> int:
+    def _day_start_ts(self, ts: int) -> int:
+        cfg = getattr(self, "cfg", None)
+        if cfg is not None and hasattr(cfg, "local_midnight"):
+            try:
+                return cfg.local_midnight(ts)
+            except Exception:  # pragma: no cover — tz invalid => fall back
+                pass
         d = datetime.fromtimestamp(ts)
         return int(datetime(d.year, d.month, d.day, 0, 0).timestamp())
 
-    @staticmethod
-    def _today() -> int:
+    def _today(self) -> int:
+        cfg = getattr(self, "cfg", None)
+        if cfg is not None and hasattr(cfg, "now_local"):
+            try:
+                return int(cfg.now_local().timestamp())
+            except Exception:  # pragma: no cover — tz invalid => fall back
+                pass
         return int(datetime.now().timestamp())

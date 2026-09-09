@@ -170,12 +170,20 @@ class Chat:
 
     # ------------------------- llm -------------------------
     def _llm_ready(self) -> bool:
-        return bool(self.cfg.llm_api_key)
+        # An OpenAI-compatible base URL must be configured explicitly. Requiring
+        # it means we never silently assume a vendor endpoint.
+        return bool(self.cfg.llm_api_key and self.cfg.llm_base_url)
 
     def _llm(self, prompt: tuple[str, str]) -> str | None:
         import requests
         system, user = prompt
-        url = (self.cfg.llm_base_url or "https://api.openai.com/v1").rstrip("/") + "/chat/completions"
+        # ``base_url`` is required to call the LLM (openai-compatible or any
+        # provider). Falling back to a hard-coded OpenAI endpoint would silently
+        # assume a vendor, so the caller must configure it explicitly.
+        base = (self.cfg.llm_base_url or "").rstrip("/")
+        if not base:
+            return None
+        url = base + "/chat/completions"
         try:
             resp = requests.post(
                 url,

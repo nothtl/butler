@@ -50,6 +50,12 @@ class SmbShare:
 
 @dataclass
 class Config:
+    # --- user (audit: no hardcoded environment assumptions) ---
+    # IANA timezone for all local-time decisions (day boundaries, "today",
+    # display). Empty ("") means the system's local timezone. Butler prefers to
+    # read/compute in UTC internally and converts at the edges.
+    timezone: str = ""   # e.g. "America/Los_Angeles"; "" => system local
+
     # --- storage (feature 1) ---
     # Base directory that Butler manages and keeps state in. LIVES ON THE SSD.
     data_dir: str = ""
@@ -74,6 +80,9 @@ class Config:
     # --- telegram (feature 9,10) ---
     telegram_token: str = ""
     telegram_allowed_users: list[int] = field(default_factory=list)
+    # When the allow-list is empty Butler is DENY-by-default (no one may use the
+    # bot). Set this to True to restore the old "open when no allow-list" mode.
+    telegram_open_when_empty: bool = False
 
     # --- backup (feature 18) ---
     backup_dir: str = ""
@@ -95,6 +104,17 @@ class Config:
     llm_model: str = "gpt-4o-mini"
     # How many chunks to pull for RAG answers (chat/teach).
     rag_top_k: int = 6
+
+    # --- affinity (Phase 4.2: let the user override the keyword/zone tables) ---
+    # Optional overrides. Empty tables let the built-in keyword/zone defaults in
+    # ``butler/affinity.py`` stand; see that module for the default categories.
+    # ``affinity_keywords`` maps category -> list of substrings.
+    # ``affinity_zone_keywords`` maps zone keyword -> {category: weight}.
+    # ``affinity_unknown_category`` replaces the default "work" label for tasks
+    # that match no keyword (empty string => treat as neutral/unclassified).
+    affinity_keywords: dict[str, list[str]] = field(default_factory=dict)
+    affinity_zone_keywords: dict[str, dict[str, int]] = field(default_factory=dict)
+    affinity_unknown_category: str = ""
 
     # --- ocr (scanned pdfs / images) ---
     ocr_enabled: bool = False
@@ -146,6 +166,14 @@ class Config:
     proactive_enabled: bool = True
     proactive_schedule: str = "hourly"     # cadence for background checks
     notify_chat: int = 0                   # telegram chat id (0 = fall back to digest_chat)
+    # Notification throttling: quiet hours (minutes from midnight) and a
+    # minimum gap between proactive pushes so Butler never spams. A per-cadence
+    # cap and a dedup window keep repeated identical alerts down to one.
+    notify_quiet_start: int = 22 * 60      # 22:00 (0 disables quiet hours)
+    notify_quiet_end: int = 8 * 60         # 08:00
+    notify_cooldown_minutes: int = 15      # min gap between pushes
+    notify_max_per_cadence: int = 5        # upper bound on pushes per run
+    notify_dedup_window_minutes: int = 30  # skip an identical alert this soon
 
     # --- home assistant (Phase 4.1: presence) ---
     # A long-lived access token for the HA REST API. Never logged and never
@@ -237,7 +265,7 @@ class Config:
         ]
         cfg.course_dir = _expand(data.get("course_dir", "~/University"))
         cfg.incoming_dir = _expand(data.get("incoming_dir", "~/Incoming"))
-        cfg.courses = data.get("courses", ["CS168"])
+        cfg.courses = data.get("courses", [])
         cfg.index_hidden = bool(data.get("index_hidden", False))
         cfg.max_file_size_mb = int(data.get("max_file_size_mb", 256))
 
@@ -257,9 +285,14 @@ class Config:
             for s in page.get("smb", [])
         ]
 
+        usr = page.get("user", {})
+        cfg.timezone = os.environ.get("BUTLER_TIMEZONE", usr.get("timezone", ""))
+
         tg = page.get("telegram", {})
         cfg.telegram_token = os.environ.get("BUTLER_TELEGRAM_TOKEN", tg.get("token", ""))
         cfg.telegram_allowed_users = list(tg.get("allowed_users", []))
+        cfg.telegram_open_when_empty = bool(tg.get("open_when_empty",
+                                                   cfg.telegram_open_when_empty))
 
         bk = page.get("backup", {})
         cfg.backup_dir = _expand(bk.get("dir", ""))
@@ -275,6 +308,12 @@ class Config:
         cfg.llm_base_url = ai.get("base_url", "")
         cfg.llm_model = ai.get("model", cfg.llm_model)
         cfg.rag_top_k = int(ai.get("rag_top_k", cfg.rag_top_k))
+
+        af = page.get("affinity", {})
+        cfg.affinity_keywords = dict(af.get("keywords", {}))
+        cfg.affinity_zone_keywords = dict(af.get("zone_keywords", {}))
+        cfg.affinity_unknown_category = af.get("unknown_category",
+                                               cfg.affinity_unknown_category)
 
         ocr = page.get("ocr", {})
         cfg.ocr_enabled = bool(ocr.get("enabled", False))
@@ -298,7 +337,8 @@ class Config:
                    pl.get("google_calendar_credentials",
                           os.path.join(os.path.expanduser("~"), ".config", "butler",
                                        "client_secret.json"))))
-        cfg.google_calendar_enabled = bool(pl.get("google_calendar", True))
+        cfg.google_calendar_enabled = bool(pl.get("google_calendar",
+                                                  cfg.google_calendar_enabled))
         cfg.sleep_start = int(pl.get("sleep_start", cfg.sleep_start))
         cfg.sleep_end = int(pl.get("sleep_end", cfg.sleep_end))
         cfg.buffer_fraction = float(pl.get("buffer_fraction", cfg.buffer_fraction))
@@ -326,6 +366,14 @@ class Config:
         cfg.proactive_enabled = bool(pro.get("enabled", cfg.proactive_enabled))
         cfg.proactive_schedule = pro.get("schedule", cfg.proactive_schedule)
         cfg.notify_chat = int(pro.get("notify_chat", cfg.notify_chat or cfg.digest_chat))
+        cfg.notify_quiet_start = int(pro.get("quiet_start", cfg.notify_quiet_start))
+        cfg.notify_quiet_end = int(pro.get("quiet_end", cfg.notify_quiet_end))
+        cfg.notify_cooldown_minutes = int(pro.get("cooldown_minutes",
+                                                  cfg.notify_cooldown_minutes))
+        cfg.notify_max_per_cadence = int(pro.get("max_per_cadence",
+                                                 cfg.notify_max_per_cadence))
+        cfg.notify_dedup_window_minutes = int(pro.get("dedup_window_minutes",
+                                                      cfg.notify_dedup_window_minutes))
 
         ha = page.get("home_assistant", {})
         cfg.home_assistant_enabled = bool(ha.get("enabled", cfg.home_assistant_enabled))
@@ -360,11 +408,87 @@ class Config:
         cfg.embed_dim = int(emb.get("dim", cfg.embed_dim))
 
         cfg.ensure_dirs()
+        cfg.validate()
         return cfg
+
+    # ---------------------------------------------------------- timezone
+    def tz(self) -> Any:
+        """Return a timezone object for ``timezone`` (or ``None`` = system local).
+
+        Empty ``timezone`` means the host's local timezone, which is exactly
+        what ``datetime.now()``/``datetime.fromtimestamp()`` already use, so an
+        unset ``timezone`` never changes behaviour.
+        """
+        if not self.timezone:
+            return None
+        try:
+            from zoneinfo import ZoneInfo
+            return ZoneInfo(self.timezone)
+        except Exception:  # pragma: no cover — validated at load
+            return None
+
+    def now_local(self) -> "datetime":
+        """The current instant in the configured timezone (system local if unset)."""
+        from datetime import datetime
+        tz = self.tz()
+        if tz is None:
+            return datetime.fromtimestamp(datetime.now().timestamp())
+        return datetime.now(tz)
+
+    def local_midnight(self, ts: int) -> int:
+        """Absolute timestamp of the local midnight that contains ``ts``."""
+        from datetime import datetime
+        tz = self.tz()
+        dt = datetime.fromtimestamp(ts, tz) if tz else datetime.fromtimestamp(ts)
+        return int(datetime(dt.year, dt.month, dt.day).timestamp())
+
+    def validate(self) -> None:
+        """Fail fast on invalid configuration (audit: no silent misconfig).
+
+        Deliberately throws ``ValueError`` so a misconfigured Butler refuses to
+        start rather than quietly scheduling with nonsense (e.g. a negative
+        retention window or a scheduler that can never fit a task). This is
+        called at the end of :meth:`load` and is safe to call again manually.
+        """
+        if self.data_dir and not os.path.isabs(self.data_dir):
+            raise ValueError(f"data_dir must be absolute: {self.data_dir}")
+        if not (0 <= self.buffer_fraction < 1.0):
+            raise ValueError(f"buffer_fraction must be in [0, 1): {self.buffer_fraction}")
+        if self.buffer_minutes < 0 or self.min_slot_minutes <= 0:
+            raise ValueError(
+                f"buffer_minutes and min_slot_minutes must be >= 0 / > 0: "
+                f"{self.buffer_minutes} / {self.min_slot_minutes}")
+        if not self.schedule_valid():
+            raise ValueError(
+                f"sleep window is invalid (sleep_start={self.sleep_start}, "
+                f"sleep_end={self.sleep_end}); use 0-1439 minute values")
+        if self.trash_retention_days < 0 or self.timeline_retention_days < 0:
+            raise ValueError("retention days must be >= 0")
+        if not (0 < self.remote_port < 65536):
+            raise ValueError(f"remote_port out of range: {self.remote_port}")
+        if self.timezone:
+            self._validate_timezone(self.timezone)
+
+    def _validate_timezone(self, tz: str) -> None:
+        try:
+            from zoneinfo import ZoneInfo
+            ZoneInfo(tz)
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError(f"invalid timezone '{tz}': {exc}") from exc
+        if tz.upper() in ("LOCAL", "SYSTEM"):
+            raise ValueError(
+                f"timezone '{tz}' means system-local; leave it empty instead")
+
+    def schedule_valid(self) -> bool:
+        """True when the sleep window is a valid pair of minute-of-day values."""
+        def ok(v: int) -> bool:
+            return 0 <= v <= 1439
+        return ok(self.sleep_start) and ok(self.sleep_end)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "data_dir": self.data_dir,
+            "timezone": self.timezone,
             "roots": self.roots,
             "index_roots": self.index_roots,
             "course_dir": self.course_dir,
@@ -403,6 +527,11 @@ class Config:
             "proactive_enabled": self.proactive_enabled,
             "proactive_schedule": self.proactive_schedule,
             "notify_chat": self.notify_chat,
+            "notify_quiet_start": self.notify_quiet_start,
+            "notify_quiet_end": self.notify_quiet_end,
+            "notify_cooldown_minutes": self.notify_cooldown_minutes,
+            "notify_max_per_cadence": self.notify_max_per_cadence,
+            "notify_dedup_window_minutes": self.notify_dedup_window_minutes,
             "home_assistant_enabled": self.home_assistant_enabled,
             "home_assistant_url": self.home_assistant_url,
             "home_assistant_configured": bool(self.home_assistant_token),

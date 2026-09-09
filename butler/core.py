@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from . import affinity
 from .backup import Backup
 from .chat import Chat
 from .config import Config
@@ -36,6 +37,12 @@ class Container:
     def __init__(self, config: Config | None = None):
         self.cfg = config or Config.load()
         self.cfg.ensure_dirs()
+        # Install user-overridable affinity tables (audit: no hardcoded mapping).
+        affinity.configure(
+            keywords=self.cfg.affinity_keywords or None,
+            zone_keywords=self.cfg.affinity_zone_keywords or None,
+            unknown_category=self.cfg.affinity_unknown_category,
+        )
         self.db = DB(self.cfg)
         self.timeline = Timeline(self.cfg, self.db)
         self.routines = Routines(self)

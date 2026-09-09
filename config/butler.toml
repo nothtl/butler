@@ -3,6 +3,12 @@
 # Persistent data lives under `data_dir` — on this Pi that is on the M.2 SSD
 # because $HOME (/home) is backed by /dev/nvme0n1p2.
 
+[user]
+# IANA timezone for all local-time decisions ("today", day boundaries, display).
+# Leave empty ("") to use the system's local timezone. Butler computes in UTC
+# internally and converts at the edges, so it is correct regardless of host.
+# timezone = "America/Los_Angeles"
+
 [storage]
 # Configurable storage directory (feature 1). Lives on the M.2 SSD.
 data_dir = "~/ButlerStorage"
@@ -31,6 +37,8 @@ retention_days = 30
 [telegram]
 # token = "123456:ABC..."          # or env BUTLER_TELEGRAM_TOKEN
 # allowed_users = [123456789]
+# Empty allow-list DENIES everyone (safe default). Set true to allow anyone.
+# open_when_empty = false
 
 [backup]
 # dir = "~/Backups"                 # feature 18
@@ -52,6 +60,13 @@ dim = 384
 # base_url = "https://api.openai.com/v1"
 model = "gpt-4o-mini"
 rag_top_k = 6
+
+#[affinity]
+# Override the deterministic task/zone keyword tables (see butler/affinity.py).
+# Add to a category, or set a category to [] to disable its keywords.
+# keywords = { study = ["statistics"], work = [] }
+# zone_keywords = { "study_room" = { study = 4 } }
+# unknown_category = ""   # tasks matching nothing: "" => neutral (no default "work")
 
 [ocr]
 # OCR scanned PDFs and photos (requires `sudo apt install tesseract-ocr`).
@@ -85,3 +100,11 @@ google_calendar_credentials = "~/.config/butler/client_secret.json"
 dir = "~/ButlerStorage/links"
 check_hours = 24
 download = true
+
+[proactive]
+# (example values) quiet hours and push throttling so Butler never spams.
+# quiet_start = 1320          # 22:00 (minutes-of-day; 0 disables)
+# quiet_end = 480             # 08:00
+# cooldown_minutes = 15       # min gap between pushes
+# max_per_cadence = 5         # cap on pushes per run
+# dedup_window_minutes = 30   # skip an identical alert within this window

@@ -31,7 +31,7 @@ from typing import Any
 CATEGORIES = ("study", "exercise", "cook", "shop", "rest", "work")
 
 # Keyword table: category -> list of substrings (checked against title + tags).
-_KEYS: dict[str, list[str]] = {
+_DEFAULT_KEYS: dict[str, list[str]] = {
     "study": ["study", "homework", "assignment", "project", "read", "review",
               "lecture", "lab", "cs", "math", "physics", "exam", "quiz", "essay",
               "paper", "flashcard", "ml", "algorith"],
@@ -45,10 +45,19 @@ _KEYS: dict[str, list[str]] = {
              "organize", "clean", "report"],
 }
 
+# The active table (``configure`` may override with user-provided keywords).
+_KEYS: dict[str, list[str]] = dict(_DEFAULT_KEYS)
+
+# Very short substrings that would over-match as bare substring matches (e.g.
+# "cs" inside "ecstatic", "ml" inside "email"). These are matched on word
+# boundaries for the literal abbreviation only, so "do the CS homework" still
+# matches while random letters don't.
+_SHORT_KEYWORDS: frozenset[str] = frozenset({"cs", "ml", "ai", "gym", "lab"})
+
 # Zone keyword match. A zone name is normalised and matched by substring, so
 # "Library", "The Library" and "library" all resolve to a study affinity. The
 # weights are small (affinity is a soft nudge, never a hard constraint).
-_ZONE_KEYS: dict[str, dict[str, int]] = {
+_DEFAULT_ZONE_KEYS: dict[str, dict[str, int]] = {
     "library": {"study": 4},
     "study": {"study": 3},
     "classroom": {"study": 3},
@@ -73,21 +82,85 @@ _ZONE_KEYS: dict[str, dict[str, int]] = {
     "desk": {"work": 2, "study": 1},
 }
 
+# The active zone table (overridable via ``configure``).
+_ZONE_KEYS: dict[str, dict[str, int]] = dict(_DEFAULT_ZONE_KEYS)
+
 # Categories that feel like effort; drained by "I'm tired".
 _DEMANDING = ("study", "exercise", "work")
 
 
+def _keyword_tables(overrides: dict[str, list[str]] | None = None) -> dict[str, list[str]]:
+    """Return the active keyword table, merging user overrides over the default.
+
+    A user override either adds new categories or replaces a category's keywords
+    (an empty list for a category disables it). Purely additive is the safest
+    default, so categories not mentioned keep their built-in keywords.
+    """
+    if not overrides:
+        return {cat: list(kws) for cat, kws in _DEFAULT_KEYS.items()}
+    table = {cat: list(kws) for cat, kws in _DEFAULT_KEYS.items()}
+    table.update({cat: list(kws) for cat, kws in overrides.items()})
+    return table
+
+
+def configure(*, keywords: dict[str, list[str]] | None = None,
+              zone_keywords: dict[str, dict[str, int]] | None = None,
+              unknown_category: str | None = None) -> None:
+    """Install user overrides (audit: no hardcoded mapping we can't change).
+
+    These are applied at process start from ``config/[affinity]``. Passing
+    ``None`` for a table keeps the built-in default; ``unknown_category``
+    replaces the default "work" label for tasks matching no keyword (``""``
+    means neutral/unclassified).
+    """
+    global _KEYS, _ZONE_KEYS, _UNKNOWN_CATEGORY
+    if keywords is not None:
+        _KEYS = _keyword_tables(keywords)
+    else:
+        _KEYS = _keyword_tables(None)
+    if zone_keywords is not None:
+        _ZONE_KEYS = dict(zone_keywords)
+    else:
+        _ZONE_KEYS = dict(_DEFAULT_ZONE_KEYS)
+    if unknown_category is not None:
+        _UNKNOWN_CATEGORY = unknown_category
+    else:
+        _UNKNOWN_CATEGORY = "work"
+
+
+# The category a task with no keyword match falls into. Defaults to "work"
+# (historical behaviour); set to "" for a neutral/unclassified task.
+_UNKNOWN_CATEGORY = "work"
+
+
 def classify(title: str = "", tags: str = "") -> frozenset[str]:
-    """Coarse categories a task belongs to. Deterministic and cheap."""
+    """Coarse categories a task belongs to. Deterministic and cheap.
+
+    Tasks matching no keyword are classified as ``_UNKNOWN_CATEGORY`` (an empty
+    frozenset when configured neutral), never a hard-coded single category.
+    """
     text = f"{title} {tags}".lower()
-    found = [c for c, kws in _KEYS.items() if _any_in(kws, text)]
-    if not found:
-        found = ["work"]  # unlabelled tasks default to the generic category
+    found = [c for c, kws in _keyword_tables().items() if _any_in(kws, text)]
+    if not found and _UNKNOWN_CATEGORY:
+        found = [_UNKNOWN_CATEGORY]
     return frozenset(found)
 
 
 def _any_in(kws: list[str], text: str) -> bool:
-    return any(kw in text for kw in kws)
+    for kw in kws:
+        if _match_keyword(kw, text):
+            return True
+    return False
+
+
+def _match_keyword(kw: str, text: str) -> bool:
+    """Match a keyword against text, using word boundaries for short ones."""
+    kw = kw.lower()
+    if kw in _SHORT_KEYWORDS:
+        # Match as a whole word ("cs"), raising false-positives from substrings
+        # ("cs" inside "ecstatic"), but still allow prefixes like "cs168"/"ml".
+        return re.search(r"(?<![a-z0-9])" + re.escape(kw), text) is not None
+    return kw in text
 
 
 def zone_weights_for(zone: str = "") -> dict[str, int]:

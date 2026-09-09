@@ -188,6 +188,8 @@ class Routines:
             if not title:
                 return None
             cats = affinity.classify(title)
+            if not cats:
+                return None
             cat = min(cats)
             if cat == "work" and not title:
                 return None
@@ -201,6 +203,8 @@ class Routines:
                 cat = _mode(list(zw.keys())) if zw else ""
             elif title or note:
                 cats = affinity.classify(title or note)
+                if not cats:
+                    return None
                 cat = min(cats)
             else:
                 return None

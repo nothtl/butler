@@ -135,9 +135,12 @@ class TelegramBot:
 
     # ------------------------------------------------------------ auth
     def _authorized(self, update: Update) -> bool:
-        users = self.container.cfg.telegram_allowed_users
+        cfg = self.container.cfg
+        users = cfg.telegram_allowed_users
         if not users:
-            return True  # open when no allow-list configured
+            # Deny-by-default: an empty allow-list means the bot is not
+            # open. ``telegram_open_when_empty`` restores the legacy open mode.
+            return bool(cfg.telegram_open_when_empty)
         uid = update.effective_user.id if update.effective_user else None
         return uid in users
 

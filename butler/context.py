@@ -54,10 +54,21 @@ class ContextEngine:
         self.db = container.db
         self.timeline = getattr(container, "timeline", None)
 
+    def _local_midnight(self, ts: int) -> int:
+        """Absolute timestamp of the local midnight containing ``ts`` (tz-aware
+        when ``[user] timezone`` is set, otherwise the host's local time)."""
+        cfg = getattr(self, "cfg", None)
+        if cfg is not None and hasattr(cfg, "local_midnight"):
+            try:
+                return cfg.local_midnight(ts)
+            except Exception:  # pragma: no cover — tz invalid => fall back
+                pass
+        return _midnight_ts(ts)
+
     # ------------------------------------------------------------ snapshot
     def snapshot(self) -> dict[str, Any]:
         now = int(datetime.now().timestamp())
-        day_start = _midnight_ts(now)
+        day_start = self._local_midnight(now)
         day_end = day_start + 86400
         week_end = day_start + 7 * 86400
         presence = self._presence()
