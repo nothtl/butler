@@ -66,14 +66,15 @@ class Chat:
             take(self.db.file_by_id(fid), c)
         return out[:max_chunks]
 
-    def _rag_prompt(self, question: str, ctx: list[tuple[str, str, str]], mode: str) -> tuple[str, str]:
+    def _rag_prompt(self, question: str, ctx: list[tuple[str, str, str]], mode: str,
+                    live_context: str = "") -> tuple[str, str]:
         ctx_block = "\n\n".join(
             f"### {name}\n{path}\n{snippet}" for name, path, snippet in ctx
         )
         if mode == "teach":
             system = (
                 "You are Butler, a patient tutor. Teach the user about their own "
-                "material using ONLY the context below, and link ideas to the file "
+                "material using ONLY the file context below, and link ideas to the file "
                 "paths. Structure: 1) What it is, 2) key ideas, 3) a concrete "
                 "example from the material, 4) a 3-question self-quiz with answers "
                 "at the end. If the context is insufficient, say what is missing "
@@ -81,31 +82,31 @@ class Chat:
             )
         else:
             system = (
-                "You are Butler, a search assistant grounded in the user's files. "
-                "Answer ONLY using the context below and cite the relevant file "
-                "path(s). Be concise. If the context does not contain the answer, "
-                "say so clearly and do not guess."
+                "You are Butler, the user's assistant. Answer using the LIVE STATE "
+                "and/or the file context below. Use live state for anything about the "
+                "user's own setup (calendar, tasks, courses, presence). Cite relevant "
+                "file path(s) when you use file context. Be concise. If neither the "
+                "live state nor the file context covers the answer, say so clearly "
+                "and do not guess."
             )
         user = (
-            f"Topic/Question: {question}\n\nFOUND CONTEXT:\n{ctx_block}"
+            f"Topic/Question: {question}\n\n"
+            f"LIVE STATE:\n{live_context or '(none)'}\n\n"
+            f"FOUND FILE CONTEXT:\n{ctx_block or '(none)'}"
         )
         return system, user
 
     # ------------------------- answering -------------------------
-    def answer(self, question: str) -> str:
+    def answer(self, question: str, live_context: str = "") -> str:
         ranked = self.retrieve(question)
         ctx = self._context(question, ranked)
-        if not ctx:
-            return (
-                "I searched your notes and folders but couldn't find a match for that. "
-                "Index a folder with `butler index` and I'll be able to ground an answer "
-                "in it. For your own data just ask `my courses` or `what materials are in <course>`."
-            )
         if self._llm_ready():
-            body = self._llm(self._rag_prompt(question, ctx, "answer"))
+            body = self._llm(self._rag_prompt(question, ctx, "answer", live_context))
             if body:
-                return self._cite(body, ranked)
-        return self._extractive(question, ctx)
+                return self._cite(body, ranked) if ctx else body
+        if ctx:
+            return self._extractive(question, ctx)
+        return live_context
 
     @staticmethod
     def _cite(answer: str, ranked) -> str:
@@ -159,22 +160,27 @@ class Chat:
         return self._study_guide(topic, ctx)
 
     # ------------------------- free-form chat -------------------------
-    def converse(self, message: str) -> str | None:
-        """A short, natural conversational reply (no file grounding).
+    def converse(self, message: str, live_context: str = "") -> str | None:
+        """A short, natural conversational reply grounded in LIVE state.
 
         Only used when an LLM is configured; otherwise returns ``None`` so the
-        caller can fall back to a deterministic small-talk reply. We never
-        fabricate claim the LLM "knows" the user's files here.
+        caller can fall back to the live state itself. Never returns a canned
+        sentence (see AGENTS.md).
         """
         if not self._llm_ready():
             return None
         system = (
-            "You are Butler, a friendly on-device assistant living in the user's "
-            "Telegram. Reply briefly and naturally to casual chat (greetings, "
-            "small talk, how-are-you). Do not invent facts about the user's "
-            "files or actions. Keep it to 1-2 short sentences."
+            "You are Butler, a warm, concise assistant living in the user's "
+            "Telegram. Below is LIVE STATE about the user's setup, gathered right "
+            "now. Use it to answer questions about your own access and the user's "
+            "data truthfully and specifically (for example, whether you have their "
+            "calendar and what is on it). Reply in 1-3 short, natural sentences. "
+            "Never invent facts beyond the live state; if it does not cover "
+            "something, say so plainly. Never mention that you were given state or "
+            "that you are an AI."
         )
-        return self._llm((system, message))
+        user = f"LIVE STATE:\n{live_context or '(none)'}\n\nUser: {message}"
+        return self._llm((system, user))
 
     # ------------------------- offline fallbacks -------------------------
     def _extractive(self, question: str, ctx: list[tuple[str, str, str]]) -> str:
