@@ -136,6 +136,7 @@ class Config:
     local_calendar_file: str = ""
     google_calendar_credentials: str = ""   # path to client_secret.json
     google_calendar_enabled: bool = False
+    google_calendar_id: str = ""            # dedicated Butler calendar id; "" -> primary
     calendar_sync_schedule: str = "15m"     # cadence for the write-back projection
     # Default working window (24h clock, minutes from midnight). Sleep hours.
     sleep_start: int = 23 * 60 + 0          # 23:00
@@ -382,7 +383,11 @@ class Config:
                           os.path.join(os.path.expanduser("~"), ".config", "butler",
                                        "client_secret.json"))))
         cfg.google_calendar_enabled = bool(pl.get("google_calendar",
-                                                  cfg.google_calendar_enabled))
+                                                   cfg.google_calendar_enabled))
+        cfg.google_calendar_id = (os.environ.get("BUTLER_GCAL_ID", "") or
+                                  pl.get("google_calendar_id", "") or
+                                  pl.get("gcal_id", "") or
+                                  cfg.google_calendar_id)
         cfg.calendar_sync_schedule = pl.get("calendar_sync_schedule",
                                             cfg.calendar_sync_schedule)
         cfg.sleep_start = int(pl.get("sleep_start", cfg.sleep_start))
@@ -608,6 +613,7 @@ class Config:
             "links_dir": self.links_dir,
             "links_check_hours": self.links_check_hours,
             "google_calendar_enabled": self.google_calendar_enabled,
+            "google_calendar_id": self.google_calendar_id,
             "calendar_sync_schedule": self.calendar_sync_schedule,
             "local_calendar_file": self.local_calendar_file,
             "sleep_start": self.sleep_start,

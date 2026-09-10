@@ -154,6 +154,30 @@ def _connected(cfg: Any) -> bool:
     return os.path.exists(_token_path(cfg))
 
 
+def _calendar_id_path(cfg: Any) -> str:
+    return os.path.join(cfg.state_dir, "gcal_calendar_id")
+
+
+def _load_calendar_id(cfg: Any) -> str:
+    path = _calendar_id_path(cfg)
+    if not os.path.exists(path):
+        return ""
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+def _save_calendar_id(cfg: Any, calendar_id: str) -> None:
+    os.makedirs(cfg.state_dir, exist_ok=True)
+    path = _calendar_id_path(cfg)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(str(calendar_id).strip())
+    os.replace(tmp, path)
+
+
 # ------------------------------------------------------------------ parse
 def _parse_iso(raw: str) -> datetime | None:
     """``datetime.fromisoformat`` tolerant of Google's Z/[TZ] suffixes."""
@@ -276,13 +300,69 @@ class GoogleCalendar:
     def _cal_timezone(self) -> str:
         if self._tz is not None:
             return self._tz
-        code, data = self.http.get(f"{CAL_API}/calendars/primary",
+        code, data = self.http.get(self._cal_url(),
                                    headers=self._auth())
         self._tz = (data.get("timeZone") or "UTC") if code == 200 else "UTC"
         return self._tz
 
     def _auth(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.access()}"}
+
+    # -------------------------------------------------- target calendar id
+    def calendar_id(self, calendar_id: str | None = None) -> str:
+        """Resolve the calendar to read/write (dedicated Butler calendar or primary).
+
+        Order: explicit arg > ``BUTLER_GCAL_ID`` env > ``config.google_calendar_id``
+        > persisted ``state_dir/gcal_calendar_id`` > ``primary`` (fallback).
+        """
+        if calendar_id:
+            return calendar_id
+        env = os.environ.get("BUTLER_GCAL_ID", "")
+        if env:
+            return env
+        cfg_id = self.cfg.google_calendar_id if hasattr(self.cfg, "google_calendar_id") else ""
+        if cfg_id:
+            return cfg_id
+        return _load_calendar_id(self.cfg) or "primary"
+
+    def set_calendar_id(self, calendar_id: str) -> None:
+        """Persist the dedicated calendar id (used by `butler calendar create`)."""
+        _save_calendar_id(self.cfg, calendar_id)
+
+    def _cal_url(self, suffix: str = "", calendar_id: str | None = None) -> str:
+        return f"{CAL_API}/calendars/{self.calendar_id(calendar_id)}{suffix}"
+
+    # ---------------------------------------------- calendar management
+    def list_calendars(self) -> list[dict[str, Any]]:
+        access = self.access()
+        code, data = self.http.get(f"{CAL_API}/users/me/calendarList",
+                                   headers={"Authorization": f"Bearer {access}"})
+        if code != 200 or "items" not in data:
+            err = data.get("error", data) if isinstance(data, dict) else data
+            raise GCalOutage(f"Calendar list unavailable (HTTP {code}): {err}")
+        return [{"id": it.get("id", ""), "summary": it.get("summary", ""),
+                 "primary": bool(it.get("primary", False)),
+                 "accessRole": it.get("accessRole", "")}
+                for it in data["items"]]
+
+    def create_calendar(self, name: str) -> dict[str, Any]:
+        access = self.access()
+        code, data = self.http.post(f"{CAL_API}/calendars",
+                                    data=json.dumps({"summary": str(name)}),
+                                    headers={"Authorization": f"Bearer {access}",
+                                             "Content-Type": "application/json"})
+        if code != 200 or "id" not in data:
+            err = data.get("error", data) if isinstance(data, dict) else data
+            raise GCalOutage(f"Calendar create failed (HTTP {code}): {err}")
+        return {"id": data["id"], "summary": data.get("summary", name)}
+
+    def ensure_calendar(self, name: str) -> dict[str, Any]:
+        """Find a calendar by summary, creating it if missing. Returns {id, created}."""
+        for cal in self.list_calendars():
+            if (cal.get("summary") or "").strip().lower() == str(name).strip().lower():
+                return {"id": cal["id"], "summary": cal["summary"], "created": False}
+        created = self.create_calendar(name)
+        return {"id": created["id"], "summary": created["summary"], "created": True}
 
     def _timezone_for(self, start: dict[str, Any], end: dict[str, Any]) -> str:
         return start.get("timeZone") or end.get("timeZone") or self._cal_timezone()
@@ -346,7 +426,7 @@ class GoogleCalendar:
             "orderBy": "startTime",
             "showDeleted": "false",
         }
-        code, data = self.http.get(f"{CAL_API}/calendars/primary/events",
+        code, data = self.http.get(self._cal_url("/events"),
                                    params=params,
                                    headers={"Authorization": f"Bearer {access}"})
         if code in (401, 403):
@@ -411,7 +491,7 @@ class GoogleCalendar:
         body = self._event_body(title, start_ts, end_ts, task_id,
                                 description=description, location=location)
         code, data = self.http.post(
-            f"{CAL_API}/calendars/primary/events",
+            self._cal_url("/events"),
             data=json.dumps(body), headers=self._auth())
         self._raise_for(code, data)
         return data if isinstance(data, dict) else {}
@@ -423,7 +503,7 @@ class GoogleCalendar:
         body = self._event_body(title, start_ts, end_ts, task_id,
                                 description=description, location=location)
         code, data = self.http.patch(
-            f"{CAL_API}/calendars/primary/events/{event_id}",
+            self._cal_url(f"/events/{event_id}"),
             data=json.dumps(body), headers=self._auth())
         if code == 404:
             return False
@@ -437,7 +517,7 @@ class GoogleCalendar:
         exists) is already reached.
         """
         code, _ = self.http.delete(
-            f"{CAL_API}/calendars/primary/events/{event_id}", headers=self._auth())
+            self._cal_url(f"/events/{event_id}"), headers=self._auth())
         if code == 404:
             return True
         self._raise_for(code, {})
@@ -446,7 +526,7 @@ class GoogleCalendar:
     def get_event(self, event_id: str) -> dict[str, Any] | None:
         """Return the raw event if it exists and is Butler-managed, else None."""
         code, data = self.http.get(
-            f"{CAL_API}/calendars/primary/events/{event_id}", headers=self._auth())
+            self._cal_url(f"/events/{event_id}"), headers=self._auth())
         if code == 404:
             return None
         self._raise_for(code, data)

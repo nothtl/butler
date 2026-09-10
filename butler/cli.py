@@ -349,8 +349,41 @@ def dispatch(container: Container, ns: argparse.Namespace) -> int:
                                     "text": "synced " +
                                     str(container.planner.sync_events().get("count", 0)) +
                                     " event(s)"}, ns)
+        if sub in ("create", "use"):
+            from .gcal import GoogleCalendar
+            gc = GoogleCalendar(container.cfg)
+            if sub == "create":
+                name = " ".join(args[1:]).strip() or "Butler Tasks"
+                res = gc.ensure_calendar(name)
+                gc.set_calendar_id(res["id"])
+                verb = "Created" if res.get("created") else "Using existing"
+                return emit(container, {"kind": "text", "calendar_id": res["id"],
+                                        "text": f"{verb} calendar '{res['summary']}'\n"
+                                                f"id: {res['id']}\n"
+                                                f"Tasks now read/write ONLY this calendar "
+                                                f"(your main calendar is left alone)."}, ns)
+            cal_id = args[1] if len(args) > 1 else ""
+            if not cal_id:
+                return emit(container, {"kind": "text",
+                                        "text": "usage: butler calendar use <calendar_id>"}, ns)
+            gc.set_calendar_id(cal_id)
+            return emit(container, {"kind": "text",
+                                    "text": f"Now using calendar: {cal_id}"}, ns)
+        if sub in ("list", "calendars"):
+            from .gcal import GoogleCalendar
+            try:
+                cals = GoogleCalendar(container.cfg).list_calendars()
+            except Exception as exc:  # noqa: BLE001
+                return emit(container, {"kind": "text", "text": f"error: {exc}"}, ns)
+            lines = [f"{'*' if c.get('primary') else ' '} {c['summary']}  ({c['id']})"
+                     for c in cals]
+            return emit(container, {"kind": "text", "text": "\n".join(lines)}, ns)
+        if sub in ("current", "which"):
+            from .gcal import GoogleCalendar
+            return emit(container, {"kind": "text",
+                                    "text": f"active calendar: {GoogleCalendar(container.cfg).calendar_id()}"}, ns)
         return emit(container, {"kind": "text",
-                                "text": "usage: butler calendar connect|sync"}, ns)
+                                "text": "usage: butler calendar connect|sync|create [name]|list|use <id>|current"}, ns)
     if cmd == "daemon":
         # run course monitor + scheduler together in the foreground
         from .monitor import CourseMonitor

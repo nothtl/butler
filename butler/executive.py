@@ -32,7 +32,9 @@ BRIEFING_KIND = "briefing"
 REVIEW_KIND = "review"
 
 
-def _hm(minutes: int) -> str:
+def _hm(minutes: int | str) -> str:
+    if isinstance(minutes, str):
+        return minutes
     minutes = max(0, min(minutes, 1439))
     return f"{minutes // 60:02d}:{minutes % 60:02d}"
 
