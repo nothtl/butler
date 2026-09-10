@@ -537,13 +537,22 @@ class GoogleCalendar:
         return True
 
     def get_event(self, event_id: str) -> dict[str, Any] | None:
-        """Return the raw event if it exists and is Butler-managed, else None."""
+        """Return the raw event if it exists and is Butler-managed, else None.
+
+        A cancelled (deleted) event is treated as absent, so a delete is
+        observable immediately even if Google briefly still returns the
+        cancelled resource.
+        """
         code, data = self.http.get(
             self._cal_url(f"/events/{event_id}"), headers=self._auth())
         if code == 404:
             return None
         self._raise_for(code, data)
-        return data if isinstance(data, dict) and self.is_butler(data) else None
+        if not isinstance(data, dict) or not self.is_butler(data):
+            return None
+        if str(data.get("status", "")) == "cancelled":
+            return None
+        return data
 
 
 # ------------------------------------------------------- module-level API

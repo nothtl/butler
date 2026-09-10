@@ -288,7 +288,43 @@ class TelegramBot:
         on = "on" if s["push_on"] else "off"
         return (f"⚙️ Settings for {name}\n\n"
                 f"Free-text routing: {lbl}\n"
-                f"Daily push: {on} · {s['push_time']} · {s['push_freq']}")
+                f"Daily push: {on} · {s['push_time']} · {s['push_freq']}\n\n"
+                + self._system_settings_text())
+
+    def _system_settings_text(self) -> str:
+        """A concise, read-only overview of the global configuration.
+
+        Never shows secrets or dangerous low-level values — only whether a
+        capability is on/off and the safe user-facing settings.
+        """
+        cfg = self.container.cfg
+        def flag(v: bool) -> str:
+            return "on" if v else "off"
+        lines = ["System (read-only):"]
+        ai = "on" if getattr(cfg, "llm_api_key", "") else "off (deterministic)"
+        lines.append(f"  AI: {ai}")
+        cal = "off"
+        if getattr(cfg, "google_calendar_enabled", False):
+            cal = "on"
+        lines.append(f"  Calendar: {cal}")
+        lines.append(f"  Web: {getattr(cfg, 'web_search_provider', 'offline')}")
+        lines.append(f"  Memory: {flag(getattr(cfg, 'memory_enabled', True))}")
+        lines.append(f"  Proactive: {flag(getattr(cfg, 'proactive_enabled', True))}")
+        lines.append(f"  Scheduler: {flag(getattr(cfg, 'scheduler_enabled', True))}")
+        qs = int(getattr(cfg, "notify_quiet_start", 0))
+        qe = int(getattr(cfg, "notify_quiet_end", 0))
+        if qs and qe:
+            lines.append(f"  Quiet hours: {_hm(qs)}–{_hm(qe)}")
+        else:
+            lines.append("  Quiet hours: off")
+        lines.append(f"  Work window: {_hm(int(getattr(cfg, 'sleep_end', 420)))}–"
+                     f"{_hm(int(getattr(cfg, 'sleep_start', 1380)))}")
+        try:
+            overall = self.container.health.overall()
+            lines.append(f"  Health: {overall}")
+        except Exception:  # noqa: BLE001
+            pass
+        return "\n".join(lines)
 
     def _settings_markup(self, key: str) -> InlineKeyboardMarkup:
         s = self._settings_state(key)

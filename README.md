@@ -121,15 +121,19 @@ for machine-readable output.
 
 ```bash
 .venv/bin/python tests/run_acceptance_m8.py     # final product acceptance
+.venv/bin/python tests/run_acceptance_product.py  # deterministic product benchmark
 .venv/bin/python tests/run_acceptance_final.py  # everything + summary
+.venv/bin/python tests/run_acceptance_real_world.py  # integration + live probes
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 .venv/bin/python -m compileall -q butler
 ```
 
 All acceptance suites are deterministic and offline; live external services are
-never required. A developer mode uses fake providers, frozen clocks and mock
-interfaces so the full suite runs without Telegram, Google Calendar, an LLM or
-the web.
+never required. `run_acceptance_real_world.py` probes live services only when
+they are configured and reports `PASS` / `FAIL` / `BLOCKED` / `SKIPPED` (it
+never turns "not configured" into a pass). A developer mode uses fake
+providers, frozen clocks and mock interfaces so the full suite runs without
+Telegram, Google Calendar, an LLM or the web.
 
 ## Backup & restore
 

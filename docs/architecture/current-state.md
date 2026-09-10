@@ -620,3 +620,48 @@ validates. Product version **1.0.0** (`butler/__init__.py`), MCP version
 
 **Baseline after M8:** `tests/run_acceptance_m8.py` (150+ checks) and
 `tests/run_acceptance_final.py` added; all prior suites remain green.
+
+## 17. Post-M8 verification sprint
+
+A real-world verification pass (not a new milestone) confirmed the product
+end to end and produced two minimal hardening fixes.
+
+### Verified with real services
+- **AI Butler (real process):** the actual AI Butler binary was built
+  (`go1.26.5`) and launched against Pi Butler's `readonly` MCP profile over
+  stdio. It completed the `initialize` handshake, enumerated **30 tools**, and
+  its real MCP client called `get_time`, `get_context`, `get_day`, `get_tasks`,
+  `get_projects`, `optimize_day`, `memory_get_relevant` and `web_search` with
+  valid JSON and **zero persistence side effects**.
+- **Google Calendar (live):** read, disposable create, list, update, idempotent
+  repeat-update and delete all verified against the dedicated Butler calendar.
+- **Telegram (live):** bot token valid (`getMe`); the bot service is running.
+  Interactive user-side delivery is not automatable from the server.
+- **Web (live):** BLOCKED — the deployed provider is `offline`.
+
+### Defects found and fixed
+- **`GoogleCalendar.get_event` returned cancelled events.** After a delete,
+  Google can briefly return the cancelled resource, so `get_event` reported a
+  deleted event as present. Fixed to treat `status == "cancelled"` as absent.
+  Regression test added in `tests/run_acceptance_product.py`.
+- **`butler.sh` ignored the user config.** The launcher forced
+  `config/butler.toml` unless `BUTLER_CONFIG` was already set, so a user
+  following the README (which documents `~/.config/butler/config.toml`) would
+  edit a file the launcher ignored. Fixed to prefer the user config when it
+  exists.
+
+### UX improvement
+- Telegram `/settings` now includes a concise, read-only **system overview**
+  (AI, calendar, web, memory, proactive, scheduler, quiet hours, work window,
+  health) so a user can understand the product without exposing dangerous
+  low-level values.
+
+### Operational hardening
+- `~/.config/butler/config.toml` (contains the Telegram token and LLM key) was
+  made owner-only (`chmod 600`); the security review flags group/other-readable
+  configs.
+
+### Verification suites added
+- `tests/run_acceptance_product.py` — deterministic product benchmark.
+- `tests/run_acceptance_real_world.py` — integration scenarios + live probes
+  with `PASS`/`FAIL`/`BLOCKED`/`SKIPPED` reporting and a final verdict.

@@ -16,6 +16,8 @@ import sys
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TESTS = os.path.join(REPO, "tests")
 SELF = os.path.basename(__file__)
+#: Live/optional suites are excluded from the deterministic aggregate.
+EXCLUDE = {SELF, "run_acceptance_real_world.py"}
 
 _SUMMARY = re.compile(r"(\d+)\s*/\s*(\d+)\s+passed")
 _SUMMARY2 = re.compile(r"(\d+)\s+passed,\s*(\d+)\s+failed")
@@ -50,7 +52,7 @@ def main() -> int:
 
     suites = sorted(f for f in os.listdir(TESTS)
                     if f.startswith("run_acceptance_") and f.endswith(".py")
-                    and f != SELF)
+                    and f not in EXCLUDE)
     for name in suites:
         path = os.path.join(TESTS, name)
         rc, out = run([sys.executable, path])
