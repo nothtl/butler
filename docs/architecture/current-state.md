@@ -302,7 +302,7 @@ pure solver, one safety/audit/idempotency layer.
 **AI Butler boundary (verified):** AI Butler is an MCP *client over stdio*; Pi
 Butler is the domain/scheduling authority. The integration seam is the MCP
 server, exposed as two disjoint profiles: `full` (historical 51 tools, OpenClaw)
-and `readonly` (33 side-effect-free executive tools for AI Butler; M3 added the
+and `readonly` (37 side-effect-free executive tools for AI Butler; M3 added the
 four project reads, M4 the four web/knowledge reads, M5 the four optimization
 reads, M6 the four memory reads). See
 `docs/architecture/ai-butler-integration.md` for the verified protocol, config,
@@ -740,3 +740,39 @@ One generic engine for every "when X changes, do Y" request. Full design in
 - **Tests.** `tests/run_acceptance_n2.py` (167 deterministic checks).
 
 **Baseline after N2:** all prior suites plus N2 pass (31 suites, 1786 checks).
+
+## 20. N3 as implemented (universal creation, linking & organization)
+
+Natural language is the interface; the existing domain services remain the
+source of truth. Full design in `docs/architecture/creation-and-organization.md`.
+
+- **Module.** `butler/creation.py::CreationService` (wired as
+  `Container.creation`): operations `create`, `resolve`, `link`, `update`,
+  `organize`, `preview` (+ `track`/`memory`/`schedule`).
+- **Resolution.** Deterministic matching against live courses/projects/tasks/
+  food/grocery/recipes plus the small `entity_aliases` table; context is a
+  tie-breaker only. `resolved` / `ambiguous` / `unresolved`; two equally exact
+  matches are ambiguous.
+- **Create vs update vs link.** An existing match turns `create` into `update`;
+  explicit "link/connect/put this under" writes only `topic_links`.
+- **Dedup.** Food quantity increments (one row); grocery is idempotent by name;
+  projects/tasks update in place; links/aliases are unique.
+- **Shared data.** Cross-topic links reference existing records by id — never
+  copied. Food/Groceries and CS188/Projects share the same rows.
+- **Relations.** A small human-readable set (`about`, `belongs_to`, `part_of`,
+  `related_to`, `requires`, `uses`, `stored_in`, `scheduled_for`, `replenishes`,
+  `created_for`, `derived_from`).
+- **Aliases.** `entity_aliases` adds names without duplicating records.
+- **Organize.** Uses the existing Organizer/FileManager with path validation
+  (`Engine.require_inside`); proposals require confirmation; no deletion.
+- **Notes vs memory.** "Save this" stores a tagged `core_fact` note; only
+  "remember that …" creates a preference. No memory spam.
+- **Scheduling.** Prepares a proposal; never writes Google Calendar.
+- **Agent layer.** `CREATE_ITEM/RESOLVE_REFERENCE/LINK_ITEMS/UPDATE_ITEM/
+  ORGANIZE_ITEMS/PREVIEW_CREATION`; `/add`, `/link`, `/organize`; inline
+  Create/Cancel/Choose callbacks; NL routes through `ExecutiveService`.
+- **MCP.** Read-only `preview_create`, `resolve_reference`, `get_topic_context`,
+  `get_connections`; readonly grows to **37** while `full` stays 51.
+- **Tests.** `tests/run_acceptance_n3.py` (165 deterministic checks).
+
+**Baseline after N3:** all prior suites plus N3 pass (32 suites, 1951 checks).

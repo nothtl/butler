@@ -369,6 +369,29 @@ def build_mcp_registry(container: Any) -> ToolRegistry:
         lambda a: _evaluate_tracker(c, a),
         [P("tracker", "str", default="")], action="tracker_evaluate",
         profile="readonly")
+    # --- N3: universal creation/resolution (strictly read-only) ---
+    add("preview_create", "Parse a natural-language create/link/organize "
+        "request into a proposal (no write). Read-only.",
+        lambda a: _preview_create(c, a),
+        [P("text", "str", required=True),
+         P("topic_id", "int", default=0)], action="preview_creation",
+        profile="readonly")
+    add("resolve_reference", "Resolve a natural-language reference to an "
+        "existing domain record (no write). Read-only.",
+        lambda a: _resolve_reference(c, a),
+        [P("query", "str", required=True),
+         P("types", "list", default=[])], action="resolve_reference",
+        profile="readonly")
+    add("get_topic_context", "The current topic's profile + linked data. "
+        "Read-only.",
+        lambda a: _get_topic_context(c, a),
+        [P("chat_id", "int", default=0), P("thread_id", "int", default=0)],
+        action="status", profile="readonly")
+    add("get_connections", "Linked connections for a topic (or all topics). "
+        "Read-only.",
+        lambda a: _get_connections(c, a),
+        [P("chat_id", "int", default=0), P("thread_id", "int", default=0)],
+        action="status", profile="readonly")
     add("executive_ask", "Typed executive query. Accepts a structured request "
         "object (the M2 semantic contract) or raw text; validates it, gathers "
         "request-scoped context and returns an AgentResult. Strictly read-only: "
@@ -859,6 +882,68 @@ def _evaluate_tracker(c: Any, a: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": f"tracker not found: {ident}"}
     res = eng.evaluate(t, dry_run=True)
     return {"ok": True, "evaluation": res.to_dict()}
+
+
+def _creation_module(c: Any) -> Any:
+    return getattr(c, "creation", None)
+
+
+def _preview_create(c: Any, a: dict[str, Any]) -> dict[str, Any]:
+    eng = _creation_module(c)
+    if eng is None:
+        return {"ok": False, "error": "creation service unavailable"}
+    text = str(a.get("text", "") or "").strip()
+    if not text:
+        return {"ok": False, "error": "text is required"}
+    ctx: dict[str, Any] = {}
+    topic_id = int(a.get("topic_id", 0) or 0)
+    if topic_id:
+        ctx["topic_id"] = topic_id
+    return {"ok": True, "proposal": eng.parse(text, context=ctx)}
+
+
+def _resolve_reference(c: Any, a: dict[str, Any]) -> dict[str, Any]:
+    eng = _creation_module(c)
+    if eng is None:
+        return {"ok": False, "error": "creation service unavailable"}
+    query = str(a.get("query", "") or "").strip()
+    if not query:
+        return {"ok": False, "error": "query is required"}
+    types = a.get("types") or None
+    if isinstance(types, str):
+        types = [types] if types else None
+    return {"ok": True, "resolution": eng.resolve(query, types=types or None)}
+
+
+def _get_topic_context(c: Any, a: dict[str, Any]) -> dict[str, Any]:
+    topics = getattr(c, "topics", None)
+    if topics is None:
+        return {"ok": False, "error": "topics unavailable"}
+    chat_id = int(a.get("chat_id", 0) or 0)
+    thread_id = int(a.get("thread_id", 0) or 0)
+    if not chat_id:
+        return {"ok": True, "topics": [p.to_dict() for p in topics.list()]}
+    prof = topics.get(chat_id, thread_id)
+    if prof is None:
+        return {"ok": False, "error": "topic not found"}
+    return {"ok": True, "topic": prof.to_dict(),
+            "linked_data": topics.linked_data(prof)}
+
+
+def _get_connections(c: Any, a: dict[str, Any]) -> dict[str, Any]:
+    topics = getattr(c, "topics", None)
+    if topics is None:
+        return {"ok": False, "error": "topics unavailable"}
+    chat_id = int(a.get("chat_id", 0) or 0)
+    thread_id = int(a.get("thread_id", 0) or 0)
+    if chat_id:
+        prof = topics.get(chat_id, thread_id)
+        if prof is None:
+            return {"ok": False, "error": "topic not found"}
+        return {"ok": True, "connections": topics.links(prof)}
+    return {"ok": True, "topics": [
+        {"topic": p.name, "connections": topics.links(p)}
+        for p in topics.list()]}
 
 
 def _executive_ask(c: Any, a: dict[str, Any]) -> dict[str, Any]:

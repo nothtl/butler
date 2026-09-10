@@ -652,8 +652,8 @@ def test_compat() -> None:
     ro = MCPServer(c, profile="readonly")
     check("I10 full MCP profile is still 51",
           len({t["name"] for t in full._tools_spec()}) == 51)
-    check("I11 readonly MCP profile is still 33",
-          len({t["name"] for t in ro._tools_spec()}) == 33)
+    check("I11 readonly MCP profile is still 37",
+          len({t["name"] for t in ro._tools_spec()}) == 37)
     check("I12 food subsystem is unaffected",
           hasattr(c, "food") and hasattr(c, "chef"))
     check("I13 scheduler/planner are unaffected",

@@ -625,7 +625,7 @@ def test_mcp() -> None:
     fn = {t["name"] for t in full._tools_spec()}
     rn = {t["name"] for t in ro._tools_spec()}
     check("full profile is 51 tools", len(fn) == 51, str(len(fn)))
-    check("readonly profile is 33 tools", len(rn) == 33, str(len(rn)))
+    check("readonly profile is 37 tools", len(rn) == 37, str(len(rn)))
     check("profiles are disjoint", not (fn & rn))
     check("readonly exposes no mutating tools",
           not (rn & {"task_add", "reschedule", "undo", "organize"}))

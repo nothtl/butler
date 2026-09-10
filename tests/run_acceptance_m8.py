@@ -739,8 +739,8 @@ def test_regression() -> None:
     ro = MCPServer(c, profile="readonly")
     check("K1 the full MCP profile is still 51 tools",
           len({t["name"] for t in full._tools_spec()}) == 51)
-    check("K2 the readonly MCP profile is 33 tools",
-          len({t["name"] for t in ro._tools_spec()}) == 33)
+    check("K2 the readonly MCP profile is 37 tools",
+          len({t["name"] for t in ro._tools_spec()}) == 37)
     check("K3 the readonly profile has no mutating tools",
           not ({t["name"] for t in ro._tools_spec()}
                & {"task_add", "reschedule", "undo"}))

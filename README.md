@@ -36,6 +36,10 @@ ambiguous requests.
   deadlines, low stock, project risk, GitHub activity, flight changes, club
   announcements) with deterministic conditions, cooldowns and dedup. `/track`
   and `/trackers`. Trackers feed the existing proactive policy.
+- **Creation** — natural-language create/link/update/organize over the existing
+  domain services ("add CS188 Project 2 due Friday", "add milk to groceries",
+  "link this to CS188", "organize this"). `/add`, `/link`, `/organize`; no
+  duplicate records and no schema knowledge required.
 
 ## Architecture
 

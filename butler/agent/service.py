@@ -288,6 +288,12 @@ class ExecutiveService:
             ActionKind.TRACKER_CONTROL: self._tracker_control,
             ActionKind.TRACKER_EVALUATE: self._tracker_evaluate,
             ActionKind.TRACKER_EXPLAIN: self._tracker_explain,
+            ActionKind.CREATE_ITEM: self._creation_create,
+            ActionKind.PREVIEW_CREATION: self._creation_preview,
+            ActionKind.RESOLVE_REFERENCE: self._creation_resolve,
+            ActionKind.LINK_ITEMS: self._creation_link,
+            ActionKind.UPDATE_ITEM: self._creation_update,
+            ActionKind.ORGANIZE_ITEMS: self._creation_organize,
             ActionKind.WEB_SEARCH: self._web_search,
             ActionKind.WEB_RESEARCH: self._web_research,
             ActionKind.WEB_FETCH: self._web_fetch,
@@ -1126,6 +1132,163 @@ class ExecutiveService:
             facts=[{"kind": "tracker_explain", "tracker_id": t.id,
                     "state": t.state}])
 
+    # -------------------------------------------------- creation handlers
+    def _creation_module(self) -> Any:
+        return getattr(self.container, "creation", None)
+
+    def _creation_ctx(self, req: AgentRequest) -> dict[str, Any]:
+        ref = dict(req.topic or {})
+        ctx: dict[str, Any] = {}
+        if ref.get("chat_id") is not None:
+            ctx["chat_id"] = int(ref.get("chat_id") or 0)
+            ctx["thread_id"] = int(ref.get("thread_id") or 0)
+        topics = getattr(self.container, "topics", None)
+        if topics is not None and ctx.get("chat_id") is not None:
+            try:
+                prof = topics.get(ctx["chat_id"], ctx.get("thread_id", 0))
+                if prof is not None:
+                    ctx["topic_id"] = prof.id
+                    ctx["topic_name"] = prof.name
+                    ctx["linked"] = topics.links(prof)
+            except Exception:  # noqa: BLE001
+                pass
+        if req.conversation is not None:
+            if req.conversation.focus is not None:
+                ctx["focus"] = req.conversation.focus.to_dict()
+            ctx["recent"] = [e.to_dict() for e in req.conversation.recent_entities]
+        return ctx
+
+    def _creation_gated(self, req: AgentRequest) -> AgentResult:
+        return AgentResult(
+            status=ResultStatus.NEEDS_CONFIRMATION,
+            confirmation_required=True,
+            data={"proposed_action": req.action.value, "text": req.raw_text,
+                  "committed": False},
+            facts=[{"kind": "creation_proposal", "action": req.action.value,
+                    "text": req.raw_text}],
+            candidate_actions=[{"action": req.action.value,
+                                "text": req.raw_text,
+                                "requires_confirmation": True}],
+            warnings=["this change is prepared but not applied; confirmation "
+                      "is required"],
+            assumptions=["read-only executive surface: creation mutations "
+                         "require explicit confirmation"])
+
+    def _creation_parse(self, req: AgentRequest) -> dict[str, Any]:
+        eng = self._creation_module()
+        return eng.parse(req.raw_text or "", context=self._creation_ctx(req))
+
+    def _creation_preview(self, req: AgentRequest, snap: Any) -> AgentResult:
+        eng = self._creation_module()
+        if eng is None:
+            return AgentResult(status=ResultStatus.UNAVAILABLE,
+                               error="creation service unavailable")
+        prop = self._creation_parse(req)
+        return AgentResult(
+            status=ResultStatus.OK, data={"proposal": prop},
+            facts=[{"kind": "creation_preview",
+                    "operation": prop.get("operation"),
+                    "target_type": prop.get("target_type"),
+                    "confidence": prop.get("confidence")}],
+            warnings=list(prop.get("questions") or []))
+
+    def _creation_create(self, req: AgentRequest, snap: Any) -> AgentResult:
+        eng = self._creation_module()
+        if eng is None:
+            return AgentResult(status=ResultStatus.UNAVAILABLE,
+                               error="creation service unavailable")
+        if self._read_only:
+            return self._creation_gated(req)
+        prop = self._creation_parse(req)
+        if prop.get("questions"):
+            return AgentResult(
+                status=ResultStatus.AMBIGUOUS, data={"proposal": prop},
+                warnings=list(prop["questions"]),
+                missing_information=list(prop["questions"]))
+        res = eng.execute(prop)
+        if not res.get("ok"):
+            status = (ResultStatus.AMBIGUOUS
+                      if res.get("status") == "ambiguous"
+                      else ResultStatus.UNAVAILABLE)
+            return AgentResult(status=status, data=res,
+                               warnings=list(res.get("questions")
+                                             or [res.get("message", "failed")]))
+        return AgentResult(
+            status=ResultStatus.OK, data=res,
+            facts=[{"kind": "creation", "operation": prop.get("operation"),
+                    "target_type": prop.get("target_type"),
+                    "created": res.get("created") or res.get("updated")}],
+            warnings=[res["message"]] if res.get("message") else [])
+
+    def _creation_link(self, req: AgentRequest, snap: Any) -> AgentResult:
+        eng = self._creation_module()
+        if eng is None:
+            return AgentResult(status=ResultStatus.UNAVAILABLE,
+                               error="creation service unavailable")
+        if self._read_only:
+            return self._creation_gated(req)
+        prop = self._creation_parse(req)
+        prop["operation"] = "link"
+        res = eng.execute(prop)
+        status = ResultStatus.OK if res.get("ok") else (
+            ResultStatus.AMBIGUOUS if res.get("status") == "ambiguous"
+            else ResultStatus.UNAVAILABLE)
+        return AgentResult(status=status, data=res,
+                           warnings=list(res.get("questions")
+                                         or ([res["message"]]
+                                             if res.get("message") else [])))
+
+    def _creation_update(self, req: AgentRequest, snap: Any) -> AgentResult:
+        eng = self._creation_module()
+        if eng is None:
+            return AgentResult(status=ResultStatus.UNAVAILABLE,
+                               error="creation service unavailable")
+        if self._read_only:
+            return self._creation_gated(req)
+        prop = self._creation_parse(req)
+        prop["operation"] = "update"
+        res = eng.execute(prop)
+        status = ResultStatus.OK if res.get("ok") else ResultStatus.UNAVAILABLE
+        return AgentResult(status=status, data=res,
+                           warnings=[res.get("message", "")] if res.get("message")
+                           else [])
+
+    def _creation_organize(self, req: AgentRequest, snap: Any) -> AgentResult:
+        eng = self._creation_module()
+        if eng is None:
+            return AgentResult(status=ResultStatus.UNAVAILABLE,
+                               error="creation service unavailable")
+        if self._read_only:
+            return self._creation_gated(req)
+        prop = self._creation_parse(req)
+        prop["operation"] = "organize"
+        res = eng.execute(prop)
+        if not res.get("ok"):
+            return AgentResult(status=ResultStatus.UNAVAILABLE, data=res,
+                               warnings=[res.get("message", "could not organize")])
+        return AgentResult(
+            status=ResultStatus.NEEDS_CONFIRMATION,
+            confirmation_required=True, data=res,
+            facts=[{"kind": "organize_proposal",
+                    "items": len((res.get("plan") or {}).get("items", []))}],
+            candidate_actions=[{"action": "organize_apply",
+                                "plan": res.get("plan"),
+                                "requires_confirmation": True}],
+            warnings=[res.get("message", "")])
+
+    def _creation_resolve(self, req: AgentRequest, snap: Any) -> AgentResult:
+        eng = self._creation_module()
+        if eng is None:
+            return AgentResult(status=ResultStatus.UNAVAILABLE,
+                               error="creation service unavailable")
+        q = _clean_creation_query(req.raw_text)
+        res = eng.resolve(q, context=self._creation_ctx(req))
+        return AgentResult(
+            status=ResultStatus.OK if res.get("status") == "resolved"
+            else ResultStatus.AMBIGUOUS, data={"resolution": res},
+            facts=[{"kind": "resolve_reference", "status": res.get("status"),
+                    "candidates": len(res.get("candidates", []))}])
+
     # ---------------------------------------------------- optimizer handlers
     def _optimizer_module(self) -> Any:
         return getattr(self.container, "optimizer", None)
@@ -1700,6 +1863,35 @@ def _clean_tracker_query(text: str) -> str:
     q = (text or "").strip()
     low = q.lower()
     for prefix in _TRACKER_STRIP:
+        if low.startswith(prefix):
+            q = q[len(prefix):].strip(" ?.,:;!-")
+            break
+    return q or (text or "").strip()
+
+
+#: Longest-first creation trigger phrases (for resolving a reference).
+_CREATION_STRIP = (
+    "put this in the right place", "show me what you'll", "what would you do",
+    "preview this", "dry run this", "organize these", "organize this",
+    "organise this", "sort these", "sort my", "archive old", "tidy up",
+    "put this under", "put it under", "file this under", "link this to",
+    "link this", "link it to", "link it", "connect this to", "connect this",
+    "connect it", "attach this", "associate this", "link to", "connect to",
+    "use my pantry", "change the deadline", "update the deadline",
+    "change the name", "rename it", "rename this", "actually make it",
+    "make it ", "edit this", "add this to", "add this", "create this",
+    "save this", "create a note", "save a note", "add a reminder",
+    "schedule this", "put two hours", "block two hours", "add a project",
+    "create a project", "new project", "add a course", "create a course",
+    "add a topic", "create a topic", "add to my pantry", "add to my food",
+    "add to my groceries", "add to groceries", "what is this", "which project",
+)
+
+
+def _clean_creation_query(text: str) -> str:
+    q = (text or "").strip()
+    low = q.lower()
+    for prefix in _CREATION_STRIP:
         if low.startswith(prefix):
             q = q[len(prefix):].strip(" ?.,:;!-")
             break

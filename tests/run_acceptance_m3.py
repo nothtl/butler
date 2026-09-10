@@ -423,9 +423,10 @@ def test_mcp() -> None:
         "memory_get_relevant", "memory_list", "memory_history",
         "get_proactive_candidates", "get_proactive_status",
         "explain_proactive_candidate", "get_trackers", "get_tracker",
-        "evaluate_tracker", "executive_ask",
+        "evaluate_tracker", "preview_create", "resolve_reference",
+        "get_topic_context", "get_connections", "executive_ask",
     }
-    check("readonly surface is exactly 33 tools", names == expected,
+    check("readonly surface is exactly 37 tools", names == expected,
           str(len(names)))
     check("no project mutating tool is exposed",
           not (names & {"create_project", "add_project", "link_task"}))

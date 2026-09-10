@@ -66,7 +66,7 @@ read-only client cannot reach a mutating tool even by guessing its name
 (enforced in `_call_tool`, not just hidden from `tools/list`).
 
 - **`full`** — the historical 51-tool surface for OpenClaw. Unchanged.
-- **`readonly`** — the M1–N2 executive surface for AI Butler (33 tools). The
+- **`readonly`** — the M1–N3 executive surface for AI Butler (37 tools). The
   M1/M2 core is listed first; M3 added the four project reads, M4 the four
   web/knowledge reads, M5 the four optimization reads and M6 the four memory
   reads:
@@ -105,6 +105,10 @@ read-only client cannot reach a mutating tool even by guessing its name
 | `get_trackers` | list trackers + state (N2) | none |
 | `get_tracker` | one tracker + last event (N2) | none |
 | `evaluate_tracker` | dry-run a tracker (N2) | none |
+| `preview_create` | parse a create/link/organize request (N3) | none |
+| `resolve_reference` | resolve a reference to a record (N3) | none |
+| `get_topic_context` | topic profile + linked data (N3) | none |
+| `get_connections` | topic connections (N3) | none |
 | `executive_ask` | typed `AgentResult` for a text/structured request | none |
 
 `executive_ask` is the M2 higher-level entry point: it accepts either free text

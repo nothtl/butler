@@ -103,6 +103,8 @@ class TelegramBot:
         self._pending_urls: dict[str, dict[str, Any]] = {}
         self._url_seed = 0
         self._await_url: dict[int, str] = {}
+        # N3: pending creation/link/organize proposals awaiting confirmation.
+        self._pending_creation: dict[int, dict[str, Any]] = {}
 
     async def _post_init(self, app: Any) -> None:
         """Reconcile topic control panels before polling starts (idempotent)."""
@@ -123,6 +125,9 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("topic", self.cmd_topic))
         self.app.add_handler(CommandHandler("track", self.cmd_track))
         self.app.add_handler(CommandHandler("trackers", self.cmd_trackers))
+        self.app.add_handler(CommandHandler("add", self.cmd_add))
+        self.app.add_handler(CommandHandler("link", self.cmd_link))
+        self.app.add_handler(CommandHandler("organize", self.cmd_organize))
         self.app.add_handler(CommandHandler("storage", self.cmd_storage))
         self.app.add_handler(CommandHandler("list", self.cmd_slash_wrap))
         self.app.add_handler(CommandHandler("find", self.cmd_slash_wrap))
@@ -782,6 +787,142 @@ class TelegramBot:
                 f"⚠️ {friendly_error(exc)}")
 
 
+    # ------------------------------------------------------- N3: creation
+    def _render_creation_result(self, res: Any) -> str:
+        from .agent.semantic import ResultStatus
+        data = res.data if isinstance(res.data, dict) else {}
+        if res.status == ResultStatus.AMBIGUOUS:
+            q = res.missing_information or res.warnings or ["Which one?"]
+            return "I need a bit more detail:\n• " + "\n• ".join(str(x) for x in q)
+        if res.status == ResultStatus.NEEDS_CONFIRMATION:
+            prop = data.get("proposal") or {}
+            lines = prop.get("preview") or []
+            body = "\n".join("• " + str(x) for x in lines) if lines else \
+                str(data.get("message", ""))
+            return ("I'll:\n" + body + "\n\nConfirm?") if body else \
+                "Prepared — confirm to apply."
+        if res.status != ResultStatus.OK:
+            return "I couldn't do that: " + (res.error
+                                             or "; ".join(res.warnings)
+                                             or "unknown error")
+        return str(data.get("message") or data.get("summary") or "Done.")
+
+    def _creation_buttons(self, res: Any) -> Any:
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        from .agent.semantic import ResultStatus
+        data = res.data if isinstance(res.data, dict) else {}
+        if res.status == ResultStatus.NEEDS_CONFIRMATION:
+            return InlineKeyboardMarkup([[
+                InlineKeyboardButton("✅ Create", callback_data="create:confirm"),
+                InlineKeyboardButton("✖️ Cancel", callback_data="create:cancel")]])
+        if res.status == ResultStatus.AMBIGUOUS:
+            cands = ((data.get("proposal") or {}).get("resolution") or {}).get(
+                "candidates") or data.get("candidates") or []
+            rows = [[InlineKeyboardButton(str(c.get("display") or c.get("name"))[:40],
+                                          callback_data=f"create:choose:{i}")]
+                    for i, c in enumerate(cands[:4])]
+            return InlineKeyboardMarkup(rows) if rows else None
+        return None
+
+    async def _maybe_creation_nl(self, update: Update, message: str) -> bool:
+        try:
+            from .agent.interpret import DeterministicInterpreter
+            from .agent.semantic import ActionKind
+            it = DeterministicInterpreter(self.container)
+            req = it.interpret(message)
+            creation_actions = {
+                ActionKind.CREATE_ITEM, ActionKind.LINK_ITEMS,
+                ActionKind.UPDATE_ITEM, ActionKind.ORGANIZE_ITEMS,
+                ActionKind.PREVIEW_CREATION, ActionKind.RESOLVE_REFERENCE,
+            }
+            if req.action not in creation_actions:
+                return False
+            from .agent.service import ExecutiveService
+            svc = ExecutiveService(self.container)
+            res = svc.ask(text=message, topic=self._tracker_ctx(update))
+            chat_id = update.effective_chat.id
+            data = res.data if isinstance(res.data, dict) else {}
+            if data.get("proposal") and (res.status.value in
+                                         ("needs_confirmation", "ambiguous")):
+                self._pending_creation[chat_id] = data["proposal"]
+            await update.effective_message.reply_text(
+                self._render_creation_result(res),
+                reply_markup=self._creation_buttons(res))
+            return True
+        except Exception as exc:  # noqa: BLE001
+            log.warning("creation NL dispatch failed: %s", exc)
+            return False
+
+    async def cmd_add(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._authorized(update):
+            return
+        arg = (update.message.text or "").partition(" ")[2].strip()
+        if not arg:
+            await update.effective_message.reply_text(
+                "What should I add? e.g. /add a CS188 project due Friday")
+            return
+        await self._maybe_creation_nl(update, f"add {arg}")
+
+    async def cmd_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._authorized(update):
+            return
+        arg = (update.message.text or "").partition(" ")[2].strip()
+        if not arg:
+            await update.effective_message.reply_text(
+                "What should I link? e.g. /link this to CS188")
+            return
+        await self._maybe_creation_nl(update, f"link this to {arg}")
+
+    async def cmd_organize(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._authorized(update):
+            return
+        arg = (update.message.text or "").partition(" ")[2].strip()
+        await self._maybe_creation_nl(update, f"organize {arg}".strip())
+
+    async def on_creation_cb(self, update: Update,
+                             context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        if not self._authorized(update):
+            return
+        data = query.data or ""
+        chat_id = query.message.chat.id
+        prop = self._pending_creation.get(chat_id)
+        if data == "create:cancel":
+            self._pending_creation.pop(chat_id, None)
+            await query.edit_message_text("Cancelled — nothing was changed.")
+            return
+        if prop is None:
+            await query.edit_message_text("That proposal expired.")
+            return
+        from .creation import CreationService
+        eng = getattr(self.container, "creation", None) or CreationService(
+            self.container)
+        if data == "create:confirm":
+            res = eng.execute(prop, confirmed=True)
+            self._pending_creation.pop(chat_id, None)
+            await query.edit_message_text(str(res.get("message") or "Done."))
+            return
+        if data.startswith("create:choose:"):
+            try:
+                idx = int(data.split(":")[-1])
+            except ValueError:
+                await query.edit_message_text("⚠️ Invalid choice.")
+                return
+            cands = ((prop.get("resolution") or {}).get("candidates")
+                     or prop.get("candidates") or [])
+            if idx < 0 or idx >= len(cands):
+                await query.edit_message_text("⚠️ Invalid choice.")
+                return
+            chosen = cands[idx]
+            prop = dict(prop)
+            prop["name"] = chosen.get("display") or chosen.get("name")
+            prop["questions"] = []
+            res = eng.execute(prop, confirmed=True)
+            self._pending_creation.pop(chat_id, None)
+            await query.edit_message_text(str(res.get("message") or "Done."))
+            return
+        await query.edit_message_text("⚠️ Unrecognised action.")
+
     # ------------------------------------------------------------ handlers
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._authorized(update):
@@ -872,6 +1013,8 @@ class TelegramBot:
         # provides *context* (a relevance hint), not a hardcoded route. The old
         # per-topic default-routing remains only as a legacy fallback.
         if await self._maybe_tracker_nl(update, message):
+            return
+        if await self._maybe_creation_nl(update, message):
             return
         intent = self.container.decider.parse(message)
         if intent.kind == "help":
@@ -1626,6 +1769,9 @@ class TelegramBot:
             return
         if data.startswith("topic:"):
             await self.on_topic_cb(update, context)
+            return
+        if data.startswith("create:"):
+            await self.on_creation_cb(update, context)
             return
         if data.startswith("tact:"):
             _pre, act, tid = data.split(":", 2)

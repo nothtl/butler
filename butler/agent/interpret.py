@@ -253,6 +253,32 @@ _TRACKER_QUERY = (
     "what do you track here", "tracking here", "what is tracked here",
 )
 
+# --- N3 universal creation / linking / organization -------------------------
+_CREATE_ITEM = (
+    "add this", "create this", "save this", "add a project", "create a project",
+    "new project", "add a course", "create a course", "add a topic",
+    "create a topic", "add to my pantry", "add to my food", "add to groceries",
+    "add to my groceries", "create a note", "save a note", "add a reminder",
+    "schedule this now", "schedule this for", "put two hours",
+    "block two hours", "add this to",
+)
+_LINK_ITEMS = (
+    "link this", "link it", "connect this", "connect it", "attach this",
+    "associate this", "put this under", "put it under", "file this under",
+    "link to", "connect to", "use my pantry",
+)
+_ORGANIZE_ITEMS = (
+    "organize this", "organize these", "organise this", "sort my", "sort these",
+    "put this in the right place", "archive old", "tidy up",
+)
+_UPDATE_ITEM = (
+    "change the deadline", "update the deadline", "change the name",
+    "rename it", "rename this", "actually make it", "make it ", "edit this",
+)
+_PREVIEW_CREATION = (
+    "preview this", "what would you do", "show me what you'll", "dry run this",
+)
+
 _TEMPORAL_MARKERS = (
     "tonight", "this evening", "this morning", "this afternoon", "tomorrow",
     "next week", "this week", "rest of the week", "today", "after dinner",
@@ -330,6 +356,9 @@ class DeterministicInterpreter:
         tracker = self._tracker_classify(low)
         if tracker is not None:
             return tracker
+        creation = self._creation_classify(low)
+        if creation is not None:
+            return creation
         proactive = self._proactive_classify(low)
         if proactive is not None:
             return proactive
@@ -399,6 +428,29 @@ class DeterministicInterpreter:
             return RequestIntent.QUERY, ActionKind.TRACKER_QUERY, 0.7
         if _match(low, _TRACKER_CREATE):
             return RequestIntent.MUTATE, ActionKind.TRACKER_CREATE, 0.7
+        return None
+
+    def _creation_classify(self, low: str
+                           ) -> tuple[RequestIntent, ActionKind, float] | None:
+        # Generic task creation keeps the legacy path (do not hijack it).
+        if re.search(r"\b(add|create|new)\b[^.]*\btask\b", low):
+            return None
+        if re.search(r"^\s*(organize|organise)\b", low):
+            return RequestIntent.MUTATE, ActionKind.ORGANIZE_ITEMS, 0.7
+        if _match(low, _PREVIEW_CREATION):
+            return RequestIntent.QUERY, ActionKind.PREVIEW_CREATION, 0.7
+        if _match(low, _LINK_ITEMS):
+            return RequestIntent.MUTATE, ActionKind.LINK_ITEMS, 0.7
+        if _match(low, _ORGANIZE_ITEMS):
+            return RequestIntent.MUTATE, ActionKind.ORGANIZE_ITEMS, 0.7
+        if _match(low, _UPDATE_ITEM):
+            return RequestIntent.MUTATE, ActionKind.UPDATE_ITEM, 0.7
+        if _match(low, _CREATE_ITEM) or (
+                re.search(r"\b(add|create|new)\b[^.]*\bproject\b", low)
+                and "task" not in low) or (
+                re.search(r"\badd\b[^.]*\b(pantry|groceries|grocery|"
+                          r"shopping list|fridge|freezer)\b", low)):
+            return RequestIntent.MUTATE, ActionKind.CREATE_ITEM, 0.7
         return None
 
     def _proactive_classify(self, low: str

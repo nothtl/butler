@@ -454,7 +454,7 @@ def test_mcp() -> None:
     web_tools = {"web_search", "web_research", "web_fetch", "knowledge_lookup"}
     check("E1 readonly exposes the four web tools", web_tools <= names,
           str(sorted(web_tools - names)))
-    check("E2 readonly count is now 33", len(names) == 33, str(len(names)))
+    check("E2 readonly count is now 37", len(names) == 37, str(len(names)))
 
     full = MCPServer(c, profile="full")
     full_names = {t["name"] for t in full._tools_spec()}

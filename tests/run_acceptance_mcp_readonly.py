@@ -40,6 +40,8 @@ READONLY_TOOLS = {
     "get_proactive_candidates", "get_proactive_status",
     "explain_proactive_candidate",
     "get_trackers", "get_tracker", "evaluate_tracker",
+    "preview_create", "resolve_reference", "get_topic_context",
+    "get_connections",
     "executive_ask",
 }
 

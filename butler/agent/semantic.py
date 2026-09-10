@@ -155,6 +155,13 @@ class ActionKind(str, Enum):
     TRACKER_CONTROL = "tracker_control"
     TRACKER_EVALUATE = "tracker_evaluate"
     TRACKER_EXPLAIN = "tracker_explain"
+    # --- N3 universal creation / linking / organization ---
+    CREATE_ITEM = "create_item"
+    RESOLVE_REFERENCE = "resolve_reference"
+    LINK_ITEMS = "link_items"
+    UPDATE_ITEM = "update_item"
+    ORGANIZE_ITEMS = "organize_items"
+    PREVIEW_CREATION = "preview_creation"
     UNKNOWN = "unknown"
 
 

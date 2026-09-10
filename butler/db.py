@@ -578,6 +578,25 @@ CREATE INDEX IF NOT EXISTS idx_tracker_events_tracker ON tracker_events(tracker_
 CREATE INDEX IF NOT EXISTS idx_tracker_events_type ON tracker_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_tracker_events_at ON tracker_events(observed_at);
 
+-- ---------------------------------------------------------------------------
+-- N3: small alias table for natural-language resolution. Aliases never copy a
+-- record; they only add another name that resolves to an existing domain row.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS entity_aliases(
+    id          INTEGER PRIMARY KEY,
+    target_type TEXT NOT NULL,
+    target_id   INTEGER NOT NULL DEFAULT 0,
+    alias       TEXT NOT NULL,
+    canonical   TEXT DEFAULT '',
+    source      TEXT DEFAULT '',
+    confidence  REAL DEFAULT 1.0,
+    created_at  INTEGER DEFAULT 0,
+    updated_at  INTEGER DEFAULT 0,
+    UNIQUE(target_type, target_id, alias)
+);
+CREATE INDEX IF NOT EXISTS idx_alias_target ON entity_aliases(target_type, target_id);
+CREATE INDEX IF NOT EXISTS idx_alias_alias ON entity_aliases(alias);
+
 -- Reward library (small treats / rest breaks the agent suggests on completion).
 CREATE TABLE IF NOT EXISTS rewards(
     id          INTEGER PRIMARY KEY,

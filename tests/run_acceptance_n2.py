@@ -626,7 +626,7 @@ def test_mcp_topics() -> None:
     names = {x["name"] for x in ro._tools_spec()}
     check("N1 readonly exposes tracker tools",
           {"get_trackers", "get_tracker", "evaluate_tracker"} <= names)
-    check("N2 readonly is 33 tools", len(names) == 33, str(len(names)))
+    check("N2 readonly is 37 tools", len(names) == 37, str(len(names)))
     full = MCPServer(c, profile="full")
     check("N3 full stays 51", len({x["name"] for x in full._tools_spec()}) == 51)
 

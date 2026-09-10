@@ -885,8 +885,8 @@ def test_regression() -> None:
     ro_names = {t["name"] for t in ro._tools_spec()}
     pro_tools = {"get_proactive_candidates", "get_proactive_status",
                  "explain_proactive_candidate"}
-    check("I2 the readonly profile exposes 33 tools including proactive",
-          pro_tools <= ro_names and len(ro_names) == 33, str(len(ro_names)))
+    check("I2 the readonly profile exposes 37 tools including proactive",
+          pro_tools <= ro_names and len(ro_names) == 37, str(len(ro_names)))
 
     check("I3 M3 project reads still work",
           isinstance(c.projects.list_projects(), list))
