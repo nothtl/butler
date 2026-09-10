@@ -94,6 +94,12 @@ class Container:
                                timeline=self.timeline, routines=self.routines,
                                foodplan=self.foodplan, executive=self.executive,
                                container=self)
+        # --- Phase 7 / M1: typed agent runtime (additive; never required) ---
+        try:
+            from .agent import build_runtime
+            self.agent = build_runtime(self)
+        except Exception:  # noqa: BLE001 — the legacy paths must keep working
+            self.agent = None
         self.trash = Trash(self.cfg, self.db, self.engine)
         self.indexer = Indexer(self.cfg, self.db, self.embedder)
         self.backup = Backup(self.cfg, self.db)
