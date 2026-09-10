@@ -57,12 +57,13 @@ config to use the bot.
 disjoint profiles selected by `BUTLER_MCP_PROFILE`:
 
 - **`full`** (default) — the historical 51-tool surface used by OpenClaw.
-- **`readonly`** — a 19-tool, side-effect-free executive surface
+- **`readonly`** — a 23-tool, side-effect-free executive surface
   (`get_time`, `get_context`, `get_day`, `plan_day`, `get_schedule`,
   `get_tasks`, `get_courses`, `get_projects`, `get_project`,
   `get_project_workload`, `get_project_risk`, `get_project_dependencies`,
   `find_available_time`, `get_week`, `web_search`, `web_research`,
-  `web_fetch`, `knowledge_lookup`, `executive_ask`) for an external agent
+  `web_fetch`, `knowledge_lookup`, `optimize_day`, `optimize_week`,
+  `evaluate_schedule`, `find_best_slot`, `executive_ask`) for an external agent
   runtime such as
   [AI Butler](https://github.com/LumabyteCo/aibutler).
 
@@ -85,6 +86,7 @@ butler/
   course.py    course intelligence (page/PDF/ICS scraping)
   projects.py  project intelligence (project/milestone/dependency DAG)
   web.py       web & external knowledge (search/fetch/extract/verify)
+  optimizer.py schedule optimization (multi-day, project/deadline aware)
   gcal.py      Google Calendar read/write
   safety.py    ActionClass + SafetyPolicy (the single gate)
   audit.py     append-only audit trail + redaction
@@ -98,6 +100,7 @@ docs/architecture/current-state.md      actual architecture + gaps
 docs/architecture/ai-butler-integration.md  AI Butler boundary
 docs/architecture/project-intelligence.md   M3 project/milestone/dependency model
 docs/architecture/web-knowledge.md          M4 web & external knowledge layer
+docs/architecture/schedule-optimization.md  M5 deterministic schedule optimization
 ```
 
 ## Acceptance

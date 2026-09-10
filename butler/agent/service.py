@@ -253,6 +253,11 @@ class ExecutiveService:
             ActionKind.PROJECT_DEPENDENCIES: self._project_dependencies,
             ActionKind.PROJECT_NEXT: self._project_next,
             ActionKind.CREATE_PROJECT: self._project_proposal,
+            ActionKind.OPTIMIZE_DAY: self._optimize,
+            ActionKind.OPTIMIZE_WEEK: self._optimize,
+            ActionKind.EVALUATE_SCHEDULE: self._evaluate_schedule,
+            ActionKind.FIND_BEST_SLOT: self._find_best_slot,
+            ActionKind.RESCHEDULE_OPTIMIZED: self._reschedule_optimized,
             ActionKind.WEB_SEARCH: self._web_search,
             ActionKind.WEB_RESEARCH: self._web_research,
             ActionKind.WEB_FETCH: self._web_fetch,
@@ -579,6 +584,200 @@ class ExecutiveService:
                       ["this project is prepared from an inferred description; "
                        "confirmation is required before it is saved"]),
             assumptions=["all proposal fields are marked inferred provenance"])
+
+    # ---------------------------------------------------- optimizer handlers
+    def _optimizer_module(self) -> Any:
+        return getattr(self.container, "optimizer", None)
+
+    def _optimizer_unavailable(self) -> AgentResult:
+        return AgentResult(status=ResultStatus.UNAVAILABLE,
+                           error="schedule optimizer unavailable")
+
+    def _optimizer_days(self, req: AgentRequest) -> int:
+        cfg_max = int(getattr(self.cfg, "optimizer_max_horizon_days", 14) or 14)
+        if req.action == ActionKind.OPTIMIZE_WEEK:
+            return 7
+        if req.scope.kind in (ScopeKind.THIS_WEEK, ScopeKind.NEXT_WEEK):
+            return 7
+        if req.temporal.start and req.temporal.end \
+                and req.temporal.end > req.temporal.start:
+            days = (int(req.temporal.end) - int(req.temporal.start)) // 86400 + 1
+            return max(1, min(int(days), cfg_max))
+        return 1
+
+    def _optimizer_strategy(self) -> str:
+        return str(getattr(self.cfg, "optimizer_default_strategy", "balanced")
+                   or "balanced")
+
+    def _optimize(self, req: AgentRequest, snap: Any) -> AgentResult:
+        opt = self._optimizer_module()
+        if opt is None:
+            return self._optimizer_unavailable()
+        days = self._optimizer_days(req)
+        res = opt.optimize_from_state(days=days, strategy=self._optimizer_strategy(),
+                                      day_ts=self._scope_day(req),
+                                      now=self.clock.now_ts())
+        result = AgentResult(
+            status=ResultStatus.OK,
+            data={"optimization": res.to_dict(), "committed": False},
+            facts=[{"kind": "schedule_optimization", "feasible": res.feasible,
+                    "strategy": res.strategy, "sessions": len(res.sessions),
+                    "unscheduled": len(res.unscheduled_items),
+                    "violations": len(res.violations), "score": res.score,
+                    "horizon_days": res.horizon.get("days"),
+                    "churn": res.churn.get("counts", {})}],
+            warnings=[str(v.get("detail", "")) for v in res.violations][:5],
+            assumptions=["read-only optimization proposal; nothing was committed",
+                         "hard constraints are absolute; soft preferences only rank"])
+        for s in res.sessions[:8]:
+            result.recommendations.append(Recommendation(
+                action=ActionKind.RECOMMEND,
+                target=EntityRef(type=EntityType.TASK, id=str(s.task_id),
+                                 name=s.title, resolved=True, confidence=0.8,
+                                 source="optimizer"),
+                title=s.title, reason=s.reason, score=res.score,
+                window=[s.start_min, s.end_min],
+                window_ts=[s.start_ts, s.end_ts],
+                provenance="optimizer.optimize"))
+        return result
+
+    def _evaluate_schedule(self, req: AgentRequest, snap: Any) -> AgentResult:
+        opt = self._optimizer_module()
+        if opt is None:
+            return self._optimizer_unavailable()
+        days = self._optimizer_days(req)
+        if days == 1 and req.action == ActionKind.EVALUATE_SCHEDULE:
+            days = 7
+        res = opt.optimize_from_state(days=days, strategy=self._optimizer_strategy(),
+                                      day_ts=self._scope_day(req),
+                                      now=self.clock.now_ts())
+        projects = res.risk_summary.get("projects", [])
+        tightest = res.risk_summary.get("most_at_risk")
+        result = AgentResult(
+            status=ResultStatus.OK,
+            data={"optimization": res.to_dict(), "evaluated": True},
+            facts=[{"kind": "schedule_evaluation", "feasible": res.feasible,
+                    "horizon_days": res.horizon.get("days"),
+                    "sessions": len(res.sessions),
+                    "unscheduled": len(res.unscheduled_items),
+                    "violations": len(res.violations),
+                    "overall_pressure": res.risk_summary.get("overall_pressure"),
+                    "tightest_project": (tightest or {}).get("project_id"),
+                    "tightest_slack_minutes": (tightest or {}).get("slack_minutes"),
+                    "projects": len(projects)}],
+            warnings=[str(v.get("detail", "")) for v in res.violations][:5],
+            conflicts=[{"kind": v.get("kind"), "task_id": v.get("task_id"),
+                        "detail": v.get("detail")} for v in res.violations],
+            assumptions=["read-only feasibility evaluation; nothing was committed"])
+        for p in projects:
+            if p.get("slack_minutes") is not None and p["slack_minutes"] < 0:
+                result.warnings.append(
+                    f"project {p['project_id']} is short by "
+                    f"{-p['slack_minutes']} minutes before its deadline")
+        return result
+
+    def _find_best_slot(self, req: AgentRequest, snap: Any) -> AgentResult:
+        opt = self._optimizer_module()
+        if opt is None:
+            return self._optimizer_unavailable()
+        days = 7
+        res = opt.optimize_from_state(days=days, strategy=self._optimizer_strategy(),
+                                      day_ts=self._scope_day(req),
+                                      now=self.clock.now_ts())
+        sessions = res.sessions
+        tid = None
+        if req.target is not None and req.target.resolved \
+                and req.target.type == EntityType.TASK:
+            try:
+                tid = int(req.target.id)
+            except (TypeError, ValueError):
+                tid = None
+        if tid is not None:
+            sessions = [s for s in sessions if s.task_id == tid]
+        else:
+            terms: list[str] = []
+            if req.target is not None and req.target.name:
+                terms.append(req.target.name.strip().lower())
+            for e in req.entities:
+                if e.name:
+                    terms.append(e.name.strip().lower())
+            terms = [t for t in terms if len(t) >= 3]
+            if not terms:
+                terms = [w for w in re.split(r"\W+", (req.raw_text or "").lower())
+                         if len(w) >= 4]
+            if terms:
+                sessions = [s for s in sessions
+                            if any(t in s.title.lower() for t in terms)]
+        if not sessions:
+            return AgentResult(
+                status=ResultStatus.UNAVAILABLE,
+                data={"optimization": res.to_dict()},
+                warnings=["no feasible slot found for that task in the horizon"],
+                assumptions=["read-only optimization; nothing was committed"])
+        best = sessions[0]
+        result = AgentResult(
+            status=ResultStatus.OK,
+            data={"best_slot": best.to_dict(), "optimization": res.to_dict()},
+            facts=[{"kind": "best_slot", "task_id": best.task_id,
+                    "title": best.title, "start": best.start_min,
+                    "end": best.end_min, "feasible": res.feasible}],
+            assumptions=["read-only optimization; nothing was committed"])
+        result.recommendations.append(Recommendation(
+            action=ActionKind.RECOMMEND,
+            target=EntityRef(type=EntityType.TASK, id=str(best.task_id),
+                             name=best.title, resolved=True, confidence=0.8,
+                             source="optimizer"),
+            title=best.title, reason=best.reason, score=res.score,
+            window=[best.start_min, best.end_min],
+            window_ts=[best.start_ts, best.end_ts],
+            provenance="optimizer.find_best_slot"))
+        return result
+
+    def _reschedule_optimized(self, req: AgentRequest, snap: Any) -> AgentResult:
+        opt = self._optimizer_module()
+        if opt is None:
+            return self._optimizer_unavailable()
+        days = self._optimizer_days(req)
+        res = opt.optimize_from_state(days=days, strategy=self._optimizer_strategy(),
+                                      day_ts=self._scope_day(req),
+                                      now=self.clock.now_ts())
+        counts = res.churn.get("counts", {})
+        planner = getattr(self.container, "planner", None)
+        undo_available = bool(planner is not None
+                              and getattr(planner, "db", None) is not None
+                              and planner.db.latest_plan() is not None)
+        change = (counts.get("moved", 0) + counts.get("added", 0)
+                  + counts.get("removed", 0))
+        result = AgentResult(
+            status=ResultStatus.NEEDS_CONFIRMATION,
+            confirmation_required=True,
+            data={"optimization": res.to_dict(), "diff": res.churn,
+                  "undo_available": undo_available, "committed": False},
+            facts=[{"kind": "reschedule_proposal", "feasible": res.feasible,
+                    "moved": counts.get("moved", 0),
+                    "added": counts.get("added", 0),
+                    "removed": counts.get("removed", 0),
+                    "unchanged": counts.get("unchanged", 0),
+                    "affected_tasks": [m["task_id"] for m in res.churn.get("moved", [])]
+                    + [a["task_id"] for a in res.churn.get("added", [])],
+                    "undo_available": undo_available,
+                    "deadline_impact": len([v for v in res.violations
+                                            if v.get("kind") == "deadline_miss"]),
+                    "risk_impact": res.risk_summary.get("overall_pressure")}],
+            candidate_actions=[{"action": "reschedule",
+                                "requires_confirmation": True,
+                                "changes": change,
+                                "diff": res.churn,
+                                "undo_available": undo_available}],
+            warnings=["this reschedule is prepared but not applied; confirmation "
+                      "is required before any calendar or schedule change",
+                      f"{change} block(s) would change"] if change
+            else ["the optimized schedule matches the current one"],
+            assumptions=["optimization is read-only; committing uses the existing "
+                         "safety, idempotency and undo path"])
+        if not res.feasible:
+            result.warnings.append("the requested horizon is not fully feasible")
+        return result
 
     # --------------------------------------------------------- web handlers
     def _web_module(self) -> Any:

@@ -54,6 +54,11 @@ _KNOWN_RISK: dict[str, str] = {
     "schedule": "read", "schedule_why": "read",
     "web_search": "read", "web_research": "read", "web_fetch": "read",
     "knowledge_lookup": "read",
+    # M5: optimization is read-only; the reschedule proposal is a local write
+    # only once confirmed (and is reversible via the existing plan undo).
+    "optimize_day": "read", "optimize_week": "read",
+    "evaluate_schedule": "read", "find_best_slot": "read",
+    "reschedule_optimized": "low_risk_write",
     # --- low-risk write (Butler-owned, reversible) ---
     "add_task": "low_risk_write", "task_update": "low_risk_write",
     "plan_make": "low_risk_write", "plan_apply": "low_risk_write",

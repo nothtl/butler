@@ -302,8 +302,9 @@ pure solver, one safety/audit/idempotency layer.
 **AI Butler boundary (verified):** AI Butler is an MCP *client over stdio*; Pi
 Butler is the domain/scheduling authority. The integration seam is the MCP
 server, exposed as two disjoint profiles: `full` (historical 51 tools, OpenClaw)
-and `readonly` (19 side-effect-free executive tools for AI Butler; M3 added the
-four project reads, M4 the four web/knowledge reads). See
+and `readonly` (23 side-effect-free executive tools for AI Butler; M3 added the
+four project reads, M4 the four web/knowledge reads, M5 the four optimization
+reads). See
 `docs/architecture/ai-butler-integration.md` for the verified protocol, config,
 failure behaviour, security model and migration plan.
 
@@ -412,3 +413,63 @@ gating. It is deliberately *not* a web chatbot. Full design in
 `run_acceptance_mcp_readonly.py` (32 checks) and `run_acceptance_p72.py`
 (77 checks) pass with the readonly count updated to 19; M3 (93 checks) and all
 prior suites remain green.
+
+## 13. M5 as implemented (advanced schedule optimization)
+
+Milestone M5 turns the scheduler from "fit tasks into free gaps" into "find the
+best feasible schedule for competing work, deadlines, priorities, projects,
+dependencies and soft preferences". The existing pure solver in
+`butler/schedule.py` is **untouched** and remains the geometry authority; M5
+adds a deterministic optimization layer around it. Full design in
+`docs/architecture/schedule-optimization.md`.
+
+- **Module.** `butler/optimizer.py::ScheduleOptimizer` (wired as
+  `Container.optimizer`). A bounded, deterministic greedy placement in
+  dependency order, seeded by existing committed blocks to minimise churn.
+  Interface is `optimizer.optimize(request) -> OptimizationResult` so a future
+  CP-SAT/Timefold backend can be plugged in without touching the service.
+- **Typed models.** `ScheduleRequest`, `TaskItem`, `SoftPreference`,
+  `ScheduledSession`, `ScheduleConstraint`, `ScheduleObjective`,
+  `ScheduleExplanation`, `OptimizationResult` (feasible, sessions, score,
+  objective_breakdown, unscheduled_items, violations, explanations,
+  risk_summary, churn).
+- **Hard constraints (absolute).** No overlap with hard events, no work during
+  sleep or outside waking bounds, capacity/buffer respected, only active tasks,
+  explicit dependencies ordered, valid project DAG, session ≤ remaining effort,
+  no duplicate/overlapping sessions, deadlines enforced where feasible;
+  otherwise an explicit infeasible result with violations.
+- **Soft objectives.** A configurable weighted objective: deadline safety,
+  project risk reduction, priority, dependency-chain progress, continuity,
+  preference affinity, churn. Strategies `baseline`, `deadline_first`,
+  `risk_first`, `priority_first` and `balanced` (default) differ only in
+  weighting; all share identical hard constraints. Context affinity is the
+  smallest term so it can never override a deadline.
+- **Project/dependency aware.** Reuses `ProjectIntelligence` risk and the
+  validated dependency DAG; milestone/project links and remaining effort are
+  carried onto every session. Inferred dependencies stay advisory.
+- **Multi-day & deadline capacity.** Bounded horizon (`optimizer_max_horizon_days`,
+  default 14) with per-project slack (`available − remaining`) and pressure in
+  `risk_summary`; a workload that cannot fit is reported, never hidden.
+- **Rescheduling & churn.** Existing blocks that remain valid are preserved;
+  forced windows (`pinned`) are hard directives. A complete diff
+  (moved/added/removed/unchanged) is returned.
+- **Explainability.** Every session carries a human-readable reason; raw
+  objective values stay in `objective_breakdown`.
+- **Proposal vs execution.** `OPTIMIZE_DAY/WEEK`, `EVALUATE_SCHEDULE` and
+  `FIND_BEST_SLOT` are read-only. `RESCHEDULE_OPTIMIZED` returns
+  `NEEDS_CONFIRMATION` with the diff, affected tasks, deadline/risk impact and
+  undo availability; it never commits. Committing reuses the existing
+  safety/idempotency/undo path.
+- **MCP.** Read-only tools `optimize_day`, `optimize_week`,
+  `evaluate_schedule`, `find_best_slot`; readonly grows to **23** tools while
+  `full` stays exactly 51. `optimize_*`/`evaluate_schedule`/`find_best_slot`
+  classify as `read`; `reschedule_optimized` is a reversible `low_risk_write`.
+- **Config.** New `[optimizer]` block (`optimizer_enabled`,
+  `optimizer_default_strategy`, `optimizer_max_horizon_days`,
+  `optimizer_max_session_minutes`, `optimizer_max_iterations`,
+  `optimizer_churn_penalty`, `optimizer_fragmentation_penalty`) with validation.
+
+**Baseline after M5:** `tests/run_acceptance_m5.py` (75 deterministic checks)
+added; `run_acceptance_mcp_readonly.py` (32), `run_acceptance_p72.py` (77),
+`run_acceptance_m3.py` (93) and `run_acceptance_m4.py` (95) pass with the
+readonly count updated to 23; all prior suites remain green.

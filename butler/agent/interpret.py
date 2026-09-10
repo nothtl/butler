@@ -122,6 +122,40 @@ _WEB_FETCH = (
 )
 _URL_RE = re.compile(r"https?://[^\s<>\"']+", re.I)
 
+# --- M5 schedule optimization -----------------------------------------------
+# Checked after web, before project: "rearrange my week" is an optimization
+# request, while "move my CS168 to tomorrow" stays a plain single move.
+_OPTIMIZE_WEEK = (
+    "optimize my week", "optimize the week", "optimize week",
+    "best way to schedule", "best way to plan", "schedule this week",
+    "fit all my work", "fit everything in", "fit it all in",
+    "fit all my tasks", "rearrange my week", "rearrange the week",
+    "rearrange my schedule", "rearrange", "optimize my schedule",
+    "optimize my time", "optimize",
+)
+_OPTIMIZE_DAY = (
+    "optimize my day", "optimize the day", "optimize day",
+    "plan my day properly", "schedule my day properly",
+    "best schedule today", "best plan for today", "make the most of my day",
+)
+_EVALUATE_SCHEDULE = (
+    "evaluate my schedule", "evaluate the schedule", "evaluate schedule",
+    "is my schedule feasible", "is the schedule feasible",
+    "can i finish everything", "will everything fit", "will it all fit",
+    "does everything fit", "can i fit everything",
+)
+_FIND_BEST_SLOT = (
+    "find the best slot", "find a slot", "find the best time",
+    "best time to", "best time for", "when should i", "best slot",
+    "when's the best time", "what's the best time", "whats the best time",
+)
+_RESCHEDULE_OPT = (
+    "move this without", "move it without", "reschedule so",
+    "rearrange so", "rearrange to", "without messing up",
+    "without disrupting", "move my study", "move my session",
+    "move my study session", "shift things around",
+)
+
 _TEMPORAL_MARKERS = (
     "tonight", "this evening", "this morning", "this afternoon", "tomorrow",
     "next week", "this week", "rest of the week", "today", "after dinner",
@@ -199,6 +233,9 @@ class DeterministicInterpreter:
         web = self._web_classify(low)
         if web is not None:
             return web
+        optimizer = self._optimizer_classify(low)
+        if optimizer is not None:
+            return optimizer
         project = self._project_classify(low)
         if project is not None:
             return project
@@ -240,6 +277,20 @@ class DeterministicInterpreter:
             return RequestIntent.QUERY, ActionKind.WEB_RESEARCH, 0.75
         if _match(low, _WEB_SEARCH):
             return RequestIntent.QUERY, ActionKind.WEB_SEARCH, 0.7
+        return None
+
+    def _optimizer_classify(self, low: str
+                            ) -> tuple[RequestIntent, ActionKind, float] | None:
+        if _match(low, _RESCHEDULE_OPT):
+            return RequestIntent.MUTATE, ActionKind.RESCHEDULE_OPTIMIZED, 0.7
+        if _match(low, _EVALUATE_SCHEDULE):
+            return RequestIntent.EVALUATE, ActionKind.EVALUATE_SCHEDULE, 0.7
+        if _match(low, _FIND_BEST_SLOT):
+            return RequestIntent.QUERY, ActionKind.FIND_BEST_SLOT, 0.7
+        if _match(low, _OPTIMIZE_DAY):
+            return RequestIntent.PLAN, ActionKind.OPTIMIZE_DAY, 0.75
+        if _match(low, _OPTIMIZE_WEEK):
+            return RequestIntent.PLAN, ActionKind.OPTIMIZE_WEEK, 0.75
         return None
 
     def _project_classify(self, low: str
@@ -373,6 +424,9 @@ class DeterministicInterpreter:
         if action == ActionKind.WEB_FETCH:
             urls = [e for e in entities if e.type == EntityType.URL]
             return urls[0] if urls else None
+        if action == ActionKind.FIND_BEST_SLOT:
+            resolved = [e for e in entities if e.resolved]
+            return resolved[0] if resolved else None
         if action in _PROJECT_TARGETED:
             proj = [e for e in entities
                     if e.type == EntityType.PROJECT and e.resolved]
@@ -482,7 +536,7 @@ class DeterministicInterpreter:
 _MUTATING = frozenset({
     ActionKind.MOVE, ActionKind.RESCHEDULE, ActionKind.DEFER,
     ActionKind.CREATE_TASK, ActionKind.COMPLETE_TASK, ActionKind.UPDATE,
-    ActionKind.CREATE_PROJECT,
+    ActionKind.CREATE_PROJECT, ActionKind.RESCHEDULE_OPTIMIZED,
 })
 
 
@@ -502,7 +556,9 @@ class LLMInterpreter:
         "plan_day|plan_week|feasibility|urgency|status|move|reschedule|defer|"
         "create_task|complete_task|update|project_status|project_workload|"
         "project_risk|project_dependencies|project_next|create_project|"
-        "web_search|web_research|web_fetch|knowledge_lookup|unknown), "
+        "web_search|web_research|web_fetch|knowledge_lookup|optimize_day|"
+        "optimize_week|evaluate_schedule|reschedule_optimized|find_best_slot|"
+        "unknown), "
         "target, entities, scope, "
         "constraints, preferences, temporal, confidence, raw_text. Never mark "
         "an inferred preference as a hard constraint. If unsure, use unknown "

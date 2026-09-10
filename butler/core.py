@@ -26,6 +26,7 @@ from .trash import Trash
 from .course import CourseIntelligence
 from .projects import ProjectIntelligence
 from .web import WebKnowledge
+from .optimizer import ScheduleOptimizer
 from .food import Chef, FoodInventory
 from .nas import FileManager
 from .house import HomeAssistant
@@ -80,6 +81,8 @@ class Container:
         self.projects = ProjectIntelligence(self)
         # --- M4: web & external knowledge (read-only, provider abstraction) ---
         self.web = WebKnowledge(self)
+        # --- M5: deterministic multi-day schedule optimization (read-only) ---
+        self.optimizer = ScheduleOptimizer(self)
         self.food = FoodInventory(self)
         self.chef = Chef(self)
         # NAS dirs must be inside the managed roots for the deterministic engine.

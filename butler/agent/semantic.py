@@ -128,6 +128,12 @@ class ActionKind(str, Enum):
     WEB_RESEARCH = "web_research"
     WEB_FETCH = "web_fetch"
     KNOWLEDGE_LOOKUP = "knowledge_lookup"
+    # --- M5 schedule optimization (read-only; reschedule is gated) ---
+    OPTIMIZE_DAY = "optimize_day"
+    OPTIMIZE_WEEK = "optimize_week"
+    EVALUATE_SCHEDULE = "evaluate_schedule"
+    RESCHEDULE_OPTIMIZED = "reschedule_optimized"
+    FIND_BEST_SLOT = "find_best_slot"
     UNKNOWN = "unknown"
 
 

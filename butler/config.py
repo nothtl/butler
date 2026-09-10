@@ -179,6 +179,17 @@ class Config:
     # Optional allowlist: when non-empty, only these domains may be fetched.
     web_domain_allowlist: list[str] = field(default_factory=list)
     web_user_agent: str = "Butler/4 (+personal assistant)"
+
+    # --- schedule optimization (M5) ---
+    # The optimizer is a deterministic, read-only layer over the existing pure
+    # solver. It never writes a plan; committing stays behind confirmation/undo.
+    optimizer_enabled: bool = True
+    optimizer_default_strategy: str = "balanced"  # baseline|deadline_first|risk_first|priority_first|balanced
+    optimizer_max_horizon_days: int = 14           # bounded search horizon
+    optimizer_max_session_minutes: int = 90        # cap on one contiguous block
+    optimizer_max_iterations: int = 50             # bounded local improvement
+    optimizer_churn_penalty: float = 1.0           # weight on preserving blocks
+    optimizer_fragmentation_penalty: float = 1.0   # weight on fewer splits
     # --- NAS / file system (Phase 3) ---
     nas_enabled: bool = False
     nas_dir: str = ""                      # e.g. /mnt/storage
@@ -450,6 +461,21 @@ class Config:
                                     if str(d).strip()]
         cfg.web_user_agent = web.get("user_agent", cfg.web_user_agent)
 
+        opt = page.get("optimizer", {})
+        cfg.optimizer_enabled = bool(opt.get("enabled", cfg.optimizer_enabled))
+        cfg.optimizer_default_strategy = opt.get("default_strategy",
+                                                 cfg.optimizer_default_strategy)
+        cfg.optimizer_max_horizon_days = int(opt.get("max_horizon_days",
+                                                     cfg.optimizer_max_horizon_days))
+        cfg.optimizer_max_session_minutes = int(opt.get("max_session_minutes",
+                                                        cfg.optimizer_max_session_minutes))
+        cfg.optimizer_max_iterations = int(opt.get("max_iterations",
+                                                   cfg.optimizer_max_iterations))
+        cfg.optimizer_churn_penalty = float(opt.get("churn_penalty",
+                                                    cfg.optimizer_churn_penalty))
+        cfg.optimizer_fragmentation_penalty = float(opt.get("fragmentation_penalty",
+                                                            cfg.optimizer_fragmentation_penalty))
+
         nas = page.get("nas", {})
         cfg.nas_enabled = bool(nas.get("enabled", cfg.nas_enabled))
         cfg.nas_dir = _expand(nas.get("dir", "")) or cfg.nas_dir
@@ -620,6 +646,18 @@ class Config:
             raise ValueError("web timeout/limits must be positive (cache_ttl >= 0)")
         if self.web_max_results < 1 or self.web_max_sources < 1:
             raise ValueError("web max_results/max_sources must be >= 1")
+        if self.optimizer_max_horizon_days < 1:
+            raise ValueError("optimizer_max_horizon_days must be >= 1")
+        if self.optimizer_max_session_minutes < 1:
+            raise ValueError("optimizer_max_session_minutes must be >= 1")
+        if self.optimizer_max_iterations < 0:
+            raise ValueError("optimizer_max_iterations must be >= 0")
+        if self.optimizer_default_strategy not in (
+                "baseline", "deadline_first", "risk_first", "priority_first",
+                "balanced"):
+            raise ValueError(
+                f"invalid optimizer_default_strategy: "
+                f"{self.optimizer_default_strategy}")
 
     def _validate_timezone(self, tz: str) -> None:
         try:
@@ -681,6 +719,13 @@ class Config:
             "web_max_results": self.web_max_results,
             "web_max_sources": self.web_max_sources,
             "web_domain_allowlist": list(self.web_domain_allowlist),
+            "optimizer_enabled": self.optimizer_enabled,
+            "optimizer_default_strategy": self.optimizer_default_strategy,
+            "optimizer_max_horizon_days": self.optimizer_max_horizon_days,
+            "optimizer_max_session_minutes": self.optimizer_max_session_minutes,
+            "optimizer_max_iterations": self.optimizer_max_iterations,
+            "optimizer_churn_penalty": self.optimizer_churn_penalty,
+            "optimizer_fragmentation_penalty": self.optimizer_fragmentation_penalty,
             "nas_enabled": self.nas_enabled,
             "nas_dir": self.nas_dir,
             "nas_inbox_dir": self.nas_inbox_dir,

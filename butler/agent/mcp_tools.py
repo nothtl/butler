@@ -288,6 +288,28 @@ def build_mcp_registry(container: Any) -> ToolRegistry:
         lambda a: _knowledge_lookup(c, a),
         [P("query", "str", required=True)],
         action="knowledge_lookup", profile="readonly")
+    # --- M5: deterministic schedule optimization (strictly read-only) ---
+    add("optimize_day", "Deterministically optimize one day's schedule across "
+        "tasks, projects, dependencies, deadlines and soft preferences. "
+        "Read-only: returns a proposal, never commits.",
+        lambda a: _optimize(c, a, 1),
+        [P("strategy", "str", default=""), P("day_offset", "int", default=0)],
+        action="optimize_day", profile="readonly")
+    add("optimize_week", "Deterministically optimize the next N days "
+        "(multi-day, deadline/project aware). Read-only proposal.",
+        lambda a: _optimize(c, a, int(a.get("days", 7) or 7)),
+        [P("strategy", "str", default=""), P("days", "int", default=7)],
+        action="optimize_week", profile="readonly")
+    add("evaluate_schedule", "Evaluate schedule feasibility, deadline slack and "
+        "project risk pressure over a horizon. Read-only.",
+        lambda a: _evaluate(c, a),
+        [P("days", "int", default=7), P("strategy", "str", default="")],
+        action="evaluate_schedule", profile="readonly")
+    add("find_best_slot", "Find the best feasible slot for a task. Read-only.",
+        lambda a: _find_best_slot(c, a),
+        [P("task", "str", default=""), P("days", "int", default=7),
+         P("strategy", "str", default="")],
+        action="find_best_slot", profile="readonly")
     add("executive_ask", "Typed executive query. Accepts a structured request "
         "object (the M2 semantic contract) or raw text; validates it, gathers "
         "request-scoped context and returns an AgentResult. Strictly read-only: "
@@ -561,6 +583,56 @@ def _knowledge_lookup(c: Any, a: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": "query is required"}
     result = web.knowledge_lookup(query)
     return result.to_dict()
+
+
+def _optimizer_module(c: Any) -> Any:
+    return getattr(c, "optimizer", None)
+
+
+def _opt_strategy(c: Any, a: dict[str, Any]) -> str:
+    s = str(a.get("strategy", "") or "").strip()
+    if s:
+        return s
+    return str(getattr(c.cfg, "optimizer_default_strategy", "balanced")
+               or "balanced")
+
+
+def _optimize(c: Any, a: dict[str, Any], days: int) -> dict[str, Any]:
+    opt = _optimizer_module(c)
+    if opt is None:
+        return {"ok": False, "error": "schedule optimizer unavailable"}
+    offset = int(a.get("day_offset", 0) or 0)
+    day_ts = int(c.planner._today()) + offset * 86400
+    res = opt.optimize_from_state(days=max(1, int(days)),
+                                  strategy=_opt_strategy(c, a), day_ts=day_ts)
+    return {"ok": True, **res.to_dict()}
+
+
+def _evaluate(c: Any, a: dict[str, Any]) -> dict[str, Any]:
+    opt = _optimizer_module(c)
+    if opt is None:
+        return {"ok": False, "error": "schedule optimizer unavailable"}
+    days = max(1, int(a.get("days", 7) or 7))
+    res = opt.optimize_from_state(days=days, strategy=_opt_strategy(c, a))
+    return {"ok": True, **res.to_dict()}
+
+
+def _find_best_slot(c: Any, a: dict[str, Any]) -> dict[str, Any]:
+    opt = _optimizer_module(c)
+    if opt is None:
+        return {"ok": False, "error": "schedule optimizer unavailable"}
+    task = str(a.get("task", "") or "").strip().lower()
+    if not task:
+        return {"ok": False, "error": "task is required"}
+    days = max(1, int(a.get("days", 7) or 7))
+    res = opt.optimize_from_state(days=days, strategy=_opt_strategy(c, a))
+    matches = [s for s in res.sessions
+               if task in s.title.lower() or s.title.lower() in task]
+    if not matches:
+        return {"ok": False, "error": "no feasible slot found for that task",
+                "optimization": res.to_dict()}
+    return {"ok": True, "best_slot": matches[0].to_dict(),
+            "optimization": res.to_dict()}
 
 
 def _executive_ask(c: Any, a: dict[str, Any]) -> dict[str, Any]:

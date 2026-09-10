@@ -418,9 +418,10 @@ def test_mcp() -> None:
         "get_tasks", "get_courses", "get_projects", "get_project",
         "get_project_workload", "get_project_risk", "get_project_dependencies",
         "find_available_time", "get_week", "web_search", "web_research",
-        "web_fetch", "knowledge_lookup", "executive_ask",
+        "web_fetch", "knowledge_lookup", "optimize_day", "optimize_week",
+        "evaluate_schedule", "find_best_slot", "executive_ask",
     }
-    check("readonly surface is exactly 19 tools", names == expected,
+    check("readonly surface is exactly 23 tools", names == expected,
           str(len(names)))
     check("no project mutating tool is exposed",
           not (names & {"create_project", "add_project", "link_task"}))
