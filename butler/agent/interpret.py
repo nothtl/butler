@@ -95,6 +95,33 @@ _PROJECT_TARGETED = frozenset({
     ActionKind.PROJECT_NEXT,
 })
 
+# --- M4 web & external knowledge --------------------------------------------
+# Local knowledge is checked BEFORE web: "what do you know about my CS168
+# deadline" is a local-state question, while "check online ..." is external.
+_KNOWLEDGE = (
+    "what do you know about", "what do you know", "do you know about",
+    "do you know", "what's in my", "whats in my", "from my", "locally",
+    "in my butler", "my notes on", "in my records", "in my data",
+)
+_WEB_RESEARCH = (
+    "check online", "search online", "look online", "search the web",
+    "check the web", "look up online", "find online", "web search",
+    "google", "the latest", "latest on", "latest about", "latest news",
+    "breaking news", "recent news",
+    "check the course page", "check the page", "check the website",
+)
+_WEB_SEARCH = (
+    "search for", "find information about", "find info about",
+    "search the internet", "look up information", "research",
+)
+_WEB_FETCH = (
+    "open this webpage", "open the webpage", "open this page",
+    "open the page", "open this url", "open the url", "fetch the page",
+    "fetch this page", "open this link", "open the link",
+    "open it", "open that", "open this",
+)
+_URL_RE = re.compile(r"https?://[^\s<>\"']+", re.I)
+
 _TEMPORAL_MARKERS = (
     "tonight", "this evening", "this morning", "this afternoon", "tomorrow",
     "next week", "this week", "rest of the week", "today", "after dinner",
@@ -140,11 +167,17 @@ class DeterministicInterpreter:
                   user: str = "user") -> AgentRequest:
         raw = (text or "").strip()
         low = raw.lower()
-        intent, action, confidence = self._classify(low)
+        intent, action, confidence = self._classify(low, context)
         phrase, temporal = self._temporal(low)
         scope = self.resolver.scope(phrase, temporal)
-        entities = self._entities(low)
+        entities = self._entities(low, raw)
         target = self._target(action, entities, low)
+        if action == ActionKind.WEB_FETCH and target is None \
+                and context is not None:
+            focus = getattr(context, "focus", None)
+            if focus is not None and focus.type == EntityType.URL \
+                    and focus.name:
+                target = focus
         preferences = self._preferences(low)
         constraints = self._constraints(preferences)
         ambiguity = self._ambiguity(action, target, low)
@@ -158,7 +191,14 @@ class DeterministicInterpreter:
         )
 
     # ---------------------------------------------------------- classify
-    def _classify(self, low: str) -> tuple[RequestIntent, ActionKind, float]:
+    def _classify(self, low: str, context: Any = None
+                  ) -> tuple[RequestIntent, ActionKind, float]:
+        knowledge = self._knowledge_classify(low)
+        if knowledge is not None:
+            return knowledge
+        web = self._web_classify(low)
+        if web is not None:
+            return web
         project = self._project_classify(low)
         if project is not None:
             return project
@@ -183,6 +223,24 @@ class DeterministicInterpreter:
         if legacy is not None:
             return legacy
         return RequestIntent.CHAT, ActionKind.UNKNOWN, 0.3
+
+    def _knowledge_classify(self, low: str
+                            ) -> tuple[RequestIntent, ActionKind, float] | None:
+        if _match(low, _KNOWLEDGE):
+            return RequestIntent.QUERY, ActionKind.KNOWLEDGE_LOOKUP, 0.7
+        return None
+
+    def _web_classify(self, low: str
+                      ) -> tuple[RequestIntent, ActionKind, float] | None:
+        if _URL_RE.search(low):
+            return RequestIntent.QUERY, ActionKind.WEB_FETCH, 0.8
+        if _match(low, _WEB_FETCH):
+            return RequestIntent.QUERY, ActionKind.WEB_FETCH, 0.75
+        if _match(low, _WEB_RESEARCH):
+            return RequestIntent.QUERY, ActionKind.WEB_RESEARCH, 0.75
+        if _match(low, _WEB_SEARCH):
+            return RequestIntent.QUERY, ActionKind.WEB_SEARCH, 0.7
+        return None
 
     def _project_classify(self, low: str
                           ) -> tuple[RequestIntent, ActionKind, float] | None:
@@ -268,8 +326,13 @@ class DeterministicInterpreter:
         return phrase, self.resolver.resolve(phrase)
 
     # ------------------------------------------------------------ entities
-    def _entities(self, low: str) -> list[EntityRef]:
+    def _entities(self, low: str, raw: str = "") -> list[EntityRef]:
         out: list[EntityRef] = []
+        for m in _URL_RE.finditer(raw or low):
+            url = m.group(0).rstrip(".,);]")
+            out.append(EntityRef(
+                type=EntityType.URL, id=url, name=url, resolved=True,
+                confidence=0.95, source="url_mention"))
         for course in self._courses():
             code = str(course.get("code", "") or "")
             if not code:
@@ -307,6 +370,9 @@ class DeterministicInterpreter:
 
     def _target(self, action: ActionKind, entities: list[EntityRef],
                 low: str) -> EntityRef | None:
+        if action == ActionKind.WEB_FETCH:
+            urls = [e for e in entities if e.type == EntityType.URL]
+            return urls[0] if urls else None
         if action in _PROJECT_TARGETED:
             proj = [e for e in entities
                     if e.type == EntityType.PROJECT and e.resolved]
@@ -354,6 +420,11 @@ class DeterministicInterpreter:
     # ---------------------------------------------------------- ambiguity
     def _ambiguity(self, action: ActionKind, target: EntityRef | None,
                    low: str) -> list[Ambiguity]:
+        if action == ActionKind.WEB_FETCH and target is None:
+            return [Ambiguity(
+                kind=AmbiguityKind.ENTITY, field_name="url",
+                mention=low[:60],
+                reason="I need the web address you want me to open")]
         if action in _TARGET_REQUIRED and target is None:
             return [Ambiguity(
                 kind=AmbiguityKind.ENTITY, field_name="target",
@@ -430,7 +501,8 @@ class LLMInterpreter:
         "(advise|plan|evaluate|query|mutate|chat|unknown), action (recommend|"
         "plan_day|plan_week|feasibility|urgency|status|move|reschedule|defer|"
         "create_task|complete_task|update|project_status|project_workload|"
-        "project_risk|project_dependencies|project_next|create_project|unknown), "
+        "project_risk|project_dependencies|project_next|create_project|"
+        "web_search|web_research|web_fetch|knowledge_lookup|unknown), "
         "target, entities, scope, "
         "constraints, preferences, temporal, confidence, raw_text. Never mark "
         "an inferred preference as a hard constraint. If unsure, use unknown "

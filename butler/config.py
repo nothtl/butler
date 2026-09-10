@@ -163,6 +163,22 @@ class Config:
     course_monitor_interval: int = 3600   # default seconds between checks
     # --- food (Phase 3: chef) ---
     recipe_provider: str = "offline"       # offline | web (see food.py)
+
+    # --- web & external knowledge (M4) ---
+    # Deterministic web research is INFORMATION ONLY: search/fetch never mutate
+    # Butler state and never perform an external action. ``offline`` disables
+    # all network access (search returns a controlled "provider unavailable").
+    web_enabled: bool = True
+    web_search_provider: str = "offline"   # offline | duckduckgo (see web.py)
+    web_max_results: int = 8               # search hits considered
+    web_max_sources: int = 5               # pages fetched per research
+    web_timeout: int = 12                  # per-request timeout (seconds)
+    web_max_content_chars: int = 20000     # extracted text kept per source
+    web_max_fetch_bytes: int = 2000000     # download cap per page
+    web_cache_ttl: int = 3600              # TTL cache lifetime (seconds)
+    # Optional allowlist: when non-empty, only these domains may be fetched.
+    web_domain_allowlist: list[str] = field(default_factory=list)
+    web_user_agent: str = "Butler/4 (+personal assistant)"
     # --- NAS / file system (Phase 3) ---
     nas_enabled: bool = False
     nas_dir: str = ""                      # e.g. /mnt/storage
@@ -417,6 +433,23 @@ class Config:
         fd = page.get("food", {})
         cfg.recipe_provider = fd.get("recipe_provider", cfg.recipe_provider)
 
+        web = page.get("web", {})
+        cfg.web_enabled = bool(web.get("enabled", cfg.web_enabled))
+        cfg.web_search_provider = web.get("search_provider",
+                                          cfg.web_search_provider)
+        cfg.web_max_results = int(web.get("max_results", cfg.web_max_results))
+        cfg.web_max_sources = int(web.get("max_sources", cfg.web_max_sources))
+        cfg.web_timeout = int(web.get("timeout", cfg.web_timeout))
+        cfg.web_max_content_chars = int(web.get("max_content_chars",
+                                                cfg.web_max_content_chars))
+        cfg.web_max_fetch_bytes = int(web.get("max_fetch_bytes",
+                                              cfg.web_max_fetch_bytes))
+        cfg.web_cache_ttl = int(web.get("cache_ttl", cfg.web_cache_ttl))
+        cfg.web_domain_allowlist = [str(d).strip().lower()
+                                    for d in web.get("domain_allowlist", [])
+                                    if str(d).strip()]
+        cfg.web_user_agent = web.get("user_agent", cfg.web_user_agent)
+
         nas = page.get("nas", {})
         cfg.nas_enabled = bool(nas.get("enabled", cfg.nas_enabled))
         cfg.nas_dir = _expand(nas.get("dir", "")) or cfg.nas_dir
@@ -582,6 +615,11 @@ class Config:
             raise ValueError("audit_retention_days must be >= 0")
         if self.timeline_max_events_per_day < 0:
             raise ValueError("timeline_max_events_per_day must be >= 0")
+        if self.web_timeout < 1 or self.web_max_fetch_bytes < 1 \
+                or self.web_max_content_chars < 1 or self.web_cache_ttl < 0:
+            raise ValueError("web timeout/limits must be positive (cache_ttl >= 0)")
+        if self.web_max_results < 1 or self.web_max_sources < 1:
+            raise ValueError("web max_results/max_sources must be >= 1")
 
     def _validate_timezone(self, tz: str) -> None:
         try:
@@ -638,6 +676,11 @@ class Config:
             "course_dir": self.course_dir,
             "course_monitor_interval": self.course_monitor_interval,
             "recipe_provider": self.recipe_provider,
+            "web_enabled": self.web_enabled,
+            "web_search_provider": self.web_search_provider,
+            "web_max_results": self.web_max_results,
+            "web_max_sources": self.web_max_sources,
+            "web_domain_allowlist": list(self.web_domain_allowlist),
             "nas_enabled": self.nas_enabled,
             "nas_dir": self.nas_dir,
             "nas_inbox_dir": self.nas_inbox_dir,

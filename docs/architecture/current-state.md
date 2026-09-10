@@ -302,8 +302,8 @@ pure solver, one safety/audit/idempotency layer.
 **AI Butler boundary (verified):** AI Butler is an MCP *client over stdio*; Pi
 Butler is the domain/scheduling authority. The integration seam is the MCP
 server, exposed as two disjoint profiles: `full` (historical 51 tools, OpenClaw)
-and `readonly` (15 side-effect-free executive tools for AI Butler; M3 added the
-four project reads). See
+and `readonly` (19 side-effect-free executive tools for AI Butler; M3 added the
+four project reads, M4 the four web/knowledge reads). See
 `docs/architecture/ai-butler-integration.md` for the verified protocol, config,
 failure behaviour, security model and migration plan.
 
@@ -372,3 +372,43 @@ model. Full design in `docs/architecture/project-intelligence.md`.
 **Baseline after M3:** `tests/run_acceptance_m3.py` (93 checks) added;
 `run_acceptance_mcp_readonly.py` grows to 32 checks (readonly is now 15 tools);
 `run_acceptance_p72.py` still passes with the readonly count updated.
+
+## 12. M4 as implemented (web & external knowledge intelligence)
+
+Milestone M4 adds a deterministic **information layer**: the LLM interprets and
+phrases, while Python performs discovery, fetching, extraction and safety
+gating. It is deliberately *not* a web chatbot. Full design in
+`docs/architecture/web-knowledge.md`.
+
+- **Module.** `butler/web.py::WebKnowledge` (wired as `Container.web`):
+  provider-agnostic search (`NullSearchProvider`, `StaticSearchProvider`,
+  `DuckDuckGoSearchProvider`), bounded fetching (`HttpFetcher`,
+  `MappingFetcher`), tag/text extraction, prompt-injection scanning, a small
+  TTL cache, and `research` / `knowledge_lookup` orchestration.
+- **Agent layer.** New `ActionKind`s `WEB_SEARCH/WEB_RESEARCH/WEB_FETCH/
+  KNOWLEDGE_LOOKUP`, `EntityType.URL`, and `ContextSnapshot.external_sources/
+  external_facts/research_summary/research_timestamp`. Routing precedence is
+  local knowledge → web → project, so "check online whether CS168 released
+  Project 2" no longer misroutes to project status.
+- **Evidence discipline.** Results keep source URL/title/domain/retrieved_at,
+  distinguish current external facts from local knowledge, deduplicate and cap
+  sources, prefer official domains, and degrade to `unavailable` rather than
+  fabricate when nothing can be verified.
+- **Security.** `validate_url` blocks non-http(s), credentials, loopback,
+  private/link-local hosts and `.internal`, enforces an optional allowlist and
+  redirect/byte caps; page text is treated as untrusted data and injection-like
+  content is flagged and never executed as instructions.
+- **Config.** New `[web]` block (`web_enabled`, `web_search_provider`,
+  `web_max_results`, `web_max_sources`, `web_timeout`, `web_max_content_chars`,
+  `web_max_fetch_bytes`, `web_cache_ttl`, `web_domain_allowlist`,
+  `web_user_agent`) with validation.
+- **MCP.** Read-only tools `web_search`, `web_research`, `web_fetch`,
+  `knowledge_lookup`; readonly grows to **19** tools while `full` stays exactly
+  51. All four actions classify as `read`.
+- **No writes.** M4 is information-only: no email, posting, forms, login or
+  purchases, and the web tools never touch tasks or commit a plan.
+
+**Baseline after M4:** `tests/run_acceptance_m4.py` (95 offline checks) added;
+`run_acceptance_mcp_readonly.py` (32 checks) and `run_acceptance_p72.py`
+(77 checks) pass with the readonly count updated to 19; M3 (93 checks) and all
+prior suites remain green.

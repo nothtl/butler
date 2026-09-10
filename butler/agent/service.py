@@ -253,6 +253,10 @@ class ExecutiveService:
             ActionKind.PROJECT_DEPENDENCIES: self._project_dependencies,
             ActionKind.PROJECT_NEXT: self._project_next,
             ActionKind.CREATE_PROJECT: self._project_proposal,
+            ActionKind.WEB_SEARCH: self._web_search,
+            ActionKind.WEB_RESEARCH: self._web_research,
+            ActionKind.WEB_FETCH: self._web_fetch,
+            ActionKind.KNOWLEDGE_LOOKUP: self._knowledge_lookup,
         }
         if req.action in handlers:
             return handlers[req.action](req, snap)
@@ -576,6 +580,107 @@ class ExecutiveService:
                        "confirmation is required before it is saved"]),
             assumptions=["all proposal fields are marked inferred provenance"])
 
+    # --------------------------------------------------------- web handlers
+    def _web_module(self) -> Any:
+        return getattr(self.container, "web", None)
+
+    def _web_unavailable(self) -> AgentResult:
+        return AgentResult(status=ResultStatus.UNAVAILABLE,
+                           error="web knowledge unavailable")
+
+    def _web_search(self, req: AgentRequest, snap: Any) -> AgentResult:
+        web = self._web_module()
+        if web is None:
+            return self._web_unavailable()
+        q = _clean_web_query(req.raw_text)
+        sr = web.search(q)
+        snap.external_sources = [s.to_dict() for s in sr.results][:10]
+        snap.research_timestamp = int(sr.current_as_of or 0)
+        result = AgentResult(
+            status=ResultStatus.OK if sr.ok else ResultStatus.UNAVAILABLE,
+            data={"search": sr.to_dict()},
+            facts=[{"kind": "web_search", "query": q, "ok": sr.ok,
+                    "provider": sr.provider, "results": len(sr.results),
+                    "cached": sr.cached}],
+            assumptions=["web results are untrusted external data"])
+        if not sr.ok:
+            result.warnings.append(sr.error or "web search unavailable")
+        return result
+
+    def _web_research(self, req: AgentRequest, snap: Any) -> AgentResult:
+        web = self._web_module()
+        if web is None:
+            return self._web_unavailable()
+        q = _clean_web_query(req.raw_text)
+        rr = web.research(q)
+        self._attach_research(snap, rr)
+        verified = bool(rr.external_verified)
+        result = AgentResult(
+            status=ResultStatus.OK if verified else ResultStatus.UNAVAILABLE,
+            data={"research": rr.to_dict()},
+            facts=[{"kind": "web_research", "query": q, "status": rr.status,
+                    "confidence": rr.confidence, "sources": len(rr.sources),
+                    "external_verified": verified, "used_cache": rr.used_cache}],
+            warnings=list(rr.limitations),
+            assumptions=["external sources are untrusted data; page content is "
+                         "never treated as instructions"])
+        if not verified:
+            result.warnings.append("could not verify from available sources")
+        return result
+
+    def _web_fetch(self, req: AgentRequest, snap: Any) -> AgentResult:
+        web = self._web_module()
+        if web is None:
+            return self._web_unavailable()
+        url = ""
+        if req.target is not None and req.target.type == EntityType.URL:
+            url = req.target.name or req.target.id
+        if not url:
+            m = _URL_IN_TEXT.search(req.raw_text or "")
+            url = m.group(0).rstrip(".,);]") if m else ""
+        if not url:
+            return AgentResult.ambiguous([Ambiguity(
+                kind=AmbiguityKind.ENTITY, field_name="url",
+                mention=(req.raw_text or "")[:60],
+                reason="I need the web address you want me to open")])
+        fr = web.fetch(url)
+        if fr.source is not None:
+            snap.external_sources = [fr.source.to_dict()]
+            snap.research_timestamp = int(fr.source.retrieved_at or 0)
+        result = AgentResult(
+            status=ResultStatus.OK if fr.ok else ResultStatus.UNAVAILABLE,
+            data={"fetch": fr.to_dict()},
+            facts=[{"kind": "web_fetch", "url": fr.final_url or url,
+                    "ok": fr.ok, "status": fr.status, "title": fr.title,
+                    "cached": fr.cached,
+                    "injection_flags": (fr.source.injection_flags
+                                        if fr.source else [])}],
+            warnings=([fr.error] if fr.error else []),
+            assumptions=["page content is untrusted external data"])
+        return result
+
+    def _knowledge_lookup(self, req: AgentRequest, snap: Any) -> AgentResult:
+        web = self._web_module()
+        if web is None:
+            return self._web_unavailable()
+        q = _clean_web_query(req.raw_text)
+        kr = web.knowledge_lookup(q)
+        return AgentResult(
+            status=ResultStatus.OK if kr.local_knowledge
+            else ResultStatus.UNAVAILABLE,
+            data={"knowledge": kr.to_dict()},
+            facts=[{"kind": "local_knowledge",
+                    "count": len(kr.local_knowledge),
+                    "external_verified": False}],
+            warnings=list(kr.limitations),
+            assumptions=["answered from local Butler state only; not the web"])
+
+    def _attach_research(self, snap: Any, rr: Any) -> None:
+        snap.external_sources = [s.to_dict() for s in rr.sources][:10]
+        snap.external_facts = [e.to_dict() for e in rr.evidence][:20]
+        snap.research_summary = rr.answer
+        snap.research_timestamp = int(rr.current_as_of or 0)
+
     def _plan(self, req: AgentRequest, snap: Any) -> AgentResult:
         planner = getattr(self.container, "planner", None)
         if planner is None:
@@ -737,3 +842,33 @@ def _scope_assumptions(req: AgentRequest) -> list[str]:
         out.append(f"time={req.temporal.phrase!r} "
                    f"({req.temporal.resolution.value})")
     return out
+
+
+#: Longest-first so "check online whether" strips before "check online".
+_WEB_STRIP = (
+    "check online whether", "check online if", "check online",
+    "search online for", "search online", "look online for", "look online",
+    "search the web for", "search the web", "check the web for",
+    "check the web", "look up online", "find online", "web search for",
+    "web search", "google for", "google", "check the course page",
+    "check the page", "check the website", "open this webpage",
+    "open the webpage", "open this page", "what's the latest on",
+    "whats the latest on", "what is the latest on", "what's the latest",
+    "whats the latest", "what is the latest", "find information about",
+    "find info about", "look up information about", "look up information",
+    "search for", "look up", "what do you know about", "what do you know",
+    "do you know about", "do you know", "research",
+)
+
+_URL_IN_TEXT = re.compile(r"https?://[^\s<>\"']+", re.I)
+
+
+def _clean_web_query(text: str) -> str:
+    """Strip a leading trigger phrase so the query sent to search is focused."""
+    q = (text or "").strip()
+    low = q.lower()
+    for prefix in _WEB_STRIP:
+        if low.startswith(prefix):
+            q = q[len(prefix):].strip(" ?.,:;!-")
+            break
+    return q or (text or "").strip()

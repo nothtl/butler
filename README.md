@@ -57,11 +57,12 @@ config to use the bot.
 disjoint profiles selected by `BUTLER_MCP_PROFILE`:
 
 - **`full`** (default) — the historical 51-tool surface used by OpenClaw.
-- **`readonly`** — a 15-tool, side-effect-free executive surface
+- **`readonly`** — a 19-tool, side-effect-free executive surface
   (`get_time`, `get_context`, `get_day`, `plan_day`, `get_schedule`,
   `get_tasks`, `get_courses`, `get_projects`, `get_project`,
   `get_project_workload`, `get_project_risk`, `get_project_dependencies`,
-  `find_available_time`, `get_week`, `executive_ask`) for an external agent
+  `find_available_time`, `get_week`, `web_search`, `web_research`,
+  `web_fetch`, `knowledge_lookup`, `executive_ask`) for an external agent
   runtime such as
   [AI Butler](https://github.com/LumabyteCo/aibutler).
 
@@ -83,6 +84,7 @@ butler/
   planner.py   DB + Google Calendar wrapper over the solver
   course.py    course intelligence (page/PDF/ICS scraping)
   projects.py  project intelligence (project/milestone/dependency DAG)
+  web.py       web & external knowledge (search/fetch/extract/verify)
   gcal.py      Google Calendar read/write
   safety.py    ActionClass + SafetyPolicy (the single gate)
   audit.py     append-only audit trail + redaction
@@ -95,6 +97,7 @@ butler/
 docs/architecture/current-state.md      actual architecture + gaps
 docs/architecture/ai-butler-integration.md  AI Butler boundary
 docs/architecture/project-intelligence.md   M3 project/milestone/dependency model
+docs/architecture/web-knowledge.md          M4 web & external knowledge layer
 ```
 
 ## Acceptance

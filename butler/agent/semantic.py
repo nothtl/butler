@@ -123,6 +123,11 @@ class ActionKind(str, Enum):
     PROJECT_DEPENDENCIES = "project_dependencies"
     PROJECT_NEXT = "project_next"
     CREATE_PROJECT = "create_project"
+    # --- M4 web & external knowledge (strictly read-only) ---
+    WEB_SEARCH = "web_search"
+    WEB_RESEARCH = "web_research"
+    WEB_FETCH = "web_fetch"
+    KNOWLEDGE_LOOKUP = "knowledge_lookup"
     UNKNOWN = "unknown"
 
 
@@ -135,6 +140,7 @@ class EntityType(str, Enum):
     BLOCK = "block"
     LOCATION = "location"
     TIME = "time"
+    URL = "url"
     UNKNOWN = "unknown"
 
 
@@ -557,6 +563,11 @@ class ContextSnapshot:
     sources: list[str] = field(default_factory=list)
     truncated: bool = False
     focus: str = ""
+    # --- M4: bounded external evidence (never a whole webpage) ---
+    external_sources: list[dict[str, Any]] = field(default_factory=list)
+    external_facts: list[dict[str, Any]] = field(default_factory=list)
+    research_summary: str = ""
+    research_timestamp: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return _dump(self)

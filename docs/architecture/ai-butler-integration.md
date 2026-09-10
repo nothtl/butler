@@ -66,7 +66,9 @@ read-only client cannot reach a mutating tool even by guessing its name
 (enforced in `_call_tool`, not just hidden from `tools/list`).
 
 - **`full`** — the historical 51-tool surface for OpenClaw. Unchanged.
-- **`readonly`** — the M1/M2 executive surface for AI Butler (11 tools):
+- **`readonly`** — the M1–M4 executive surface for AI Butler (19 tools). The
+  M1/M2 core is listed first; M3 added the four project reads and M4 the four
+  web/knowledge reads:
 
 | Tool | Returns | Side effects |
 |------|---------|--------------|
@@ -77,9 +79,17 @@ read-only client cannot reach a mutating tool even by guessing its name
 | `get_schedule` | committed active plan from the DB | none |
 | `get_tasks` | active tasks | none |
 | `get_courses` | tracked courses | none |
-| `get_projects` | stable scaffold (real model in M3) | none |
+| `get_projects` | project list (M3 model) | none |
+| `get_project` | one project + milestones | none |
+| `get_project_workload` | read-only effort/workload summary | none |
+| `get_project_risk` | explainable weighted risk | none |
+| `get_project_dependencies` | dependency DAG | none |
 | `find_available_time` | free waking intervals (`day_offset`, `min_minutes`) | none |
 | `get_week` | read-only N-day preview | none |
+| `web_search` | ranked external results (M4) | none |
+| `web_research` | source-backed answer + evidence (M4) | none |
+| `web_fetch` | one bounded, sanitised page (M4) | none |
+| `knowledge_lookup` | local knowledge only, no network (M4) | none |
 | `executive_ask` | typed `AgentResult` for a text/structured request | none |
 
 `executive_ask` is the M2 higher-level entry point: it accepts either free text

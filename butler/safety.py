@@ -52,6 +52,8 @@ _KNOWN_RISK: dict[str, str] = {
     "recover": "read", "multimodal": "read", "skill_describe": "read",
     "proactive": "read", "plan_tasks": "read", "plan_why": "read",
     "schedule": "read", "schedule_why": "read",
+    "web_search": "read", "web_research": "read", "web_fetch": "read",
+    "knowledge_lookup": "read",
     # --- low-risk write (Butler-owned, reversible) ---
     "add_task": "low_risk_write", "task_update": "low_risk_write",
     "plan_make": "low_risk_write", "plan_apply": "low_risk_write",

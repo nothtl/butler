@@ -33,7 +33,8 @@ READONLY_TOOLS = {
     "get_time", "get_context", "get_day", "plan_day", "get_schedule",
     "get_tasks", "get_courses", "get_projects", "get_project",
     "get_project_workload", "get_project_risk", "get_project_dependencies",
-    "find_available_time", "get_week", "executive_ask",
+    "find_available_time", "get_week", "web_search", "web_research",
+    "web_fetch", "knowledge_lookup", "executive_ask",
 }
 
 
