@@ -1100,7 +1100,8 @@ class Memory:
         # explicit hard instruction
         if re.search(r"\b(don'?t|do not|never|stop)\b", low) and \
                 re.search(r"\b(schedule|scheduling|study|studying|blocks?|"
-                          r"before|after|gym|cook)\b", low):
+                          r"before|after|gym|cook|bother|remind|notify|"
+                          r"priority|tasks?)\b", low):
             return {"type": USER_INSTRUCTION, "subject": subject,
                     "key": "instruction", "value": stripped,
                     "provenance": EXPLICIT_USER, "confidence": 0.95,

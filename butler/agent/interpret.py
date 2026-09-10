@@ -196,6 +196,32 @@ _MEMORY_CORRECT = (
     "that's wrong about me",
 )
 
+# --- M7 proactive executive behavior ----------------------------------------
+_PROACTIVE_SUPPRESS = (
+    "stop reminding me", "stop warning me", "don't remind me",
+    "do not remind me", "stop telling me about", "stop notifying me",
+)
+_PROACTIVE_SNOOZE = (
+    "remind me later", "remind me in", "snooze", "remind me tomorrow",
+    "remind me tonight",
+)
+_PROACTIVE_EXPLAIN = (
+    "why are you reminding me", "why are you telling me this",
+    "why are you warning me", "why this warning", "explain this warning",
+    "why did you warn me", "why are you telling me about",
+)
+_PROACTIVE_LIST = (
+    "proactive recommendations", "show my proactive", "list proactive",
+    "what recommendations do you have", "show me your recommendations",
+    "daily briefing", "morning briefing", "give me the briefing",
+)
+_PROACTIVE_QUERY = (
+    "what are you warning me about", "what should i know right now",
+    "what should i know", "what's important right now",
+    "whats important right now", "anything i should know",
+    "what are you reminding me about", "what proactive",
+)
+
 _TEMPORAL_MARKERS = (
     "tonight", "this evening", "this morning", "this afternoon", "tomorrow",
     "next week", "this week", "rest of the week", "today", "after dinner",
@@ -270,6 +296,9 @@ class DeterministicInterpreter:
         memory = self._memory_classify(low)
         if memory is not None:
             return memory
+        proactive = self._proactive_classify(low)
+        if proactive is not None:
+            return proactive
         knowledge = self._knowledge_classify(low)
         if knowledge is not None:
             return knowledge
@@ -320,6 +349,20 @@ class DeterministicInterpreter:
             return RequestIntent.QUERY, ActionKind.MEMORY_SEARCH, 0.7
         if _match(low, _MEMORY_QUERY):
             return RequestIntent.QUERY, ActionKind.MEMORY_QUERY, 0.7
+        return None
+
+    def _proactive_classify(self, low: str
+                            ) -> tuple[RequestIntent, ActionKind, float] | None:
+        if _match(low, _PROACTIVE_SUPPRESS):
+            return RequestIntent.MUTATE, ActionKind.PROACTIVE_SUPPRESS, 0.75
+        if _match(low, _PROACTIVE_SNOOZE):
+            return RequestIntent.MUTATE, ActionKind.PROACTIVE_SNOOZE, 0.75
+        if _match(low, _PROACTIVE_EXPLAIN):
+            return RequestIntent.QUERY, ActionKind.PROACTIVE_EXPLAIN, 0.75
+        if _match(low, _PROACTIVE_LIST):
+            return RequestIntent.QUERY, ActionKind.PROACTIVE_LIST, 0.7
+        if _match(low, _PROACTIVE_QUERY):
+            return RequestIntent.QUERY, ActionKind.PROACTIVE_QUERY, 0.7
         return None
 
     def _knowledge_classify(self, low: str
@@ -624,7 +667,9 @@ class LLMInterpreter:
         "web_search|web_research|web_fetch|knowledge_lookup|optimize_day|"
         "optimize_week|evaluate_schedule|reschedule_optimized|find_best_slot|"
         "memory_query|memory_search|memory_explain|memory_forget|"
-        "memory_confirm|memory_correct|memory_learn|unknown), "
+        "memory_confirm|memory_correct|memory_learn|"
+        "proactive_query|proactive_list|proactive_explain|proactive_snooze|"
+        "proactive_suppress|unknown), "
         "target, entities, scope, "
         "constraints, preferences, temporal, confidence, raw_text. Never mark "
         "an inferred preference as a hard constraint. If unsure, use unknown "

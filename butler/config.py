@@ -209,6 +209,38 @@ class Config:
     memory_estimate_min_ratio: float = 1.15   # learn only if off by >= 15%
     memory_max_value_chars: int = 2000
     memory_allow_web_facts: bool = True
+
+    # --- proactive executive behavior (M7) ---
+    # Deterministic candidate generation + a notification policy. The legacy
+    # ``proactive_*`` fields below still drive the original alert loop.
+    proactive_engine_enabled: bool = True
+    proactive_daily_budget: int = 5          # normal proactive messages/day
+    proactive_critical_budget: int = 2       # separate allowance for critical
+    proactive_cooldown_minutes: int = 180    # per-candidate re-notify cooldown
+    proactive_min_priority: str = "medium"   # only >= this priority notifies
+    proactive_deadline_risk_ratio: float = 1.0   # remaining/available trigger
+    proactive_min_free_window_minutes: int = 60
+    proactive_risk_increase: float = 0.15    # project risk delta to notify
+    proactive_min_confidence: float = 0.6
+    proactive_candidate_expiry_minutes: int = 1440
+    proactive_prep_lead_minutes: int = 60    # configured (not invented) lead
+    proactive_web_check_enabled: bool = False
+    proactive_web_ttl_minutes: int = 360
+    proactive_max_candidates: int = 50
+    proactive_quiet_critical: bool = True    # critical may bypass quiet hours
+    proactive_briefing_enabled: bool = True
+    # Per-category toggles (all on by default; users may disable individually).
+    proactive_cat_deadline_risk: bool = True
+    proactive_cat_free_time: bool = True
+    proactive_cat_missed_task: bool = True
+    proactive_cat_schedule_conflict: bool = True
+    proactive_cat_project_risk: bool = True
+    proactive_cat_estimate: bool = True
+    proactive_cat_routine: bool = True
+    proactive_cat_travel: bool = True
+    proactive_cat_web_change: bool = True
+    proactive_cat_food: bool = True
+    proactive_cat_course: bool = True
     # --- NAS / file system (Phase 3) ---
     nas_enabled: bool = False
     nas_dir: str = ""                      # e.g. /mnt/storage
@@ -523,6 +555,46 @@ class Config:
         cfg.memory_allow_web_facts = bool(mem.get("allow_web_facts",
                                                   cfg.memory_allow_web_facts))
 
+        pro7 = page.get("proactive", {})
+        cfg.proactive_engine_enabled = bool(pro7.get("engine_enabled",
+                                                     cfg.proactive_engine_enabled))
+        cfg.proactive_daily_budget = int(pro7.get("daily_budget",
+                                                  cfg.proactive_daily_budget))
+        cfg.proactive_critical_budget = int(pro7.get("critical_budget",
+                                                     cfg.proactive_critical_budget))
+        cfg.proactive_cooldown_minutes = int(pro7.get("cooldown_minutes",
+                                                      cfg.proactive_cooldown_minutes))
+        cfg.proactive_min_priority = pro7.get("min_priority",
+                                              cfg.proactive_min_priority)
+        cfg.proactive_deadline_risk_ratio = float(pro7.get("deadline_risk_ratio",
+                                                           cfg.proactive_deadline_risk_ratio))
+        cfg.proactive_min_free_window_minutes = int(pro7.get("min_free_window_minutes",
+                                                             cfg.proactive_min_free_window_minutes))
+        cfg.proactive_risk_increase = float(pro7.get("risk_increase",
+                                                     cfg.proactive_risk_increase))
+        cfg.proactive_min_confidence = float(pro7.get("min_confidence",
+                                                      cfg.proactive_min_confidence))
+        cfg.proactive_candidate_expiry_minutes = int(pro7.get("candidate_expiry_minutes",
+                                                              cfg.proactive_candidate_expiry_minutes))
+        cfg.proactive_prep_lead_minutes = int(pro7.get("prep_lead_minutes",
+                                                       cfg.proactive_prep_lead_minutes))
+        cfg.proactive_web_check_enabled = bool(pro7.get("web_check_enabled",
+                                                        cfg.proactive_web_check_enabled))
+        cfg.proactive_web_ttl_minutes = int(pro7.get("web_ttl_minutes",
+                                                     cfg.proactive_web_ttl_minutes))
+        cfg.proactive_max_candidates = int(pro7.get("max_candidates",
+                                                    cfg.proactive_max_candidates))
+        cfg.proactive_quiet_critical = bool(pro7.get("quiet_critical",
+                                                     cfg.proactive_quiet_critical))
+        cfg.proactive_briefing_enabled = bool(pro7.get("briefing_enabled",
+                                                       cfg.proactive_briefing_enabled))
+        for cat in ("deadline_risk", "free_time", "missed_task",
+                    "schedule_conflict", "project_risk", "estimate", "routine",
+                    "travel", "web_change", "food", "course"):
+            setattr(cfg, f"proactive_cat_{cat}",
+                    bool(pro7.get(f"cat_{cat}",
+                                  getattr(cfg, f"proactive_cat_{cat}", True))))
+
         nas = page.get("nas", {})
         cfg.nas_enabled = bool(nas.get("enabled", cfg.nas_enabled))
         cfg.nas_dir = _expand(nas.get("dir", "")) or cfg.nas_dir
@@ -720,6 +792,22 @@ class Config:
                 or self.memory_course_stale_days < 0 \
                 or self.memory_project_stale_days < 0:
             raise ValueError("memory staleness windows must be >= 0")
+        if self.proactive_daily_budget < 0 or self.proactive_critical_budget < 0:
+            raise ValueError("proactive budgets must be >= 0")
+        if self.proactive_cooldown_minutes < 0:
+            raise ValueError("proactive_cooldown_minutes must be >= 0")
+        if self.proactive_min_priority not in (
+                "critical", "high", "medium", "low"):
+            raise ValueError(
+                f"invalid proactive_min_priority: {self.proactive_min_priority}")
+        if not (0.0 <= self.proactive_min_confidence <= 1.0):
+            raise ValueError("proactive_min_confidence must be within [0, 1]")
+        if self.proactive_max_candidates < 1:
+            raise ValueError("proactive_max_candidates must be >= 1")
+        if self.proactive_min_free_window_minutes < 0 \
+                or self.proactive_prep_lead_minutes < 0 \
+                or self.proactive_candidate_expiry_minutes < 1:
+            raise ValueError("proactive window/lead/expiry values are invalid")
 
     def _validate_timezone(self, tz: str) -> None:
         try:
@@ -803,6 +891,21 @@ class Config:
             "memory_estimate_min_ratio": self.memory_estimate_min_ratio,
             "memory_max_value_chars": self.memory_max_value_chars,
             "memory_allow_web_facts": self.memory_allow_web_facts,
+            "proactive_engine_enabled": self.proactive_engine_enabled,
+            "proactive_daily_budget": self.proactive_daily_budget,
+            "proactive_critical_budget": self.proactive_critical_budget,
+            "proactive_cooldown_minutes": self.proactive_cooldown_minutes,
+            "proactive_min_priority": self.proactive_min_priority,
+            "proactive_deadline_risk_ratio": self.proactive_deadline_risk_ratio,
+            "proactive_min_free_window_minutes": self.proactive_min_free_window_minutes,
+            "proactive_risk_increase": self.proactive_risk_increase,
+            "proactive_min_confidence": self.proactive_min_confidence,
+            "proactive_candidate_expiry_minutes": self.proactive_candidate_expiry_minutes,
+            "proactive_prep_lead_minutes": self.proactive_prep_lead_minutes,
+            "proactive_web_check_enabled": self.proactive_web_check_enabled,
+            "proactive_max_candidates": self.proactive_max_candidates,
+            "proactive_quiet_critical": self.proactive_quiet_critical,
+            "proactive_briefing_enabled": self.proactive_briefing_enabled,
             "nas_enabled": self.nas_enabled,
             "nas_dir": self.nas_dir,
             "nas_inbox_dir": self.nas_inbox_dir,

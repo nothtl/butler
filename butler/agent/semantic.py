@@ -142,6 +142,12 @@ class ActionKind(str, Enum):
     MEMORY_CONFIRM = "memory_confirm"
     MEMORY_CORRECT = "memory_correct"
     MEMORY_LEARN = "memory_learn"
+    # --- M7 proactive executive behavior ---
+    PROACTIVE_QUERY = "proactive_query"
+    PROACTIVE_LIST = "proactive_list"
+    PROACTIVE_EXPLAIN = "proactive_explain"
+    PROACTIVE_SNOOZE = "proactive_snooze"
+    PROACTIVE_SUPPRESS = "proactive_suppress"
     UNKNOWN = "unknown"
 
 

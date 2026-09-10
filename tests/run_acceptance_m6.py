@@ -764,8 +764,8 @@ def test_regression() -> None:
     ro_names = {t["name"] for t in ro._tools_spec()}
     mem_tools = {"memory_search", "memory_get_relevant", "memory_list",
                  "memory_history"}
-    check("K2 the readonly profile exposes 27 tools including memory",
-          mem_tools <= ro_names and len(ro_names) == 27, str(len(ro_names)))
+    check("K2 the readonly profile exposes 30 tools including memory",
+          mem_tools <= ro_names and len(ro_names) == 30, str(len(ro_names)))
 
     opt = c.optimizer.optimize_from_state(days=1, day_ts=DAY, now=NOW)
     check("K3 the M5 optimizer still works", isinstance(opt.feasible, bool))

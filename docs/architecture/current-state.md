@@ -302,7 +302,7 @@ pure solver, one safety/audit/idempotency layer.
 **AI Butler boundary (verified):** AI Butler is an MCP *client over stdio*; Pi
 Butler is the domain/scheduling authority. The integration seam is the MCP
 server, exposed as two disjoint profiles: `full` (historical 51 tools, OpenClaw)
-and `readonly` (27 side-effect-free executive tools for AI Butler; M3 added the
+and `readonly` (30 side-effect-free executive tools for AI Butler; M3 added the
 four project reads, M4 the four web/knowledge reads, M5 the four optimization
 reads, M6 the four memory reads). See
 `docs/architecture/ai-butler-integration.md` for the verified protocol, config,
@@ -527,3 +527,47 @@ added; `run_acceptance_mcp_readonly.py` (32), `run_acceptance_p72.py` (77),
 `run_acceptance_m3.py` (93), `run_acceptance_m4.py` (95) and
 `run_acceptance_m5.py` (75) pass with the readonly count updated to 27; all
 prior suites remain green.
+
+## 15. M7 as implemented (proactive executive behavior)
+
+Milestone M7 turns Butler from a purely reactive assistant into a careful,
+context-aware one that *notices* important situations and *proposes* useful
+recommendations. It reuses the existing cadence, memory, optimizer, project,
+web, audit and safety layers and adds **no** second scheduler, memory,
+notification system or autonomous agent. Full design in
+`docs/architecture/proactive-executive.md`.
+
+- **Loop.** `butler/proactive_engine.py::ProactiveEngine` (wired as
+  `Container.proactive_engine`): OBSERVE → DETECT → SCORE → DECIDE → EXPLAIN/
+  PROPOSE → NOTIFY → WAIT → (optional) execute through the existing safety path.
+- **Candidates.** Deterministic detectors for deadline risk, underutilized free
+  time, missed/skipped work, schedule conflicts, project-risk increases,
+  estimate issues, routine opportunities, travel/preparation, food gaps, course
+  deadlines and verified web changes. Each candidate carries evidence,
+  proposed action, confidence and an explanation.
+- **Ranking.** Deterministic weighted score (urgency, risk, capacity deficit,
+  impact, novelty, confidence, preference boost, dismissal penalty) mapped to
+  `critical|high|medium|low`.
+- **Policy.** Configurable thresholds, per-candidate cooldown, state-hash
+  dedup, daily budget (separate critical budget), quiet hours (critical may
+  bypass), user suppressions, snoozes and expiry.
+- **State.** `accepted`, `dismissed`, `ignored`, `snoozed`, `expired`,
+  `pending`; unanswered notifications become `ignored`, never `accepted`.
+- **Integrations.** M3 risk, M4 web provenance, M5 feasibility gate, M6 memory
+  preferences/estimate learning, calendar, courses, tasks, routines, food.
+- **Agent layer.** `PROACTIVE_QUERY/LIST/EXPLAIN/SNOOZE/SUPPRESS`; natural
+  language routes through the existing `ExecutiveService`; snooze/suppress are
+  local, reversible writes (proposed under the read-only surface).
+- **Telegram.** Evidence-based messages with validated `pro:` callbacks
+  (accept/snooze/dismiss/details); accepting never auto-executes a
+  consequential action.
+- **Briefing.** A concise deterministic daily briefing (events, free time, top
+  candidates, recommendation).
+- **MCP.** Read-only tools `get_proactive_candidates`, `get_proactive_status`,
+  `explain_proactive_candidate`; readonly grows to **30** while `full` stays
+  exactly 51.
+- **Config.** `[proactive]` thresholds, budgets, cooldown, quiet-hour policy,
+  per-category toggles and candidate expiry.
+
+**Baseline after M7:** `tests/run_acceptance_m7.py` (112 deterministic checks)
+added; all prior suites pass with the readonly count updated to 30.

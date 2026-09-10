@@ -28,6 +28,7 @@ from .projects import ProjectIntelligence
 from .web import WebKnowledge
 from .optimizer import ScheduleOptimizer
 from .memory import Memory
+from .proactive_engine import ProactiveEngine
 from .food import Chef, FoodInventory
 from .nas import FileManager
 from .house import HomeAssistant
@@ -98,6 +99,8 @@ class Container:
         self.foodplan = FoodPlanner(self)
         self.executive = Executive(self)
         self.proactive = Proactive(self)
+        # --- M7: deterministic proactive executive engine (candidates + policy) ---
+        self.proactive_engine = ProactiveEngine(self)
         self.decider = Decider(self.cfg, self.db, self.engine,
                                self.organizer, self.search, self.chat,
                                planner=self.planner, courses=self.courses,

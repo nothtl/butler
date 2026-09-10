@@ -1169,6 +1169,56 @@ class TelegramBot:
         else:
             await query.edit_message_text(f"⚠️ {res.get('error', 'could not save that URL')}")
 
+    async def on_proactive_cb(self, update: Update,
+                              context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle proactive notification buttons (validated shapes only).
+
+        The callback carries only ``accept|snooze|dismiss|details`` plus the
+        candidate key. Accepting records consent but never auto-executes a
+        consequential action; the proposed action still goes through the normal
+        safety/confirmation path.
+        """
+        query = update.callback_query
+        data = query.data or ""
+        parts = data.split(":", 2)
+        if len(parts) != 3:
+            await query.edit_message_text("⚠️ Unrecognised action.")
+            return
+        _, action, key = parts
+        eng = getattr(self.container, "proactive_engine", None)
+        if eng is None:
+            await query.edit_message_text("⚠️ Proactive engine unavailable.")
+            return
+        if action == "details":
+            ex = eng.explain(key)
+            if not ex:
+                await query.edit_message_text("This reminder has expired.")
+                return
+            ev = "\n".join(f"  • {e.get('kind')}: {e.get('value')}"
+                           for e in ex.get("evidence", []))
+            await query.edit_message_text(
+                f"{ex['title']}\n\n{ex.get('summary', '')}\n\n"
+                f"Evidence:\n{ev}\n\n{ex.get('why', '')}")
+            return
+        if action == "snooze":
+            eng.snooze(key, 180)
+            await query.edit_message_text("⏰ Snoozed for 3 hours.")
+            return
+        if action == "dismiss":
+            eng.respond(key, "dismissed")
+            await query.edit_message_text("✖️ Dismissed — I won't repeat it.")
+            return
+        if action == "accept":
+            res = eng.respond(key, "accepted")
+            cand = (res.get("candidate") or {})
+            pa = cand.get("proposed_action") or {}
+            desc = pa.get("action", "the recommendation")
+            await query.edit_message_text(
+                f"✅ Noted: {desc}.\nThis is a recommendation — apply it with "
+                f"the normal confirmation flow so nothing changes silently.")
+            return
+        await query.edit_message_text("⚠️ Unrecognised action.")
+
     async def on_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
         await query.answer()
@@ -1185,6 +1235,9 @@ class TelegramBot:
             return
         if data.startswith("courseurl:"):
             await self.on_course_url_cb(update, context)
+            return
+        if data.startswith("pro:"):
+            await self.on_proactive_cb(update, context)
             return
         if data.startswith("tact:"):
             _pre, act, tid = data.split(":", 2)

@@ -621,6 +621,77 @@ CREATE TABLE IF NOT EXISTS memory_observations(
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mobs_sig ON memory_observations(signature);
 CREATE INDEX IF NOT EXISTS idx_mobs_kind ON memory_observations(kind);
+
+-- ---------------------------------------------------------------------------
+-- M7: proactive executive state. Candidate generation is deterministic and
+-- idempotent; notifications/responses/suppressions/snoozes are durable so a
+-- restart never re-notifies or forgets a dismissal.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS proactive_candidates(
+    id            INTEGER PRIMARY KEY,
+    key           TEXT NOT NULL UNIQUE,
+    category      TEXT DEFAULT '',
+    title         TEXT DEFAULT '',
+    summary       TEXT DEFAULT '',
+    priority      TEXT DEFAULT 'low',
+    score         REAL DEFAULT 0.0,
+    confidence    REAL DEFAULT 0.0,
+    detected_at   INTEGER DEFAULT 0,
+    updated_at    INTEGER DEFAULT 0,
+    first_seen    INTEGER DEFAULT 0,
+    last_seen     INTEGER DEFAULT 0,
+    state         TEXT DEFAULT 'pending',
+    evidence      TEXT DEFAULT '',        -- JSON
+    proposed_action TEXT DEFAULT '',      -- JSON
+    requires_confirmation INTEGER DEFAULT 0,
+    expires_at    INTEGER DEFAULT 0,
+    relevant_entities TEXT DEFAULT '',    -- JSON
+    explanation   TEXT DEFAULT '',
+    last_state_hash TEXT DEFAULT '',
+    last_notified INTEGER DEFAULT 0,
+    notification_count INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_pc_state ON proactive_candidates(state);
+CREATE INDEX IF NOT EXISTS idx_pc_category ON proactive_candidates(category);
+CREATE INDEX IF NOT EXISTS idx_pc_updated ON proactive_candidates(updated_at);
+
+CREATE TABLE IF NOT EXISTS proactive_notifications(
+    id            INTEGER PRIMARY KEY,
+    candidate_key TEXT NOT NULL,
+    ts            INTEGER DEFAULT 0,
+    channel       TEXT DEFAULT '',
+    priority      TEXT DEFAULT '',
+    state         TEXT DEFAULT 'sent',
+    message       TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_pn_key ON proactive_notifications(candidate_key);
+CREATE INDEX IF NOT EXISTS idx_pn_ts ON proactive_notifications(ts);
+
+CREATE TABLE IF NOT EXISTS proactive_responses(
+    id            INTEGER PRIMARY KEY,
+    candidate_key TEXT NOT NULL,
+    response      TEXT DEFAULT '',
+    ts            INTEGER DEFAULT 0,
+    note          TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_pr_key ON proactive_responses(candidate_key);
+CREATE INDEX IF NOT EXISTS idx_pr_ts ON proactive_responses(ts);
+
+CREATE TABLE IF NOT EXISTS proactive_suppressions(
+    id            INTEGER PRIMARY KEY,
+    key           TEXT NOT NULL UNIQUE,
+    scope         TEXT DEFAULT 'candidate',  -- candidate | category
+    reason        TEXT DEFAULT '',
+    created_at    INTEGER DEFAULT 0,
+    until         INTEGER DEFAULT 0           -- 0 = permanent
+);
+
+CREATE TABLE IF NOT EXISTS proactive_snoozes(
+    id            INTEGER PRIMARY KEY,
+    key           TEXT NOT NULL UNIQUE,
+    until         INTEGER DEFAULT 0,
+    created_at    INTEGER DEFAULT 0
+);
 """
 
 

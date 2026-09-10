@@ -336,6 +336,23 @@ def build_mcp_registry(container: Any) -> ToolRegistry:
         [P("subject", "str", default=""), P("key", "str", default=""),
          P("limit", "int", default=50)],
         action="memory_query", profile="readonly")
+    # --- M7: proactive executive behavior (strictly read-only) ---
+    add("get_proactive_candidates", "Deterministically generate and rank "
+        "proactive candidates (deadline risk, free time, conflicts, risk "
+        "increases, ...). Read-only; nothing is notified or mutated.",
+        lambda a: _get_proactive_candidates(c, a),
+        [P("state", "str", default=""), P("category", "str", default=""),
+         P("limit", "int", default=20)],
+        action="proactive_query", profile="readonly")
+    add("get_proactive_status", "Proactive engine status: quiet hours, daily "
+        "budget usage, suppressions and snoozes. Read-only.",
+        lambda a: _get_proactive_status(c, a),
+        [], action="proactive_query", profile="readonly")
+    add("explain_proactive_candidate", "Evidence and triggering condition for a "
+        "proactive candidate. Read-only.",
+        lambda a: _explain_proactive_candidate(c, a),
+        [P("key", "str", default=""), P("query", "str", default="")],
+        action="proactive_explain", profile="readonly")
     add("executive_ask", "Typed executive query. Accepts a structured request "
         "object (the M2 semantic contract) or raw text; validates it, gathers "
         "request-scoped context and returns an AgentResult. Strictly read-only: "
@@ -719,6 +736,58 @@ def _memory_history(c: Any, a: dict[str, Any]) -> dict[str, Any]:
                        key=str(a.get("key", "") or ""),
                        limit=int(a.get("limit", 50) or 50))
     return {"ok": True, "count": len(rows), "memories": rows}
+
+
+def _proactive_engine(c: Any) -> Any:
+    return getattr(c, "proactive_engine", None)
+
+
+def _get_proactive_candidates(c: Any, a: dict[str, Any]) -> dict[str, Any]:
+    eng = _proactive_engine(c)
+    if eng is None:
+        return {"ok": False, "error": "proactive engine unavailable"}
+    res = eng.run_cycle(deliver=False, persist=False)
+    state = str(a.get("state", "") or "")
+    category = str(a.get("category", "") or "")
+    limit = int(a.get("limit", 20) or 20)
+    if state or category:
+        rows = eng.list_candidates(state=state, category=category, limit=limit)
+    else:
+        rows = res.get("candidates", [])[:limit]
+    return {"ok": True, "count": len(rows), "candidates": rows,
+            "suppressed": res.get("suppressed", [])}
+
+
+def _get_proactive_status(c: Any, a: dict[str, Any]) -> dict[str, Any]:
+    eng = _proactive_engine(c)
+    if eng is None:
+        return {"ok": False, "error": "proactive engine unavailable"}
+    return {"ok": True, **eng.status()}
+
+
+def _explain_proactive_candidate(c: Any, a: dict[str, Any]) -> dict[str, Any]:
+    eng = _proactive_engine(c)
+    if eng is None:
+        return {"ok": False, "error": "proactive engine unavailable"}
+    key = str(a.get("key", "") or "").strip()
+    query = str(a.get("query", "") or "").strip().lower()
+    if key:
+        ex = eng.explain(key)
+        if ex is not None:
+            return {"ok": True, "explanation": ex}
+    # pure preview (no writes): generate in memory and explain the match
+    res = eng.run_cycle(deliver=False, persist=False)
+    cands = res.get("candidates", [])
+    if not key and query:
+        for row in cands:
+            hay = f"{row['key']} {row['title']} {row['summary']}".lower()
+            if query in hay:
+                key = row["key"]
+                break
+    for row in cands:
+        if row.get("key") == key:
+            return {"ok": True, "explanation": eng.explain_candidate(row)}
+    return {"ok": False, "error": "no candidate matched"}
 
 
 def _executive_ask(c: Any, a: dict[str, Any]) -> dict[str, Any]:

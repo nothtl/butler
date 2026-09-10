@@ -36,7 +36,9 @@ READONLY_TOOLS = {
     "find_available_time", "get_week", "web_search", "web_research",
     "web_fetch", "knowledge_lookup", "optimize_day", "optimize_week",
     "evaluate_schedule", "find_best_slot", "memory_search",
-    "memory_get_relevant", "memory_list", "memory_history", "executive_ask",
+    "memory_get_relevant", "memory_list", "memory_history",
+    "get_proactive_candidates", "get_proactive_status",
+    "explain_proactive_candidate", "executive_ask",
 }
 
 

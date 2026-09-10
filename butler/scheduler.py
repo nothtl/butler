@@ -212,10 +212,19 @@ class Scheduler:
 
     def _run_proactive(self) -> None:
         proactive = getattr(self.container, "proactive", None)
-        if proactive is None:
-            return
-        res = proactive.run()
-        log.info("proactive check: %s", res)
+        if proactive is not None:
+            res = proactive.run()
+            log.info("proactive check: %s", res)
+        # M7: deterministic candidate engine on the same cadence (bounded,
+        # idempotent; never a second background loop).
+        engine = getattr(self.container, "proactive_engine", None)
+        if engine is not None:
+            try:
+                out = engine.run_cycle(deliver=True)
+                log.info("proactive engine: generated=%s notified=%s",
+                         out.get("generated"), out.get("notified"))
+            except Exception as exc:  # noqa: BLE001 — never break the cadence
+                log.warning("proactive engine failed: %s", exc)
 
     def _run_gcal_sync(self) -> None:
         """Push the local plan to Google Calendar (Phase 5.0 write projection).

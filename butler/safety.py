@@ -64,6 +64,11 @@ _KNOWN_RISK: dict[str, str] = {
     "memory_query": "read", "memory_search": "read", "memory_explain": "read",
     "memory_learn": "low_risk_write", "memory_forget": "low_risk_write",
     "memory_confirm": "low_risk_write", "memory_correct": "low_risk_write",
+    # M7: proactive reads are side-effect free; snooze/suppress are local,
+    # reversible and audited.
+    "proactive_query": "read", "proactive_list": "read",
+    "proactive_explain": "read",
+    "proactive_snooze": "low_risk_write", "proactive_suppress": "low_risk_write",
     # --- low-risk write (Butler-owned, reversible) ---
     "add_task": "low_risk_write", "task_update": "low_risk_write",
     "plan_make": "low_risk_write", "plan_apply": "low_risk_write",
@@ -111,6 +116,7 @@ _DEGRADED_ALLOW_WRITE = {
     "index", "route", "project_create", "project_update", "project_link",
     "project_milestone", "project_dependency",
     "memory_learn", "memory_forget", "memory_confirm", "memory_correct",
+    "proactive_snooze", "proactive_suppress",
 }
 
 

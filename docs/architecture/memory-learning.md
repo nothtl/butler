@@ -184,7 +184,7 @@ personal fact automatically. Arbitrary webpage text is not persisted.
 ## 13. MCP surface
 
 Read-only tools (profile `readonly`): `memory_search`, `memory_get_relevant`,
-`memory_list`, `memory_history`. `readonly` now exposes **27** tools; `full`
+`memory_list`, `memory_history`. `readonly` now exposes **30** tools; `full`
 remains exactly **51**. Memory reads classify as `read`; memory mutations
 (`memory_learn/forget/confirm/correct`) are reversible `low_risk_write` and are
 audited. Write MCP tools were intentionally not added to preserve the frozen

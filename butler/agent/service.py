@@ -270,6 +270,11 @@ class ExecutiveService:
             ActionKind.MEMORY_FORGET: self._memory_forget,
             ActionKind.MEMORY_CONFIRM: self._memory_confirm,
             ActionKind.MEMORY_CORRECT: self._memory_correct,
+            ActionKind.PROACTIVE_QUERY: self._proactive_query,
+            ActionKind.PROACTIVE_LIST: self._proactive_list,
+            ActionKind.PROACTIVE_EXPLAIN: self._proactive_explain,
+            ActionKind.PROACTIVE_SNOOZE: self._proactive_snooze,
+            ActionKind.PROACTIVE_SUPPRESS: self._proactive_suppress,
             ActionKind.WEB_SEARCH: self._web_search,
             ActionKind.WEB_RESEARCH: self._web_research,
             ActionKind.WEB_FETCH: self._web_fetch,
@@ -761,6 +766,177 @@ class ExecutiveService:
             facts=[{"kind": "memory_correct",
                     "action": res.get("action"),
                     "id": (res.get("stored") or {}).get("id")}])
+
+    # --------------------------------------------------- proactive handlers
+    def _proactive_module(self) -> Any:
+        return getattr(self.container, "proactive_engine", None)
+
+    def _proactive_unavailable(self) -> AgentResult:
+        return AgentResult(status=ResultStatus.UNAVAILABLE,
+                           error="proactive engine unavailable")
+
+    def _proactive_cycle(self, req: AgentRequest) -> dict[str, Any]:
+        eng = self._proactive_module()
+        res = eng.run_cycle(now=self.clock.now_ts(), deliver=False,
+                            persist=not self._read_only)
+        return res
+
+    def _proactive_match(self, req: AgentRequest) -> dict[str, Any] | None:
+        eng = self._proactive_module()
+        q = _clean_proactive_query(req.raw_text)
+        cands = eng.list_candidates(limit=100)
+        if not cands:
+            return None
+        low = q.lower()
+        if low:
+            for c in cands:
+                hay = f"{c['key']} {c['title']} {c['summary']}".lower()
+                if low in hay:
+                    return c
+            toks = [t for t in re.split(r"\W+", low) if len(t) > 2]
+            best, best_hits = None, 0
+            for c in cands:
+                hay = f"{c['key']} {c['title']} {c['summary']}".lower()
+                hits = sum(1 for t in toks if t in hay)
+                if hits > best_hits:
+                    best, best_hits = c, hits
+            if best is not None and best_hits > 0:
+                return best
+        # fall back to the highest-priority pending candidate
+        rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+        pending = [c for c in cands if str(c.get("state")) == "pending"]
+        pool = pending or cands
+        pool.sort(key=lambda c: (rank.get(str(c.get("priority")), 3),
+                                 -float(c.get("score") or 0.0)))
+        return pool[0]
+
+    def _proactive_query(self, req: AgentRequest, snap: Any) -> AgentResult:
+        eng = self._proactive_module()
+        if eng is None:
+            return self._proactive_unavailable()
+        res = self._proactive_cycle(req)
+        top = res.get("candidates", [])[:3]
+        status = eng.status(now=self.clock.now_ts())
+        result = AgentResult(
+            status=ResultStatus.OK,
+            data={"candidates": res.get("candidates", []),
+                  "notified_today": status.get("notified_today"),
+                  "quiet_hours": status.get("quiet_hours")},
+            facts=[{"kind": "proactive_query",
+                    "count": len(res.get("candidates", [])),
+                    "top": [c.get("title") for c in top],
+                    "notified_today": status.get("notified_today")}],
+            warnings=["proactive candidates are read-only recommendations; "
+                      "actions require confirmation"])
+        for c in top:
+            result.recommendations.append(Recommendation(
+                action=ActionKind.PROACTIVE_QUERY,
+                title=str(c.get("title", "")),
+                reason=str(c.get("explanation") or c.get("summary") or ""),
+                score=float(c.get("score") or 0.0),
+                provenance="proactive_engine"))
+        return result
+
+    def _proactive_list(self, req: AgentRequest, snap: Any) -> AgentResult:
+        eng = self._proactive_module()
+        if eng is None:
+            return self._proactive_unavailable()
+        res = self._proactive_cycle(req)
+        status = eng.status(now=self.clock.now_ts())
+        return AgentResult(
+            status=ResultStatus.OK,
+            data={"candidates": res.get("candidates", []), "status": status,
+                  "suppressed": res.get("suppressed", [])},
+            facts=[{"kind": "proactive_list",
+                    "count": len(res.get("candidates", [])),
+                    "suppressed": len(res.get("suppressed", [])),
+                    "notified_today": status.get("notified_today")}])
+
+    def _proactive_explain(self, req: AgentRequest, snap: Any) -> AgentResult:
+        eng = self._proactive_module()
+        if eng is None:
+            return self._proactive_unavailable()
+        self._proactive_cycle(req)  # refresh candidates deterministically
+        cand = self._proactive_match(req)
+        if cand is None:
+            return AgentResult(status=ResultStatus.UNAVAILABLE,
+                               warnings=["I have nothing to explain right now"])
+        ex = eng.explain(cand["key"])
+        return AgentResult(
+            status=ResultStatus.OK, data={"explanation": ex},
+            facts=[{"kind": "proactive_explain", "key": cand["key"],
+                    "priority": cand.get("priority"),
+                    "category": cand.get("category")}])
+
+    def _proactive_gated(self, req: AgentRequest) -> AgentResult:
+        return AgentResult(
+            status=ResultStatus.NEEDS_CONFIRMATION,
+            confirmation_required=True,
+            data={"proposed_action": req.action.value, "text": req.raw_text,
+                  "committed": False},
+            facts=[{"kind": "proactive_proposal", "action": req.action.value,
+                    "text": req.raw_text}],
+            candidate_actions=[{"action": req.action.value,
+                                "text": req.raw_text,
+                                "requires_confirmation": True}],
+            warnings=["this proactive change is prepared but not applied; "
+                      "confirmation is required"],
+            assumptions=["read-only executive surface: proactive mutations "
+                         "require explicit confirmation"])
+
+    def _proactive_snooze(self, req: AgentRequest, snap: Any) -> AgentResult:
+        if self._read_only:
+            return self._proactive_gated(req)
+        eng = self._proactive_module()
+        if eng is None:
+            return self._proactive_unavailable()
+        self._proactive_cycle(req)
+        cand = self._proactive_match(req)
+        if cand is None:
+            return AgentResult(status=ResultStatus.UNAVAILABLE,
+                               warnings=["no proactive candidate to snooze"])
+        minutes = _requested_minutes(req.raw_text or "") or 180
+        res = eng.snooze(cand["key"], minutes, now=self.clock.now_ts())
+        return AgentResult(
+            status=ResultStatus.OK,
+            data={"snoozed": cand["key"], "until": res["until"],
+                  "minutes": res["minutes"]},
+            facts=[{"kind": "proactive_snooze", "key": cand["key"],
+                    "minutes": res["minutes"]}])
+
+    def _proactive_suppress(self, req: AgentRequest, snap: Any) -> AgentResult:
+        if self._read_only:
+            return self._proactive_gated(req)
+        eng = self._proactive_module()
+        if eng is None:
+            return self._proactive_unavailable()
+        self._proactive_cycle(req)
+        q = _clean_proactive_query(req.raw_text).lower()
+        categories = {"deadline": "deadline_risk", "risk": "project_risk",
+                      "routine": "routine", "estimate": "estimate",
+                      "travel": "travel", "food": "food", "course": "course",
+                      "conflict": "schedule_conflict",
+                      "free time": "free_time"}
+        target, scope = None, "candidate"
+        for word, cat in categories.items():
+            if word in q:
+                target, scope = cat, "category"
+                break
+        if target is None:
+            cand = self._proactive_match(req)
+            if cand is None:
+                return AgentResult(
+                    status=ResultStatus.UNAVAILABLE,
+                    warnings=["I couldn't tell which reminder to stop"])
+            target = cand["key"]
+        res = eng.suppress(target, now=self.clock.now_ts(), reason="user_stop",
+                           scope=scope)
+        return AgentResult(
+            status=ResultStatus.OK,
+            data={"suppressed": res["key"], "scope": res["scope"]},
+            facts=[{"kind": "proactive_suppress", "key": res["key"],
+                    "scope": res["scope"]}],
+            assumptions=["critical safety/deadline warnings are never muted"])
 
     # ---------------------------------------------------- optimizer handlers
     def _optimizer_module(self) -> Any:
@@ -1277,6 +1453,36 @@ def _clean_memory_query(text: str) -> str:
     q = (text or "").strip()
     low = q.lower()
     for prefix in _MEMORY_STRIP:
+        if low.startswith(prefix):
+            q = q[len(prefix):].strip(" ?.,:;!-")
+            break
+    return q or (text or "").strip()
+
+
+#: Longest-first proactive trigger phrases.
+_PROACTIVE_STRIP = (
+    "what are you warning me about", "what are you reminding me about",
+    "what should i know right now", "what should i know",
+    "what's important right now", "whats important right now",
+    "anything i should know", "what proactive recommendations do you have",
+    "what recommendations do you have", "show me your recommendations",
+    "show my proactive", "list proactive", "proactive recommendations",
+    "why are you telling me this", "why are you reminding me",
+    "why are you warning me", "why are you telling me about",
+    "why did you warn me", "explain this warning", "why this warning",
+    "stop reminding me about", "stop reminding me", "stop warning me",
+    "don't remind me about", "don't remind me", "do not remind me",
+    "stop telling me about", "stop notifying me", "remind me later",
+    "remind me in", "remind me tomorrow", "remind me tonight", "snooze",
+    "daily briefing", "morning briefing", "give me the briefing",
+    "what proactive",
+)
+
+
+def _clean_proactive_query(text: str) -> str:
+    q = (text or "").strip()
+    low = q.lower()
+    for prefix in _PROACTIVE_STRIP:
         if low.startswith(prefix):
             q = q[len(prefix):].strip(" ?.,:;!-")
             break

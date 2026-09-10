@@ -57,14 +57,16 @@ config to use the bot.
 disjoint profiles selected by `BUTLER_MCP_PROFILE`:
 
 - **`full`** (default) — the historical 51-tool surface used by OpenClaw.
-- **`readonly`** — a 27-tool, side-effect-free executive surface
+- **`readonly`** — a 30-tool, side-effect-free executive surface
   (`get_time`, `get_context`, `get_day`, `plan_day`, `get_schedule`,
   `get_tasks`, `get_courses`, `get_projects`, `get_project`,
   `get_project_workload`, `get_project_risk`, `get_project_dependencies`,
   `find_available_time`, `get_week`, `web_search`, `web_research`,
   `web_fetch`, `knowledge_lookup`, `optimize_day`, `optimize_week`,
   `evaluate_schedule`, `find_best_slot`, `memory_search`,
-  `memory_get_relevant`, `memory_list`, `memory_history`, `executive_ask`) for
+  `memory_get_relevant`, `memory_list`, `memory_history`,
+  `get_proactive_candidates`, `get_proactive_status`,
+  `explain_proactive_candidate`, `executive_ask`) for
   an external agent runtime such as
   [AI Butler](https://github.com/LumabyteCo/aibutler).
 
@@ -89,6 +91,7 @@ butler/
   web.py       web & external knowledge (search/fetch/extract/verify)
   optimizer.py schedule optimization (multi-day, project/deadline aware)
   memory.py    long-term memory + learning (typed, provenance-aware)
+  proactive_engine.py  proactive executive loop (candidates + policy)
   gcal.py      Google Calendar read/write
   safety.py    ActionClass + SafetyPolicy (the single gate)
   audit.py     append-only audit trail + redaction
@@ -104,6 +107,7 @@ docs/architecture/project-intelligence.md   M3 project/milestone/dependency mode
 docs/architecture/web-knowledge.md          M4 web & external knowledge layer
 docs/architecture/schedule-optimization.md  M5 deterministic schedule optimization
 docs/architecture/memory-learning.md       M6 long-term memory + learning
+docs/architecture/proactive-executive.md   M7 proactive executive behavior
 ```
 
 ## Acceptance
