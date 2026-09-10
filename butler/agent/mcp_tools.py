@@ -10,6 +10,12 @@ MCP tools keep their historical client-facing names via ``Tool.mcp_name`` and
 are given an internal ``mcp_`` prefix so they can coexist with the agent's
 typed tools in one catalog without name collisions. Handlers call the exact
 same subsystems ``_call_tool`` used to, so existing MCP clients see no change.
+
+M1 adds a second, disjoint ``readonly`` profile: a minimal, side-effect-free
+executive surface for an external agent runtime (AI Butler). Tools carry a
+``profile`` and :class:`~butler.agent.registry.ToolRegistry` filters both the
+``tools/list`` schema and the dispatch by it, so a read-only client can never
+reach a mutating tool even by guessing its name.
 """
 
 from __future__ import annotations
@@ -26,9 +32,10 @@ def build_mcp_registry(container: Any) -> ToolRegistry:
 
     def add(name: str, desc: str, handler: Any,
             params: list[Param] | None = None, *, action: str = "",
-            side_effect: bool = False) -> None:
+            side_effect: bool = False, profile: str = "full") -> None:
         reg.add("mcp_" + name, desc, handler, params or [],
-                action=action or name, side_effect=side_effect, mcp_name=name)
+                action=action or name, side_effect=side_effect, mcp_name=name,
+                profile=profile)
 
     # ------------------------------------------------------------- inspect
     add("status", "Butler storage & config overview.",
@@ -201,6 +208,46 @@ def build_mcp_registry(container: Any) -> ToolRegistry:
         [P("task_id", "int"), P("est_minutes", "int"), P("priority", "int")],
         action="rewards")
 
+    # --------------------------------------------- read-only executive surface
+    # M1: the minimal, stable, *side-effect-free* surface an external agent
+    # runtime (AI Butler) consumes first. Every handler reads live state and
+    # never persists, syncs or writes: no plan commit, no calendar write, no
+    # task transition. Exposed only under the "readonly" MCP profile
+    # (BUTLER_MCP_PROFILE=readonly); the historical 51-tool surface is the
+    # "full" profile and is untouched.
+    add("get_time", "Current local time, timezone and today's day window.",
+        lambda a: _get_time(c), action="now", profile="readonly")
+    add("get_context", "Personal context snapshot (free time, deadlines, "
+        "expiring food, presence).",
+        lambda a: c.context.snapshot(), action="context", profile="readonly")
+    add("get_day", "Today's plan: the committed active plan if one exists, "
+        "otherwise a read-only preview.",
+        lambda a: _get_day(c), action="day", profile="readonly")
+    add("plan_day", "Read-only proposal for today (nothing is committed).",
+        lambda a: _preview_day(c), action="day", profile="readonly")
+    add("get_schedule", "The committed active schedule from the database, if "
+        "any (never recomputes or writes).",
+        lambda a: _get_schedule(c), action="day", profile="readonly")
+    add("get_tasks", "List active tasks.",
+        lambda a: {"ok": True,
+                   "tasks": [dict(r) for r in c.db.tasks("active")]},
+        action="tasks", profile="readonly")
+    add("get_courses", "List tracked courses.",
+        lambda a: {"ok": True, "courses": c.courses.list_courses()},
+        action="course_list", profile="readonly")
+    add("get_projects", "List projects (project intelligence lands in M3; this "
+        "is a stable read-only placeholder).",
+        lambda a: _get_projects(c), action="projects", profile="readonly")
+    add("find_available_time", "Free waking intervals for a day (minus sleep "
+        "and hard events).",
+        lambda a: _find_available_time(c, a),
+        [P("day_offset", "int", default=0),
+         P("min_minutes", "int", default=0)],
+        action="now", profile="readonly")
+    add("get_week", "Read-only schedule preview for the next N days.",
+        lambda a: c.planner.plan_week(days=int(a.get("days", 7) or 7)),
+        [P("days", "int", default=7)], action="day", profile="readonly")
+
     return reg
 
 
@@ -275,3 +322,99 @@ def _suggest_reward(c: Any, a: dict[str, Any]) -> dict[str, Any]:
     importance = motivation.task_importance(est, prio)
     return {"importance": importance,
             "reward": motivation.suggest_reward(c.db, importance)}
+
+
+# ------------------------------------------------- read-only (M1) helpers
+def _hhmm(minutes: int) -> str:
+    return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+
+def _get_time(c: Any) -> dict[str, Any]:
+    from datetime import datetime
+    cfg = c.cfg
+    now = cfg.now_local() if hasattr(cfg, "now_local") else datetime.now()
+    ts = int(now.timestamp())
+    day_start = int(c.planner._day_start_ts(ts))
+    return {
+        "ok": True,
+        "epoch": ts,
+        "iso": now.isoformat(),
+        "date": now.strftime("%Y-%m-%d"),
+        "time": now.strftime("%H:%M"),
+        "weekday": now.strftime("%A"),
+        "timezone": getattr(cfg, "timezone", "") or "system",
+        "day_start": day_start,
+        "day_end": day_start + 86400,
+    }
+
+
+def _committed_plan(c: Any) -> tuple[Any, Any] | None:
+    from .. import schedule as sch
+    row = c.db.latest_plan()
+    if row is None:
+        return None
+    return row, sch.PlanState.from_json(str(row["json"]))
+
+
+def _get_day(c: Any) -> dict[str, Any]:
+    committed = _committed_plan(c)
+    if committed is None:
+        return _preview_day(c)
+    row, state = committed
+    summary = c.planner._summary(state)
+    summary.update({"source": "committed", "committed": True,
+                    "plan_id": int(row["id"]), "created": int(row["created"])})
+    return summary
+
+
+def _preview_day(c: Any) -> dict[str, Any]:
+    week = c.planner.plan_week(days=1)
+    day = dict(week["days"][0])
+    day.update({"source": "preview", "committed": False})
+    return day
+
+
+def _get_schedule(c: Any) -> dict[str, Any]:
+    committed = _committed_plan(c)
+    if committed is None:
+        return {"ok": True, "committed": False, "plan": None,
+                "note": "No committed active plan."}
+    row, state = committed
+    return {"ok": True, "committed": True, "plan_id": int(row["id"]),
+            "created": int(row["created"]), "plan": state.to_dict()}
+
+
+def _get_projects(c: Any) -> dict[str, Any]:
+    projects = getattr(c, "projects", None)
+    rows = projects.list_projects() if projects is not None else []
+    return {"ok": True, "count": len(rows), "projects": rows,
+            "note": "Project intelligence (Goal→Project→Milestone→Task) is "
+                    "scheduled for M3; this is a stable read-only placeholder."}
+
+
+def _find_available_time(c: Any, a: dict[str, Any]) -> dict[str, Any]:
+    from datetime import datetime
+    from .. import schedule as sch
+    day_offset = int(a.get("day_offset", 0) or 0)
+    min_minutes = int(a.get("min_minutes", 0) or 0)
+    ts = int(c.planner._today()) + day_offset * 86400
+    events = c.planner._day_events(ts)
+    gaps = sch.free_intervals(c.planner.day_start, c.planner.day_end,
+                              int(c.cfg.sleep_start), int(c.cfg.sleep_end),
+                              events)
+    intervals = []
+    for start, end in gaps:
+        if end - start < min_minutes:
+            continue
+        intervals.append({"start_min": start, "end_min": end,
+                          "start": _hhmm(start), "end": _hhmm(end),
+                          "minutes": end - start})
+    return {
+        "ok": True,
+        "date": datetime.fromtimestamp(ts).strftime("%Y-%m-%d"),
+        "day_start": c.planner.day_start,
+        "day_end": c.planner.day_end,
+        "total_minutes": sum(i["minutes"] for i in intervals),
+        "intervals": intervals,
+        "events": [e.to_dict() for e in events],
+    }

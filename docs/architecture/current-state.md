@@ -285,3 +285,43 @@ mode, changing behavior; classification hardening is deferred.
 
 Deferred to M3: per-kind typed tools (replacing the bridge), a typed `params`
 model for structured args, and completing `_KNOWN_RISK`.
+
+## 10. Phase 0 (executive-assistant mission) — audit update
+
+The mission was re-scoped toward a serious always-on personal executive
+assistant and an **AI Butler** integration. The M0–M2 Phase 7 work above stands
+as implemented history. The new milestone scheme is tracked in
+`docs/architecture/ai-butler-integration.md` (M1 = AI Butler spike + read-only
+MCP boundary; M2 = structured agent interface; M3 = project intelligence; …).
+
+**Actual architecture** is unchanged from §1–§2 except that the MCP catalog is
+now registry-derived and profile-aware (`butler/agent/mcp_tools.py`,
+`butler/mcp.py`). One `Container`, three front-ends (CLI, Telegram, MCP), one
+pure solver, one safety/audit/idempotency layer.
+
+**AI Butler boundary (verified):** AI Butler is an MCP *client over stdio*; Pi
+Butler is the domain/scheduling authority. The integration seam is the MCP
+server, exposed as two disjoint profiles: `full` (historical 51 tools, OpenClaw)
+and `readonly` (10 side-effect-free executive tools for AI Butler). See
+`docs/architecture/ai-butler-integration.md` for the verified protocol, config,
+failure behaviour, security model and migration plan.
+
+**Redundancy if AI Butler is adopted:** only the Python *LLM loop* becomes
+redundant — `butler/agent/intent.py` LLM fallback, `prompts.py`, and the
+orchestration half of `runtime.py`/`session.py`. The deterministic decider, the
+typed registry, the solver/planner, and the safety/audit/idempotency layer
+remain authoritative. The registry/MCP seam added in M1/M2 is what makes this
+possible without a rewrite.
+
+**Baseline after M1 (this mission):** `run_acceptance_mcp_readonly.py` adds 30
+checks; MCP `VERSION = "1.4.0"`; the `full` profile is still exactly 51 tools.
+Two pre-existing proactive acceptance checks (`run_acceptance_p3.py`,
+`run_acceptance_p45.py`) are time-of-day dependent and fail only when the suite
+runs during configured quiet hours (22:00–08:00); they are unrelated to M1.
+
+Command:
+```
+.venv/bin/python tests/run_acceptance_*.py      # each prints N/N passed
+.venv/bin/python -m unittest discover -s tests -p 'test_*.py'
+.venv/bin/python -m compileall -q butler
+```

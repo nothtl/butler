@@ -67,6 +67,7 @@ class Tool:
     needs_confirmation: bool = False
     delegated_gate: bool = False      # handler runs its own SafetyPolicy gate
     hidden: bool = False              # omitted from LLM prompt / discovery
+    profile: str = "full"             # MCP surface this tool belongs to
 
     def __post_init__(self) -> None:
         if not self.action:
@@ -116,14 +117,15 @@ class ToolRegistry:
             side_effect: bool = False, returns: str = "",
             aliases: tuple[str, ...] = (), mcp_name: str = "",
             needs_confirmation: bool = False, delegated_gate: bool = False,
-            hidden: bool = False) -> Tool:
+            hidden: bool = False, profile: str = "full") -> Tool:
         return self.register(Tool(name=name, description=description,
                                   handler=handler, params=params or [],
                                   action=action, side_effect=side_effect,
                                   returns=returns, aliases=aliases,
                                   mcp_name=mcp_name,
                                   needs_confirmation=needs_confirmation,
-                                  delegated_gate=delegated_gate, hidden=hidden))
+                                  delegated_gate=delegated_gate, hidden=hidden,
+                                  profile=profile))
 
     # ------------------------------------------------------------------ query
     def _resolve(self, name: str) -> str | None:
@@ -149,17 +151,21 @@ class ToolRegistry:
     def all(self) -> list[Tool]:
         return list(self._tools.values())
 
-    def find_mcp(self, name: str) -> Tool | None:
+    def find_mcp(self, name: str, profile: str | None = None) -> Tool | None:
         for tool in self._tools.values():
-            if tool.mcp_name == name:
-                return tool
+            if tool.mcp_name != name:
+                continue
+            if profile is not None and tool.profile != profile:
+                continue
+            return tool
         return None
 
     def schema(self) -> list[dict[str, Any]]:
         return [t.schema() for t in self._tools.values() if not t.hidden]
 
-    def mcp_schema(self) -> list[dict[str, Any]]:
-        return [t.mcp_schema() for t in self._tools.values() if t.mcp_name]
+    def mcp_schema(self, profile: str | None = None) -> list[dict[str, Any]]:
+        return [t.mcp_schema() for t in self._tools.values()
+                if t.mcp_name and (profile is None or t.profile == profile)]
 
     def merge(self, other: "ToolRegistry", *, prefix: str = "") -> None:
         """Absorb another registry, renaming collisions with ``prefix``."""
@@ -174,7 +180,8 @@ class ToolRegistry:
                     returns=tool.returns, aliases=tool.aliases,
                     mcp_name=tool.mcp_name,
                     needs_confirmation=tool.needs_confirmation,
-                    delegated_gate=tool.delegated_gate, hidden=tool.hidden)
+                    delegated_gate=tool.delegated_gate, hidden=tool.hidden,
+                    profile=tool.profile)
             self.register(tool)
 
     # --------------------------------------------------------------- validate

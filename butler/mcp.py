@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 from typing import Any
 
@@ -26,24 +27,28 @@ from .agent.mcp_tools import build_mcp_registry
 log = logging.getLogger("butler.mcp")
 
 SERVER_NAME = "butler"
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 PROTOCOL = "2024-11-05"
+DEFAULT_PROFILE = "full"
 
 
 class MCPServer:
-    def __init__(self, container: Any):
+    def __init__(self, container: Any, profile: str | None = None):
         self.container = container
+        self.profile = profile or os.environ.get(
+            "BUTLER_MCP_PROFILE", DEFAULT_PROFILE)
         self._registry = build_mcp_registry(container)
 
     # ------------------------- tool schema -------------------------
     def _tools_spec(self) -> list[dict[str, Any]]:
-        return self._registry.mcp_schema()
+        return self._registry.mcp_schema(self.profile)
 
     # ------------------------- tool invocation -------------------------
     def _call_tool(self, name: str, args: dict[str, Any]) -> Any:
-        tool = self._registry.find_mcp(name)
+        tool = self._registry.find_mcp(name, profile=self.profile)
         if tool is None:
-            raise ValueError(f"unknown tool: {name}")
+            raise ValueError(
+                f"unknown tool for profile {self.profile!r}: {name}")
         # MCP calls stay lenient (no schema validation) to preserve the exact
         # behaviour existing clients relied on before M2.
         return tool.handler(dict(args or {}))
