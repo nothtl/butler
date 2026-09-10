@@ -16,8 +16,9 @@ truth (`tools/*` re-read the DB on every call, so answers are always fresh).
                  Butler Python domain (planner, courses, food, ...)
 ```
 
-Status: **M0–M4/M6 done and verified on this machine.** M5 (migrating Telegram
-into OpenClaw) is intentionally last and not started.
+Status: **M0–M4/M6 done and verified, plus the gateway service is installed and
+running.** M5 (migrating Telegram into OpenClaw) is intentionally last and not
+started.
 
 ## Prerequisites
 
@@ -104,18 +105,39 @@ openclaw mcp configure butler --help
 
 Side-effecting Butler transitions stay idempotent and unchanged.
 
+## Gateway service (DONE)
+
+The gateway is OpenClaw's persistent daemon: it hosts the agent runtime and
+sessions, connects chat channels, keeps MCP servers warm, and runs automations.
+`openclaw agent --local` runs embedded/one-shot; the gateway is required for
+channels (M5).
+
+```bash
+openclaw doctor --fix --generate-gateway-token   # sets gateway.auth mode=token
+openclaw config set gateway.mode local
+openclaw daemon install
+openclaw daemon status
+```
+
+Installed as the user service `openclaw-gateway.service` (enabled, active,
+`ws://127.0.0.1:18789`). If install is blocked with
+`SERVICE_DEFINITION_UNKNOWN: [unsafe-permissions]`, the systemd user dir must
+not be group/world-writable:
+
+```bash
+chmod go-w ~/.config ~/.config/systemd ~/.config/systemd/user
+```
+
+The service uses the user-local Node 24 binary explicitly (system Node 20 is
+out of range).
+
 ## M5 — Optional: migrate Telegram to OpenClaw (NOT STARTED)
 
 Move the Telegram channel into OpenClaw and retire `butler/telebot.py`. Do this
-LAST, only after the gateway is installed, because the callback-state machine and
-`_authorized` gating in `telebot.py` currently own the human-in-the-loop UX.
-
-The gateway service is **not installed yet**; when ready:
-
-```bash
-openclaw doctor --fix --generate-gateway-token
-openclaw gateway install
-```
+LAST, because the callback-state machine and `_authorized` gating in
+`telebot.py` currently own the human-in-the-loop UX. With the gateway running,
+configure the channel (`openclaw channels --help`) once the new BotFather token
+is in the environment.
 
 ## Development
 
