@@ -91,9 +91,30 @@ class AgentRuntime:
         except UnknownIntent as exc:
             return AgentReply(ok=False, error=str(exc), source="agent")
 
-        call = self._plan(intent)
+        call = self._plan(intent, user=user)
         session.last_intent = intent
         return self._finish(session, user, message, intent, call,
+                            confirmed=bool(confirm or intent.confirmed))
+
+    def run_intent(self, intent: Intent, user: str = "user",
+                   confirm: bool = False) -> AgentReply:
+        """Execute an already-parsed canonical Intent.
+
+        Front-ends that run the deterministic parser themselves (Telegram NL,
+        CLI) use this so routing flows through the one runtime while the exact
+        decider result shape is preserved via the bridge.
+        """
+        session = self.store.get(user)
+        if confirm:
+            pending = session.take()
+            if pending is not None:
+                call = ToolCall(name=pending.tool, args=pending.args,
+                                reason="user confirmed")
+                return self._finish(session, user, intent.raw, intent, call,
+                                    confirmed=True)
+        call = self._plan(intent, user=user)
+        session.last_intent = intent
+        return self._finish(session, user, intent.raw, intent, call,
                             confirmed=bool(confirm or intent.confirmed))
 
     def run_tool(self, name: str, args: dict[str, Any] | None = None,
@@ -104,18 +125,28 @@ class AgentRuntime:
         return self._finish(session, user, "", None, call, confirmed=confirm)
 
     # ------------------------------------------------------------ planning
-    def _plan(self, intent: Intent) -> ToolCall:
+    def _plan(self, intent: Intent, user: str = "user") -> ToolCall:
+        # An LLM proposal maps to a typed tool; everything deterministic is
+        # routed through the decider bridge so its exact result shape is kept.
         name = intent.kind
         if not self.registry.has(name):
             name = _ALIASES.get(name, name)
-        if not self.registry.has(name):
-            if self.registry.has("chat"):
-                name = "chat"
-            else:
-                raise UnknownIntent(f"no tool for intent '{intent.kind}'")
-        tool = self.registry.get(name)
-        return ToolCall(name=name, args=self._args_for(tool, intent),
-                        reason=f"intent:{intent.kind}")
+        if intent.source == "llm" and self.registry.has(name):
+            tool = self.registry.get(name)
+            return ToolCall(name=tool.name, args=self._args_for(tool, intent),
+                            reason=f"intent:{intent.kind}")
+        if self.registry.has("decider"):
+            return ToolCall(name="decider",
+                            args={"__intent__": intent, "__user__": user},
+                            reason=f"intent:{intent.kind}")
+        if self.registry.has(name):
+            tool = self.registry.get(name)
+            return ToolCall(name=tool.name, args=self._args_for(tool, intent),
+                            reason=f"intent:{intent.kind}")
+        if self.registry.has("chat"):
+            return ToolCall(name="chat", args={"query": intent.raw or intent.query},
+                            reason=f"intent:{intent.kind}")
+        raise UnknownIntent(f"no tool for intent '{intent.kind}'")
 
     @staticmethod
     def _args_for(tool: Tool, intent: Intent) -> dict[str, Any]:
@@ -152,6 +183,8 @@ class AgentRuntime:
         except ToolNotFound as exc:
             return ToolResult(ok=False, name=call.name, error=str(exc),
                               decision="denied")
+        if tool.delegated_gate:
+            return self._execute_delegated(tool, call)
         try:
             args = self.registry.validate(call.name, call.args)
         except ToolValidationError as exc:
@@ -206,6 +239,24 @@ class AgentRuntime:
         self._audit(tool, user, run_id, key, "allowed", "ok")
         return ToolResult(ok=True, name=tool.name, data=data,
                           decision="allowed")
+
+    # -------------------------------------------------------- delegated gate
+    def _execute_delegated(self, tool: Tool, call: ToolCall) -> ToolResult:
+        """Run a tool that consults the shared SafetyPolicy itself.
+
+        Used by the decider bridge: the handler's own gate is the single action
+        boundary, so the runtime must not validate, gate or audit a second time.
+        """
+        try:
+            data = tool.handler(call.args)
+        except Exception as exc:  # noqa: BLE001 — a tool failure is data
+            log.warning("agent delegated tool %s failed: %s", tool.name, exc)
+            return ToolResult(ok=False, name=tool.name, error=str(exc),
+                              decision="error")
+        ok = True
+        if isinstance(data, dict) and data.get("ok") is False and data.get("error"):
+            ok = False
+        return ToolResult(ok=ok, name=tool.name, data=data, decision="allowed")
 
     # --------------------------------------------------------------- gate
     def _gate(self, tool: Tool, args: dict[str, Any], *, user: str,

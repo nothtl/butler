@@ -45,7 +45,15 @@ class Param:
 
 @dataclass
 class Tool:
-    """A typed capability the agent may invoke."""
+    """A typed capability the agent may invoke.
+
+    A tool is defined *once* and carries every piece of metadata any front-end
+    needs: the safety ``action``, whether it has a ``side_effect``, the name it
+    is exposed under to MCP clients (``mcp_name``), alternate names it may be
+    invoked by (``aliases``), whether the policy requires confirmation, and
+    whether the tool owns its own gate (``delegated_gate`` — used by the
+    decider bridge, whose handler consults the shared SafetyPolicy itself).
+    """
 
     name: str
     description: str
@@ -54,6 +62,11 @@ class Tool:
     action: str = ""                  # safety action name (defaults to name)
     side_effect: bool = False
     returns: str = ""
+    aliases: tuple[str, ...] = ()
+    mcp_name: str = ""                # exposed name for MCP clients ("" = hidden)
+    needs_confirmation: bool = False
+    delegated_gate: bool = False      # handler runs its own SafetyPolicy gate
+    hidden: bool = False              # omitted from LLM prompt / discovery
 
     def __post_init__(self) -> None:
         if not self.action:
@@ -67,6 +80,21 @@ class Tool:
             "side_effect": self.side_effect,
             "returns": self.returns,
             "params": [p.to_schema() for p in self.params],
+        }
+
+    def mcp_schema(self) -> dict[str, Any]:
+        """The MCP ``tools/list`` entry for this tool."""
+        props: dict[str, Any] = {}
+        required: list[str] = []
+        for p in self.params:
+            props[p.name] = _json_schema(p)
+            if p.required:
+                required.append(p.name)
+        return {
+            "name": self.mcp_name,
+            "description": self.description,
+            "inputSchema": {"type": "object", "properties": props,
+                            "required": required},
         }
 
 
@@ -85,21 +113,35 @@ class ToolRegistry:
 
     def add(self, name: str, description: str, handler: Handler,
             params: list[Param] | None = None, *, action: str = "",
-            side_effect: bool = False, returns: str = "") -> Tool:
+            side_effect: bool = False, returns: str = "",
+            aliases: tuple[str, ...] = (), mcp_name: str = "",
+            needs_confirmation: bool = False, delegated_gate: bool = False,
+            hidden: bool = False) -> Tool:
         return self.register(Tool(name=name, description=description,
                                   handler=handler, params=params or [],
                                   action=action, side_effect=side_effect,
-                                  returns=returns))
+                                  returns=returns, aliases=aliases,
+                                  mcp_name=mcp_name,
+                                  needs_confirmation=needs_confirmation,
+                                  delegated_gate=delegated_gate, hidden=hidden))
 
     # ------------------------------------------------------------------ query
+    def _resolve(self, name: str) -> str | None:
+        if name in self._tools:
+            return name
+        for tool in self._tools.values():
+            if name in tool.aliases:
+                return tool.name
+        return None
+
     def get(self, name: str) -> Tool:
-        tool = self._tools.get(name)
-        if tool is None:
+        resolved = self._resolve(name)
+        if resolved is None:
             raise ToolNotFound(f"unknown tool: {name}")
-        return tool
+        return self._tools[resolved]
 
     def has(self, name: str) -> bool:
-        return name in self._tools
+        return self._resolve(name) is not None
 
     def names(self) -> list[str]:
         return list(self._tools)
@@ -107,8 +149,33 @@ class ToolRegistry:
     def all(self) -> list[Tool]:
         return list(self._tools.values())
 
+    def find_mcp(self, name: str) -> Tool | None:
+        for tool in self._tools.values():
+            if tool.mcp_name == name:
+                return tool
+        return None
+
     def schema(self) -> list[dict[str, Any]]:
-        return [t.schema() for t in self._tools.values()]
+        return [t.schema() for t in self._tools.values() if not t.hidden]
+
+    def mcp_schema(self) -> list[dict[str, Any]]:
+        return [t.mcp_schema() for t in self._tools.values() if t.mcp_name]
+
+    def merge(self, other: "ToolRegistry", *, prefix: str = "") -> None:
+        """Absorb another registry, renaming collisions with ``prefix``."""
+        for tool in other.all():
+            if tool.name in self._tools:
+                if not prefix:
+                    raise ValueError(f"duplicate tool while merging: {tool.name}")
+                tool = Tool(
+                    name=prefix + tool.name, description=tool.description,
+                    handler=tool.handler, params=list(tool.params),
+                    action=tool.action, side_effect=tool.side_effect,
+                    returns=tool.returns, aliases=tool.aliases,
+                    mcp_name=tool.mcp_name,
+                    needs_confirmation=tool.needs_confirmation,
+                    delegated_gate=tool.delegated_gate, hidden=tool.hidden)
+            self.register(tool)
 
     # --------------------------------------------------------------- validate
     def validate(self, name: str, args: dict[str, Any] | None) -> dict[str, Any]:
@@ -138,6 +205,21 @@ class ToolRegistry:
                 value = p.default
             out[p.name] = _coerce(name, p, value)
         return out
+
+
+_JSON_TYPES = {"int": "integer", "float": "number", "bool": "boolean",
+               "list": "array", "dict": "object"}
+
+
+def _json_schema(p: Param) -> dict[str, Any]:
+    out: dict[str, Any] = {"type": _JSON_TYPES.get(p.type, "string")}
+    if p.description:
+        out["description"] = p.description
+    if p.choices:
+        out["enum"] = list(p.choices)
+    if p.default is not None:
+        out["default"] = p.default
+    return out
 
 
 def _coerce(tool: str, p: Param, value: Any) -> Any:

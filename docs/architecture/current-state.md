@@ -118,6 +118,9 @@ Recorded on `fbbfe0e`, working tree clean:
 After M1 (`tests/run_acceptance_p70.py` added): **18 suites / 596 checks,
 0 failed**, unittests still OK.
 
+After M2 (`tests/run_acceptance_p71.py` added): **19 suites / 632 checks,
+0 failed**, unittests still OK.
+
 Command:
 ```
 .venv/bin/python tests/run_acceptance_*.py      # each prints N/N passed
@@ -127,11 +130,17 @@ Command:
 
 ## 5. Gaps / limitations
 
-1. **No unified typed intent.** `decider.Intent` is untyped (`params: dict`),
-   has no `confirmed`, no confidence, no provenance, and a dead `plan` field.
-2. **No tool abstraction.** Every subsystem is called directly from the giant
+1. **No unified typed intent.** ~~`decider.Intent` is untyped (`params: dict`),
+   has no `confirmed`, no confidence, no provenance, and a dead `plan` field.~~
+   **Resolved in M2**: `decider` emits the canonical `butler.agent.models.Intent`
+   (typed, with `channel`/`needs_confirmation`); the dead `plan` field is gone.
+2. **No tool abstraction.** ~~Every subsystem is called directly from the giant
    `Decider.resolve` if-chain, `telebot.py`, `mcp.py`, and `core.remote_route`.
-   MCP hand-maintains a separate 51-entry list with **no safety gate**.
+   MCP hand-maintains a separate 51-entry list with **no safety gate**.~~
+   **Partially resolved in M2**: MCP derives its 51-tool schema and dispatch from
+   one registry (`butler/agent/mcp_tools.py`); the decider is reachable through
+   the agent runtime via a single delegated-gate bridge tool. The giant
+   `resolve` if-chain itself is intentionally untouched (deferred to M3+).
 3. **No shared context builder for agents.** `ContextEngine.snapshot()` exists
    but there is no single "context bundle" passed to reasoning/tools.
 4. **No session state.** Conversation/turn state lives ad-hoc in `TelegramBot`
@@ -139,7 +148,10 @@ Command:
 5. **Reasoning is not an agent loop.** There is no place where an LLM can select
    a typed tool and have the deterministic layer validate + gate + audit it.
 6. **Hard-coded routing tables.** `_KNOWN_RISK`, decider regexes, and MCP tool
-   names are three parallel, manually-synced lists.
+   names are three parallel, manually-synced lists. **Partially resolved in M2**:
+   the MCP tool list is now derived from the registry; `_KNOWN_RISK` and the
+   decider regex chain remain (classification was intentionally left unchanged to
+   preserve offline/degraded semantics — see §9).
 7. **No scenario benchmark.** Tests are per-feature acceptance scripts; there is
    no agent-level behavioral benchmark (`tests/scenarios/`).
 8. **Memory is flat.** Preferences/settings are stored but there is no gated,
@@ -176,7 +188,9 @@ Invariants:
 - **M1** agent core: typed `Intent`, `ContextBuilder`, session state, typed
   tool registry, gated runtime. ✅ (implemented as `butler/agent/`; 34 tools,
   see §8)
-- **M2** migrate `Decider` intents to tools (keep slash commands + fallback).
+- **M2** migrate `Decider` intents to tools (keep slash commands + fallback). ✅
+  (canonical `Intent`, registry-extended `Tool`, decider bridge, registry-driven
+  MCP catalog; see §9)
 - **M3** Memory 2.0 (gated, typed, validated).
 - **M4** Project / Goal / Milestone model.
 - **M5** web knowledge / Crawl4AI evaluation.
@@ -223,6 +237,51 @@ Control loop and invariants:
 - `Container.agent` is built defensively (`try/except` → `None`); all legacy
   paths (`decider`, Telegram, MCP, remote) are untouched and still pass.
 
-Deferred to later milestones: M2 migrates `Decider` intents onto the registry;
-M3 makes sessions/memory durable; M13/M14 add the settings UI and scenario
-benchmark. The registry is not yet wired into `mcp.py`/`telebot.py` (M2).
+Deferred to later milestones: M3 makes sessions/memory durable and splits the
+decider's per-kind handlers into typed tools; M13/M14 add the settings UI and
+scenario benchmark.
+
+## 9. M2 as implemented
+
+**One canonical Intent.** `butler/agent/models.py::Intent` is the single model.
+`decider.py` imports it (`from .agent.models import Intent`) and no longer owns a
+parallel dataclass; `from .decider import Intent` still works. `Intent` gained
+`channel` (origin: cli/telegram/mcp/agent) and `needs_confirmation`; the dead
+`plan` field was removed. `Decider.parse(message, channel="")` wraps `_parse` and
+stamps the channel. `_gate` sets `intent.needs_confirmation = True` when policy
+defers a confirmation-required action.
+
+**Registry is the catalog.** `Tool` gained `aliases`, `mcp_name`,
+`needs_confirmation`, `delegated_gate`, `hidden`, plus `Tool.mcp_schema()`.
+`ToolRegistry` resolves aliases in `get`/`has`, hides `hidden` tools from
+`schema()`, and adds `find_mcp()`, `mcp_schema()`, `merge(prefix=...)`.
+
+**Decider bridge.** `butler/agent/tools.py` registers one hidden `decider` tool
+(`action="chat"`, `delegated_gate=True`) that calls
+`Decider.resolve(intent, user)` — so every deterministic intent keeps its exact
+result shape and its own `SafetyPolicy` gate. `AgentRuntime.run_intent(intent,
+user, confirm=False)` lets front-ends that already parsed an intent (Telegram NL)
+route through the one control loop. `_plan` sends `source=="llm"` intents to the
+matching typed tool and everything else through the bridge. `execute` special-
+cases `delegated_gate` tools: it calls the handler directly and does **not**
+validate/gate/audit a second time (single authoritative boundary).
+
+**MCP consumes the registry.** New `butler/agent/mcp_tools.py`
+(`build_mcp_registry`) defines all 51 MCP tools once as `Tool`s under internal
+`mcp_<name>` names with `mcp_name=<client name>`. `butler/mcp.py` now derives
+both `tools/list` (`mcp_schema()`) and dispatch (`find_mcp()`) from it; `VERSION`
+is `1.3.0`. Client-visible names and payloads are unchanged, and MCP dispatch
+still calls handlers directly (no runtime gate) to preserve existing clients.
+
+**Routing compatibility.** CLI and Telegram slash commands are unchanged. Free
+text in Telegram goes through `AgentRuntime.run_intent` (with a fallback to the
+decider if the agent raises). Return shapes are identical to pre-M2.
+
+**Safety.** No double gate: the decider bridge's own `_gate` is the single
+boundary for deterministic intents, and the runtime gate is the single boundary
+for LLM/typed tools. `safety._KNOWN_RISK` was **intentionally not modified**:
+adding previously-unknown kinds as `read` would silently allow them in offline
+mode, changing behavior; classification hardening is deferred.
+
+Deferred to M3: per-kind typed tools (replacing the bridge), a typed `params`
+model for structured args, and completing `_KNOWN_RISK`.

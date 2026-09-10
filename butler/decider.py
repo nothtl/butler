@@ -15,7 +15,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -26,19 +25,12 @@ from . import affinity
 from .engine import Engine, EngineError, extract_course_code
 from .organizer import Organizer, Plan, PlanItem
 from .search import Search
+# Phase 7 / M2: one canonical Intent model shared with the agent core. The
+# decider no longer owns a parallel dataclass; ``from .decider import Intent``
+# keeps working for existing callers (core.py, butler/__init__.py, tests).
+from .agent.models import Intent
 
 log = logging.getLogger(__name__)
-
-# Map "Project_1A" style names to a friendly project folder (Test 1)
-@dataclass
-class Intent:
-    kind: str
-    target: str = ""
-    query: str = ""
-    params: dict[str, Any] = field(default_factory=dict)
-    raw: str = ""
-    plan: Plan | None = None
-    scope: str = ""   # timeline/context scoping, e.g. "today" | "day"
 
 
 # NOTE: no hardcoded conversational replies here (see AGENTS.md). All free-text
@@ -120,10 +112,26 @@ class Decider:
                 return {"kind": intent.kind, "ok": False,
                         "error": "refused: " + decision.reason,
                         "decision": decision.reason}
+            if not decision.allow:
+                # A confirmation-required action is deferred to the plan/confirm
+                # layer; record that on the intent so front-ends can show the
+                # consent UI without re-classifying.
+                intent.needs_confirmation = True
         return None
 
     # ---------------------------------------------------------------- parse
-    def parse(self, message: str) -> Intent:
+    def parse(self, message: str, channel: str = "") -> Intent:
+        """Decode ``message`` into the canonical :class:`Intent`.
+
+        ``channel`` records where the message came from (``cli`` / ``telegram``
+        / ``mcp`` / ``agent``); it does not affect parsing but travels with the
+        intent so downstream policy/audit can see the origin.
+        """
+        intent = self._parse(message)
+        intent.channel = channel
+        return intent
+
+    def _parse(self, message: str) -> Intent:
         msg = message.strip()
         low = msg.lower()
 
@@ -510,12 +518,19 @@ class Decider:
         return Intent("help", raw=raw)
 
     # ---------------------------------------------------------------- handlers
-    def resolve(self, intent: Intent, user: str = "user") -> Any:
-        """Run a parsed intent and return a result object / Plan."""
+    def resolve(self, intent: Intent, user: str = "user",
+                *, gate: bool = True) -> Any:
+        """Run a parsed intent and return a result object / Plan.
+
+        ``gate=False`` skips this layer's :meth:`_gate`; the agent runtime uses
+        that when it is itself acting as the single gate for the action, so the
+        policy is consulted exactly once.
+        """
         k = intent.kind
-        gate = self._gate(intent, user)
-        if gate is not None:
-            return gate
+        if gate:
+            denial = self._gate(intent, user)
+            if denial is not None:
+                return denial
         if k == "help":
             return self._help()
         if k == "workspace":

@@ -20,8 +20,10 @@ class Intent:
     ``kind`` is the canonical action name (it matches a registered tool where
     possible). ``source`` records who produced it: ``deterministic`` (the
     parser/decider) or ``llm`` (the fallback). ``confirmed`` is the single,
-    explicit consent bit the safety gate reads — the legacy decider read a
-    field that never existed, so this model fixes that.
+    explicit consent bit the safety gate reads. ``channel`` records where the
+    message originated (``cli`` / ``telegram`` / ``mcp`` / ``agent``) and
+    ``needs_confirmation`` records that the deterministic policy classified this
+    intent as requiring explicit human consent before it may act.
     """
 
     kind: str
@@ -33,6 +35,8 @@ class Intent:
     confidence: float = 1.0
     source: str = "deterministic"
     confirmed: bool = False
+    channel: str = ""
+    needs_confirmation: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -49,6 +53,8 @@ class Intent:
             confidence=float(d.get("confidence", 1.0)),
             source=str(d.get("source", "deterministic")),
             confirmed=bool(d.get("confirmed", False)),
+            channel=str(d.get("channel", "")),
+            needs_confirmation=bool(d.get("needs_confirmation", False)),
         )
 
     @classmethod
@@ -64,6 +70,9 @@ class Intent:
             confidence=1.0,
             source="deterministic",
             confirmed=bool(getattr(legacy, "confirmed", False)),
+            channel=str(getattr(legacy, "channel", "") or ""),
+            needs_confirmation=bool(
+                getattr(legacy, "needs_confirmation", False)),
         )
 
 

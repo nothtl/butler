@@ -232,6 +232,22 @@ def build_default_registry(container: Any) -> ToolRegistry:
         lambda a: _require(container, "nas").ingest_inbox(),
         action="nas_ingest", side_effect=True,
     )
+
+    # ------------------------------------------------- decider bridge (M2)
+    # The deterministic decider still owns ~80 intent handlers with rich
+    # return shapes the front-ends render directly. Rather than duplicate each
+    # one as a typed tool in M2, a single hidden bridge routes a canonical
+    # Intent back through ``Decider.resolve``. The bridge declares
+    # ``delegated_gate`` because the decider consults the shared SafetyPolicy
+    # itself, so the action boundary is still crossed exactly once.
+    reg.add(
+        "decider", "Internal bridge: run a deterministic decider intent.",
+        lambda a: _decider_bridge(container, a),
+        [P("kind", "str"), P("target", "str"), P("query", "str"),
+         P("scope", "str"), P("raw", "str")],
+        action="chat", side_effect=False, delegated_gate=True, hidden=True,
+        returns="raw",
+    )
     return reg
 
 
@@ -266,6 +282,22 @@ def _add_task(container: Any, a: dict[str, Any]) -> Any:
         deadline=int(a.get("deadline", 0)),
         priority=int(a.get("priority", 3)),
         tags=a.get("tags", ""))
+
+
+def _decider_bridge(container: Any, a: dict[str, Any]) -> Any:
+    """Run a canonical Intent through the deterministic decider.
+
+    The bridge receives the full :class:`Intent` object (not the flattened
+    params) so no information is lost between the parser and the handler. The
+    decider's own gate consults the shared SafetyPolicy, so the runtime must not
+    gate the call a second time (see ``Tool.delegated_gate``).
+    """
+    intent = a.get("__intent__")
+    if intent is None:
+        raise RuntimeError("decider bridge requires an intent")
+    user = a.get("__user__", "user")
+    decider = _require(container, "decider")
+    return decider.resolve(intent, user, gate=True)
 
 
 def _index(container: Any) -> dict[str, Any]:

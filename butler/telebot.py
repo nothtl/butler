@@ -510,7 +510,7 @@ class TelegramBot:
                 intent = _I("chat", query=message, raw=message)
         await self._dispatch(update, message,
                              user=update.effective_user.username or "telegram",
-                             intent=intent)
+                             intent=intent, via_agent=True)
 
     # ------------------------------------------------------------ ingestion
     async def on_document(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -571,16 +571,33 @@ class TelegramBot:
         return target
 
     async def _dispatch(self, update: Update, message: str, user: str,
-                        intent: Any = None) -> None:
+                        intent: Any = None, *, via_agent: bool = False) -> None:
         chat_id = update.effective_chat.id
         if intent is None:
-            intent = self.container.decider.parse(message)
+            intent = self.container.decider.parse(message, channel="telegram")
         try:
-            result = self.container.decider.resolve(intent, user)
+            result = await self._resolve(intent, user, via_agent=via_agent)
         except Exception as exc:
             await update.effective_message.reply_text(f"⚠️ {exc}")
             return
         await self._render(update, intent, result)
+
+    async def _resolve(self, intent: Any, user: str, *,
+                       via_agent: bool = False) -> Any:
+        """Resolve an intent, routing NL through the agent runtime when present.
+
+        Slash commands keep using the decider directly; free text goes through
+        the single agent control loop, whose decider bridge returns the exact
+        same result object the old direct call did.
+        """
+        agent = getattr(self.container, "agent", None) if via_agent else None
+        if agent is not None:
+            try:
+                reply = agent.run_intent(intent, user)
+                return reply.data
+            except Exception as exc:  # noqa: BLE001 — fall back, don't drop
+                log.warning("agent run_intent failed, using decider: %s", exc)
+        return self.container.decider.resolve(intent, user)
 
     async def _render(self, update: Update, intent: Any, result: Any) -> None:
         msg = update.effective_message
