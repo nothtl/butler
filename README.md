@@ -57,10 +57,12 @@ config to use the bot.
 disjoint profiles selected by `BUTLER_MCP_PROFILE`:
 
 - **`full`** (default) — the historical 51-tool surface used by OpenClaw.
-- **`readonly`** — an 11-tool, side-effect-free executive surface
+- **`readonly`** — a 15-tool, side-effect-free executive surface
   (`get_time`, `get_context`, `get_day`, `plan_day`, `get_schedule`,
-  `get_tasks`, `get_courses`, `get_projects`, `find_available_time`,
-  `get_week`, `executive_ask`) for an external agent runtime such as
+  `get_tasks`, `get_courses`, `get_projects`, `get_project`,
+  `get_project_workload`, `get_project_risk`, `get_project_dependencies`,
+  `find_available_time`, `get_week`, `executive_ask`) for an external agent
+  runtime such as
   [AI Butler](https://github.com/LumabyteCo/aibutler).
 
 The readonly profile is enforced at dispatch, not just hidden from
@@ -80,6 +82,7 @@ butler/
   schedule.py  pure, no-LLM, no-I/O constraint solver
   planner.py   DB + Google Calendar wrapper over the solver
   course.py    course intelligence (page/PDF/ICS scraping)
+  projects.py  project intelligence (project/milestone/dependency DAG)
   gcal.py      Google Calendar read/write
   safety.py    ActionClass + SafetyPolicy (the single gate)
   audit.py     append-only audit trail + redaction
@@ -91,6 +94,7 @@ butler/
   executive.py proactive.py motivation.py engine.py search.py ...
 docs/architecture/current-state.md      actual architecture + gaps
 docs/architecture/ai-butler-integration.md  AI Butler boundary
+docs/architecture/project-intelligence.md   M3 project/milestone/dependency model
 ```
 
 ## Acceptance

@@ -78,7 +78,8 @@ class ContextBuilder:
             days, planner, sleep_start, sleep_end, event_limit)
         tasks, task_trunc = self._tasks(snap, request, days, task_limit)
         courses, deadlines = self._courses(snap, request, now, days, course_limit)
-        truncated = truncated or task_trunc
+        projects, proj_trunc = self._projects(request, now, limit=20)
+        truncated = truncated or task_trunc or proj_trunc
 
         sources = ["context_engine"] if snap else []
         if planner is not None:
@@ -89,6 +90,8 @@ class ContextBuilder:
             sources.append("courses")
         if tasks:
             sources.append("tasks")
+        if projects:
+            sources.append("projects")
         presence = snap.get("presence") or {}
         routines = self._routines()
         current_plan = self._current_plan(request, planner, days)
@@ -97,7 +100,8 @@ class ContextBuilder:
             now=now, timezone=tz_name, day_start=day_start, day_end=day_end,
             sleep_start=sleep_start, sleep_end=sleep_end,
             commitments=commitments, available_windows=windows,
-            tasks=tasks, courses=courses, deadlines=deadlines,
+            tasks=tasks, courses=courses, projects=projects,
+            deadlines=deadlines,
             current_plan=current_plan, presence=presence, routines=routines,
             preferences=list(request.preferences), sources=sources,
             truncated=truncated, focus=request.target.name if request.target else "",
@@ -232,6 +236,41 @@ class ContextBuilder:
                                       "iso": _iso(int(d))})
         deadlines.sort(key=lambda x: x["ts"])
         return courses[:limit], deadlines[:30]
+
+    def _projects(self, request: AgentRequest, now: int,
+                  limit: int) -> tuple[list[dict[str, Any]], bool]:
+        pmod = getattr(self.container, "projects", None)
+        if pmod is None or not hasattr(pmod, "list_projects"):
+            return [], False
+        try:
+            rows = pmod.list_projects(now=now)
+        except Exception:  # noqa: BLE001
+            return [], False
+        names = {e.name.lower() for e in request.entities
+                 if e.type.value == "project" and e.name}
+        if request.target is not None and request.target.type.value == "project" \
+                and request.target.name:
+            names.add(request.target.name.lower())
+        out: list[dict[str, Any]] = []
+        for p in rows:
+            if names and not any(n in str(p.get("name", "")).lower()
+                                 for n in names):
+                continue
+            out.append({
+                "id": p.get("id"), "name": p.get("name"),
+                "status": p.get("status"), "priority": p.get("priority"),
+                "deadline": p.get("deadline"), "course_id": p.get("course_id"),
+                "progress": p.get("progress"),
+                "progress_source": p.get("progress_source"),
+                "remaining_minutes": p.get("remaining_minutes"),
+                "risk": p.get("risk"), "risk_level": p.get("risk_level"),
+                "milestone_count": len(p.get("milestones") or []),
+            })
+        out.sort(key=lambda p: (0 if p.get("deadline") else 1,
+                                p.get("deadline") or 0,
+                                -(int(p.get("priority") or 0))))
+        truncated = len(out) > limit
+        return out[:limit], truncated
 
     def _routines(self) -> list[dict[str, Any]]:
         routines = getattr(self.container, "routines", None)

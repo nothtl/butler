@@ -24,6 +24,7 @@ from .planner import Planner
 from .search import Search
 from .trash import Trash
 from .course import CourseIntelligence
+from .projects import ProjectIntelligence
 from .food import Chef, FoodInventory
 from .nas import FileManager
 from .house import HomeAssistant
@@ -74,6 +75,8 @@ class Container:
         self.planner = Planner(self)
         # --- Phase 3 subsystems ---
         self.courses = CourseIntelligence(self)
+        # --- M3: project intelligence (needs planner geometry for risk) ---
+        self.projects = ProjectIntelligence(self)
         self.food = FoodInventory(self)
         self.chef = Chef(self)
         # NAS dirs must be inside the managed roots for the deterministic engine.

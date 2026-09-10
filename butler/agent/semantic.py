@@ -116,6 +116,13 @@ class ActionKind(str, Enum):
     CREATE_TASK = "create_task"
     COMPLETE_TASK = "complete_task"
     UPDATE = "update"
+    # --- M3 project intelligence (read-only unless noted) ---
+    PROJECT_STATUS = "project_status"
+    PROJECT_WORKLOAD = "project_workload"
+    PROJECT_RISK = "project_risk"
+    PROJECT_DEPENDENCIES = "project_dependencies"
+    PROJECT_NEXT = "project_next"
+    CREATE_PROJECT = "create_project"
     UNKNOWN = "unknown"
 
 
@@ -540,6 +547,7 @@ class ContextSnapshot:
     available_windows: list[dict[str, Any]] = field(default_factory=list)
     tasks: list[dict[str, Any]] = field(default_factory=list)
     courses: list[dict[str, Any]] = field(default_factory=list)
+    projects: list[dict[str, Any]] = field(default_factory=list)
     deadlines: list[dict[str, Any]] = field(default_factory=list)
     current_plan: dict[str, Any] | None = None
     presence: dict[str, Any] = field(default_factory=dict)

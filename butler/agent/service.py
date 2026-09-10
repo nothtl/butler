@@ -226,6 +226,16 @@ class ExecutiveService:
                         confidence=0.95, source="course_table"))
             except Exception:  # noqa: BLE001
                 pass
+        pmod = getattr(self.container, "projects", None)
+        if pmod is not None and hasattr(pmod, "list_projects"):
+            try:
+                for row in pmod.list_projects():
+                    out.append(EntityRef(
+                        type=EntityType.PROJECT, id=str(row["id"]),
+                        name=str(row["name"] or ""), resolved=True,
+                        confidence=0.9, source="project_table"))
+            except Exception:  # noqa: BLE001
+                pass
         return out
 
     # ------------------------------------------------------------- dispatch
@@ -237,6 +247,12 @@ class ExecutiveService:
             ActionKind.FEASIBILITY: self._feasibility,
             ActionKind.URGENCY: self._urgency,
             ActionKind.STATUS: self._status,
+            ActionKind.PROJECT_STATUS: self._project_status,
+            ActionKind.PROJECT_WORKLOAD: self._project_workload,
+            ActionKind.PROJECT_RISK: self._project_risk,
+            ActionKind.PROJECT_DEPENDENCIES: self._project_dependencies,
+            ActionKind.PROJECT_NEXT: self._project_next,
+            ActionKind.CREATE_PROJECT: self._project_proposal,
         }
         if req.action in handlers:
             return handlers[req.action](req, snap)
@@ -362,6 +378,203 @@ class ExecutiveService:
                     "has_committed_plan": snap.current_plan is not None,
                     "presence": snap.presence.get("status", "unknown")}],
             assumptions=_scope_assumptions(req))
+
+    # ------------------------------------------------------ project handlers
+    def _projects_module(self) -> Any:
+        return getattr(self.container, "projects", None)
+
+    def _project_ident(self, req: AgentRequest) -> Any:
+        if req.target is not None and req.target.resolved:
+            return req.target.id or req.target.name
+        if req.target is not None and req.target.name:
+            return req.target.name
+        return None
+
+    def _project_unavailable(self) -> AgentResult:
+        return AgentResult(status=ResultStatus.UNAVAILABLE,
+                           error="project intelligence unavailable")
+
+    def _project_status(self, req: AgentRequest, snap: Any) -> AgentResult:
+        pmod = self._projects_module()
+        if pmod is None:
+            return self._project_unavailable()
+        ident = self._project_ident(req)
+        if ident is not None:
+            project = pmod.get_project(ident)
+            if project is None:
+                return AgentResult.ambiguous([Ambiguity(
+                    kind=AmbiguityKind.ENTITY, field_name="target",
+                    mention=str(ident),
+                    reason="I couldn't find that project")])
+            return AgentResult(
+                status=ResultStatus.OK,
+                data={"project": project},
+                facts=[{"project_id": project["id"],
+                        "name": project["name"],
+                        "status": project["status"],
+                        "progress": project["progress"],
+                        "progress_source": project["progress_source"],
+                        "remaining_minutes": project["remaining_minutes"],
+                        "risk_level": project["risk_level"],
+                        "milestones": len(project["milestones"])}])
+        projects = pmod.list_projects()
+        return AgentResult(
+            status=ResultStatus.OK,
+            data={"projects": projects, "count": len(projects)},
+            facts=[{"project_count": len(projects),
+                    "active": sum(1 for p in projects
+                                  if p["status"] == "active")}])
+
+    def _project_workload(self, req: AgentRequest, snap: Any) -> AgentResult:
+        pmod = self._projects_module()
+        if pmod is None:
+            return self._project_unavailable()
+        ident = self._project_ident(req)
+        if ident is not None:
+            wl = pmod.workload(ident)
+            if wl is None:
+                return AgentResult.ambiguous([Ambiguity(
+                    kind=AmbiguityKind.ENTITY, field_name="target",
+                    mention=str(ident),
+                    reason="I couldn't find that project")])
+            return AgentResult(
+                status=ResultStatus.OK,
+                data={"workload": wl},
+                facts=[{"project_id": wl["project_id"], "name": wl["name"],
+                        "remaining_minutes": wl["remaining_minutes"],
+                        "estimated_minutes": wl["estimated_minutes"],
+                        "progress": wl["progress"],
+                        "progress_source": wl["progress_source"],
+                        "feasible": wl["feasible"],
+                        "available_minutes_until_deadline":
+                            wl["available_minutes_until_deadline"],
+                        "blocked_tasks": len(wl["blocked_task_ids"])}])
+        workloads = [pmod.workload(p["id"]) for p in pmod.list_projects("active")]
+        workloads = [w for w in workloads if w]
+        total_remaining = sum(int(w["remaining_minutes"]) for w in workloads)
+        return AgentResult(
+            status=ResultStatus.OK,
+            data={"workloads": workloads},
+            facts=[{"project_count": len(workloads),
+                    "total_remaining_minutes": total_remaining,
+                    "total_estimated_minutes":
+                        sum(int(w["estimated_minutes"]) for w in workloads)}])
+
+    def _project_risk(self, req: AgentRequest, snap: Any) -> AgentResult:
+        pmod = self._projects_module()
+        if pmod is None:
+            return self._project_unavailable()
+        ident = self._project_ident(req)
+        if ident is not None:
+            r = pmod.risk(ident)
+            if r is None:
+                return AgentResult.ambiguous([Ambiguity(
+                    kind=AmbiguityKind.ENTITY, field_name="target",
+                    mention=str(ident),
+                    reason="I couldn't find that project")])
+            return AgentResult(
+                status=ResultStatus.OK, data={"risk": r},
+                facts=[{"project_id": r["project_id"], "name": r["name"],
+                        "score": r["score"], "level": r["level"],
+                        "top_factor": max(r["factors"],
+                                          key=lambda f: float(f["weight"]) *
+                                          (f["value"] or 0))["name"]}])
+        worst = pmod.most_at_risk()
+        if worst is None:
+            return AgentResult(status=ResultStatus.OK, data={"risk": None},
+                               warnings=["no active projects to assess"])
+        return AgentResult(
+            status=ResultStatus.OK, data={"risk": worst, "most_at_risk": True},
+            facts=[{"project_id": worst["project_id"], "name": worst["name"],
+                    "score": worst["score"], "level": worst["level"]}])
+
+    def _project_dependencies(self, req: AgentRequest, snap: Any) -> AgentResult:
+        pmod = self._projects_module()
+        if pmod is None:
+            return self._project_unavailable()
+        ident = self._project_ident(req)
+        if ident is None:
+            return AgentResult.ambiguous([Ambiguity(
+                kind=AmbiguityKind.ENTITY, field_name="target",
+                mention=(req.raw_text or "")[:60],
+                reason="which project should I check dependencies for?")])
+        deps = pmod.dependencies(ident)
+        if deps is None:
+            return AgentResult.ambiguous([Ambiguity(
+                kind=AmbiguityKind.ENTITY, field_name="target",
+                mention=str(ident),
+                reason="I couldn't find that project")])
+        return AgentResult(
+            status=ResultStatus.OK, data={"dependencies": deps},
+            facts=[{"project_id": deps["project_id"], "name": deps["name"],
+                    "edges": len(deps["edges"]),
+                    "blocked": len(deps["blocked"]),
+                    "cycles": len(deps["cycles"])}],
+            warnings=(["dependency cycle detected"]
+                      if deps["cycles"] else []))
+
+    def _project_next(self, req: AgentRequest, snap: Any) -> AgentResult:
+        pmod = self._projects_module()
+        if pmod is None:
+            return self._project_unavailable()
+        ident = self._project_ident(req)
+        if ident is None:
+            return self._advise(req, snap)
+        wl = pmod.workload(ident)
+        if wl is None:
+            return AgentResult.ambiguous([Ambiguity(
+                kind=AmbiguityKind.ENTITY, field_name="target",
+                mention=str(ident),
+                reason="I couldn't find that project")])
+        result = AgentResult(
+            status=ResultStatus.OK,
+            data={"workload": wl, "next_tasks": wl["next_tasks"]},
+            facts=[{"project_id": wl["project_id"], "name": wl["name"],
+                    "remaining_minutes": wl["remaining_minutes"],
+                    "blocked_tasks": len(wl["blocked_task_ids"])}],
+            assumptions=["project-scoped advisory ranking; the scheduler "
+                         "remains the authority for feasibility"])
+        for t in wl["next_tasks"][:1]:
+            result.recommendations.append(Recommendation(
+                action=ActionKind.RECOMMEND,
+                target=EntityRef(type=EntityType.TASK, id=str(t["task_id"]),
+                                 name=str(t["title"]), resolved=True,
+                                 confidence=0.8, source="project_table"),
+                title=str(t["title"]),
+                reason=("blocked by an unfinished dependency"
+                        if t["blocked"] else
+                        "highest-priority unblocked task in this project"),
+                score=float(t["priority"]),
+                provenance="projects.candidates"))
+        if not wl["next_tasks"]:
+            result.warnings.append("no active tasks linked to this project")
+        return result
+
+    def _project_proposal(self, req: AgentRequest, snap: Any) -> AgentResult:
+        pmod = self._projects_module()
+        if pmod is None:
+            return self._project_unavailable()
+        proposal = pmod.propose_project(req.raw_text or "")
+        return AgentResult(
+            status=ResultStatus.NEEDS_CONFIRMATION,
+            confirmation_required=True,
+            data={"proposal": proposal},
+            facts=[{"kind": "project_proposal",
+                    "name": proposal["name"],
+                    "deadline": proposal["deadline"],
+                    "estimated_total_minutes":
+                        proposal["estimated_total_minutes"],
+                    "milestones": len(proposal["milestones"]),
+                    "confidence": proposal["confidence"]}],
+            candidate_actions=[{"action": "create_project",
+                                "proposal": proposal,
+                                "requires_confirmation": True}],
+            warnings=(["I need a few details before creating this project: "
+                       + "; ".join(proposal["questions"])]
+                      if proposal["questions"] else
+                      ["this project is prepared from an inferred description; "
+                       "confirmation is required before it is saved"]),
+            assumptions=["all proposal fields are marked inferred provenance"])
 
     def _plan(self, req: AgentRequest, snap: Any) -> AgentResult:
         planner = getattr(self.container, "planner", None)

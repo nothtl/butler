@@ -235,9 +235,24 @@ def build_mcp_registry(container: Any) -> ToolRegistry:
     add("get_courses", "List tracked courses.",
         lambda a: {"ok": True, "courses": c.courses.list_courses()},
         action="course_list", profile="readonly")
-    add("get_projects", "List projects (project intelligence lands in M3; this "
-        "is a stable read-only placeholder).",
-        lambda a: _get_projects(c), action="projects", profile="readonly")
+    add("get_projects", "List projects with effort-based progress and risk.",
+        lambda a: _get_projects(c, a),
+        [P("status", "str", default="")], action="projects", profile="readonly")
+    add("get_project", "One project by id or name, with milestones.",
+        lambda a: _get_project(c, a),
+        [P("project", "str", default="")], action="projects", profile="readonly")
+    add("get_project_workload", "Remaining effort, progress and next tasks for "
+        "a project (or all active projects).",
+        lambda a: _get_project_workload(c, a),
+        [P("project", "str", default="")], action="projects", profile="readonly")
+    add("get_project_risk", "Deterministic, explainable risk for a project (or "
+        "the most at-risk active project).",
+        lambda a: _get_project_risk(c, a),
+        [P("project", "str", default="")], action="projects", profile="readonly")
+    add("get_project_dependencies", "Dependency DAG, blocked tasks and cycles "
+        "for a project.",
+        lambda a: _get_project_dependencies(c, a),
+        [P("project", "str", default="")], action="projects", profile="readonly")
     add("find_available_time", "Free waking intervals for a day (minus sleep "
         "and hard events).",
         lambda a: _find_available_time(c, a),
@@ -393,12 +408,74 @@ def _get_schedule(c: Any) -> dict[str, Any]:
             "created": int(row["created"]), "plan": state.to_dict()}
 
 
-def _get_projects(c: Any) -> dict[str, Any]:
-    projects = getattr(c, "projects", None)
-    rows = projects.list_projects() if projects is not None else []
-    return {"ok": True, "count": len(rows), "projects": rows,
-            "note": "Project intelligence (Goal→Project→Milestone→Task) is "
-                    "scheduled for M3; this is a stable read-only placeholder."}
+def _project_module(c: Any) -> Any:
+    return getattr(c, "projects", None)
+
+
+def _get_projects(c: Any, a: dict[str, Any]) -> dict[str, Any]:
+    projects = _project_module(c)
+    if projects is None:
+        return {"ok": False, "error": "project intelligence unavailable"}
+    status = str(a.get("status", "") or "")
+    rows = projects.list_projects(status)
+    return {"ok": True, "count": len(rows), "projects": rows}
+
+
+def _get_project(c: Any, a: dict[str, Any]) -> dict[str, Any]:
+    projects = _project_module(c)
+    if projects is None:
+        return {"ok": False, "error": "project intelligence unavailable"}
+    ident = str(a.get("project", "") or "").strip()
+    if not ident:
+        return {"ok": False, "error": "project id or name is required"}
+    got = projects.get_project(ident)
+    if got is None:
+        return {"ok": False, "error": f"project not found: {ident}"}
+    return {"ok": True, "project": got}
+
+
+def _get_project_workload(c: Any, a: dict[str, Any]) -> dict[str, Any]:
+    projects = _project_module(c)
+    if projects is None:
+        return {"ok": False, "error": "project intelligence unavailable"}
+    ident = str(a.get("project", "") or "").strip()
+    if ident:
+        wl = projects.workload(ident)
+        if wl is None:
+            return {"ok": False, "error": f"project not found: {ident}"}
+        return {"ok": True, "workload": wl}
+    rows = [projects.workload(p["id"]) for p in projects.list_projects("active")]
+    rows = [r for r in rows if r]
+    return {"ok": True, "count": len(rows), "workloads": rows,
+            "total_remaining_minutes": sum(int(r["remaining_minutes"])
+                                           for r in rows)}
+
+
+def _get_project_risk(c: Any, a: dict[str, Any]) -> dict[str, Any]:
+    projects = _project_module(c)
+    if projects is None:
+        return {"ok": False, "error": "project intelligence unavailable"}
+    ident = str(a.get("project", "") or "").strip()
+    if ident:
+        risk = projects.risk(ident)
+        if risk is None:
+            return {"ok": False, "error": f"project not found: {ident}"}
+        return {"ok": True, "risk": risk}
+    worst = projects.most_at_risk()
+    return {"ok": True, "most_at_risk": worst}
+
+
+def _get_project_dependencies(c: Any, a: dict[str, Any]) -> dict[str, Any]:
+    projects = _project_module(c)
+    if projects is None:
+        return {"ok": False, "error": "project intelligence unavailable"}
+    ident = str(a.get("project", "") or "").strip()
+    if not ident:
+        return {"ok": False, "error": "project id or name is required"}
+    deps = projects.dependencies(ident)
+    if deps is None:
+        return {"ok": False, "error": f"project not found: {ident}"}
+    return {"ok": True, "dependencies": deps}
 
 
 def _executive_ask(c: Any, a: dict[str, Any]) -> dict[str, Any]:

@@ -6,6 +6,7 @@ trash registry, duplicate registry, classification, and the operation log.
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import time
@@ -157,7 +158,13 @@ CREATE TABLE IF NOT EXISTS tasks(
     created     INTEGER,
     completed   INTEGER,      -- unix ts when done/skipped
     tags        TEXT,
-    note        TEXT
+    note        TEXT,
+    -- M3 project intelligence: optional links + explicit remaining effort.
+    -- ``project_id``/``milestone_id`` of 0 mean "not part of a project", so
+    -- every pre-M3 task keeps working untouched.
+    project_id   INTEGER DEFAULT 0,
+    milestone_id INTEGER DEFAULT 0,
+    remaining_minutes INTEGER DEFAULT 0   -- 0 = derive from est_minutes
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 
@@ -492,6 +499,63 @@ CREATE TABLE IF NOT EXISTS app_settings(
     key     TEXT PRIMARY KEY,
     value   TEXT DEFAULT ''
 );
+
+-- ---------------------------------------------------------------------------
+-- M3 project intelligence. A project is the durable unit of real work: a goal
+-- broken into milestones, carried out by ordinary tasks (linked by id), with an
+-- optional dependency DAG. Effort is tracked in minutes so progress can be
+-- effort-based rather than a misleading completed/total task count. Every
+-- field that may be inferred carries provenance so an inferred deadline/effort
+-- can never silently become authoritative.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS projects(
+    id          INTEGER PRIMARY KEY,
+    name        TEXT NOT NULL,
+    objective   TEXT DEFAULT '',
+    status      TEXT DEFAULT 'active',   -- active | paused | completed | archived | cancelled
+    priority    INTEGER DEFAULT 3,       -- 1 (low) .. 5 (critical)
+    course_id   INTEGER DEFAULT 0,       -- 0 = not tied to a course
+    deadline    INTEGER DEFAULT 0,       -- unix ts; 0 = none
+    estimated_total_minutes INTEGER DEFAULT 0,
+    remaining_minutes INTEGER DEFAULT 0, -- explicit override; 0 = derive from tasks
+    progress    REAL DEFAULT -1,         -- 0..1; -1 = unknown/derived
+    risk        REAL DEFAULT -1,         -- 0..1; -1 = unknown (last computed)
+    repo_url    TEXT DEFAULT '',
+    links       TEXT DEFAULT '',         -- JSON [{label,url}]
+    refs        TEXT DEFAULT '',         -- JSON [{kind,path|url,title}]
+    provenance  TEXT DEFAULT '',         -- JSON field -> explicit|inferred|derived
+    created_at  INTEGER DEFAULT 0,
+    updated_at  INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
+
+CREATE TABLE IF NOT EXISTS milestones(
+    id          INTEGER PRIMARY KEY,
+    project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    order_index INTEGER DEFAULT 0,
+    status      TEXT DEFAULT 'pending',  -- pending | active | completed | skipped
+    deadline    INTEGER DEFAULT 0,
+    estimated_minutes INTEGER DEFAULT 0,
+    remaining_minutes INTEGER DEFAULT 0,
+    progress    REAL DEFAULT -1,
+    created_at  INTEGER DEFAULT 0,
+    updated_at  INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_milestones_project ON milestones(project_id);
+
+-- Task dependency DAG (task_id depends on depends_on). ``inferred`` edges are
+-- advisory: they are surfaced but never enforced silently by the scheduler.
+CREATE TABLE IF NOT EXISTS task_deps(
+    task_id    INTEGER NOT NULL,
+    depends_on INTEGER NOT NULL,
+    inferred   INTEGER DEFAULT 0,
+    created_at INTEGER DEFAULT 0,
+    PRIMARY KEY(task_id, depends_on)
+);
+CREATE INDEX IF NOT EXISTS idx_task_deps_task ON task_deps(task_id);
+CREATE INDEX IF NOT EXISTS idx_task_deps_dep ON task_deps(depends_on);
 """
 
 
@@ -527,12 +591,23 @@ class DB:
             "courses": [
                 ("calendar_url", "TEXT DEFAULT ''"),
             ],
+            # M3: link tasks to projects/milestones and allow explicit remaining
+            # effort. Existing tasks default to 0/0/0 = "not in a project".
+            "tasks": [
+                ("project_id", "INTEGER DEFAULT 0"),
+                ("milestone_id", "INTEGER DEFAULT 0"),
+                ("remaining_minutes", "INTEGER DEFAULT 0"),
+            ],
         }
         for table, cols in pending.items():
             existing = {r["name"] for r in self.query(f"PRAGMA table_info({table})")}
             for name, ddl in cols:
                 if name not in existing:
                     self.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+        # Indexes on migrated columns must be created *after* the ALTER above
+        # (a pre-M3 tasks table has no project_id when SCHEMA first runs).
+        self.execute("CREATE INDEX IF NOT EXISTS idx_tasks_project "
+                     "ON tasks(project_id)")
 
     def close(self) -> None:
         try:
@@ -1004,6 +1079,153 @@ class DB:
             f"UPDATE tasks SET {cols} WHERE id=?",
             tuple(fields.values()) + (task_id,),
         )
+
+    # ---------- M3 projects / milestones / dependencies ----------
+    @staticmethod
+    def _json_field(value: Any) -> str:
+        if value in (None, ""):
+            return ""
+        if isinstance(value, str):
+            return value
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return ""
+
+    _PROJECT_JSON_FIELDS = ("links", "refs", "provenance")
+
+    def add_project(self, name: str, *, objective: str = "", status: str = "active",
+                    priority: int = 3, course_id: int = 0, deadline: int = 0,
+                    estimated_total_minutes: int = 0, remaining_minutes: int = 0,
+                    repo_url: str = "", links: Any = None, refs: Any = None,
+                    provenance: Any = None, now: int | None = None) -> int:
+        ts = int(now if now is not None else time.time())
+        cur = self.execute(
+            "INSERT INTO projects(name,objective,status,priority,course_id,deadline,"
+            "estimated_total_minutes,remaining_minutes,progress,risk,repo_url,links,"
+            "refs,provenance,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (name, objective, status, priority, course_id, deadline,
+             estimated_total_minutes, remaining_minutes, -1.0, -1.0, repo_url,
+             self._json_field(links), self._json_field(refs),
+             self._json_field(provenance), ts, ts),
+        )
+        return int(cur.lastrowid)
+
+    def project_by_id(self, project_id: int) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM projects WHERE id=?", (project_id,))
+
+    def projects(self, status: str = "") -> list[sqlite3.Row]:
+        if status:
+            return self.query(
+                "SELECT * FROM projects WHERE status=? ORDER BY priority DESC, "
+                "deadline, id", (status,))
+        return self.query(
+            "SELECT * FROM projects ORDER BY priority DESC, deadline, id")
+
+    def update_project(self, project_id: int, **fields: Any) -> None:
+        if not fields:
+            return
+        for key in self._PROJECT_JSON_FIELDS:
+            if key in fields:
+                fields[key] = self._json_field(fields[key])
+        fields["updated_at"] = int(time.time())
+        cols = ", ".join(f"{k}=?" for k in fields)
+        self.execute(
+            f"UPDATE projects SET {cols} WHERE id=?",
+            tuple(fields.values()) + (project_id,),
+        )
+
+    def delete_project(self, project_id: int) -> None:
+        self.execute("DELETE FROM projects WHERE id=?", (project_id,))
+        self.execute("DELETE FROM milestones WHERE project_id=?", (project_id,))
+        self.execute("UPDATE tasks SET project_id=0, milestone_id=0 "
+                     "WHERE project_id=?", (project_id,))
+
+    def add_milestone(self, project_id: int, name: str, *, description: str = "",
+                      order_index: int = 0, status: str = "pending",
+                      deadline: int = 0, estimated_minutes: int = 0,
+                      remaining_minutes: int = 0, now: int | None = None) -> int:
+        ts = int(now if now is not None else time.time())
+        cur = self.execute(
+            "INSERT INTO milestones(project_id,name,description,order_index,status,"
+            "deadline,estimated_minutes,remaining_minutes,progress,created_at,updated_at)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (project_id, name, description, order_index, status, deadline,
+             estimated_minutes, remaining_minutes, -1.0, ts, ts),
+        )
+        return int(cur.lastrowid)
+
+    def milestone_by_id(self, milestone_id: int) -> sqlite3.Row | None:
+        return self.one("SELECT * FROM milestones WHERE id=?", (milestone_id,))
+
+    def milestones(self, project_id: int) -> list[sqlite3.Row]:
+        return self.query(
+            "SELECT * FROM milestones WHERE project_id=? "
+            "ORDER BY order_index, id", (project_id,))
+
+    def update_milestone(self, milestone_id: int, **fields: Any) -> None:
+        if not fields:
+            return
+        fields["updated_at"] = int(time.time())
+        cols = ", ".join(f"{k}=?" for k in fields)
+        self.execute(
+            f"UPDATE milestones SET {cols} WHERE id=?",
+            tuple(fields.values()) + (milestone_id,),
+        )
+
+    def delete_milestone(self, milestone_id: int) -> None:
+        self.execute("DELETE FROM milestones WHERE id=?", (milestone_id,))
+        self.execute("UPDATE tasks SET milestone_id=0 WHERE milestone_id=?",
+                     (milestone_id,))
+
+    def project_tasks(self, project_id: int) -> list[sqlite3.Row]:
+        return self.query(
+            "SELECT * FROM tasks WHERE project_id=? ORDER BY deadline, priority DESC, id",
+            (project_id,))
+
+    def milestone_tasks(self, milestone_id: int) -> list[sqlite3.Row]:
+        return self.query(
+            "SELECT * FROM tasks WHERE milestone_id=? ORDER BY deadline, priority DESC, id",
+            (milestone_id,))
+
+    def link_task(self, task_id: int, project_id: int,
+                  milestone_id: int = 0) -> None:
+        self.execute(
+            "UPDATE tasks SET project_id=?, milestone_id=? WHERE id=?",
+            (project_id, milestone_id, task_id))
+
+    def add_task_dependency(self, task_id: int, depends_on: int,
+                            inferred: bool = False) -> None:
+        self.execute(
+            "INSERT OR IGNORE INTO task_deps(task_id,depends_on,inferred,created_at) "
+            "VALUES(?,?,?,?)",
+            (task_id, depends_on, 1 if inferred else 0, int(time.time())))
+
+    def remove_task_dependency(self, task_id: int, depends_on: int) -> None:
+        self.execute("DELETE FROM task_deps WHERE task_id=? AND depends_on=?",
+                     (task_id, depends_on))
+
+    def task_dependencies(self, task_id: int) -> list[sqlite3.Row]:
+        return self.query(
+            "SELECT * FROM task_deps WHERE task_id=? ORDER BY depends_on",
+            (task_id,))
+
+    def task_dependents(self, task_id: int) -> list[sqlite3.Row]:
+        return self.query(
+            "SELECT * FROM task_deps WHERE depends_on=? ORDER BY task_id",
+            (task_id,))
+
+    def all_task_dependencies(self) -> list[sqlite3.Row]:
+        return self.query("SELECT * FROM task_deps ORDER BY task_id, depends_on")
+
+    def dependencies_for_tasks(self, task_ids: list[int]) -> list[sqlite3.Row]:
+        if not task_ids:
+            return []
+        marks = ",".join("?" for _ in task_ids)
+        return self.query(
+            f"SELECT * FROM task_deps WHERE task_id IN ({marks}) "
+            "ORDER BY task_id, depends_on", tuple(task_ids))
 
     def set_task_status(self, task_id: int, status: str,
                         reason: str = "") -> None:

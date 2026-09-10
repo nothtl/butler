@@ -68,6 +68,10 @@ _KNOWN_RISK: dict[str, str] = {
     "teach": "low_risk_write", "routine_change": "low_risk_write",
     "log": "low_risk_write", "sleep_event": "low_risk_write",
     "schedule_change": "low_risk_write",
+    # M3: project data is Butler-owned and reversible.
+    "project_create": "low_risk_write", "project_update": "low_risk_write",
+    "project_link": "low_risk_write", "project_milestone": "low_risk_write",
+    "project_dependency": "low_risk_write",
     # --- consequent external (deny-by-default) ---
     "organize": "consequent_external", "create_workspace": "consequent_external",
     "trash_duplicates": "consequent_external", "empty_trash": "consequent_external",
@@ -92,7 +96,8 @@ _DEGRADED_ALLOW_WRITE = {
     "food_add", "food_consume", "meal_plan", "meal_cook", "meal_another",
     "meal_add_missing", "meal_not_tonight", "recipe_mark", "note", "log",
     "add_task", "mark_done", "task_lifecycle", "plan_make", "plan_apply",
-    "index", "route",
+    "index", "route", "project_create", "project_update", "project_link",
+    "project_milestone", "project_dependency",
 }
 
 

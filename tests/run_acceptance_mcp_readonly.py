@@ -31,8 +31,9 @@ FAIL = 0
 
 READONLY_TOOLS = {
     "get_time", "get_context", "get_day", "plan_day", "get_schedule",
-    "get_tasks", "get_courses", "get_projects", "find_available_time",
-    "get_week", "executive_ask",
+    "get_tasks", "get_courses", "get_projects", "get_project",
+    "get_project_workload", "get_project_risk", "get_project_dependencies",
+    "find_available_time", "get_week", "executive_ask",
 }
 
 
@@ -137,9 +138,17 @@ def main() -> int:
           isinstance(courses.get("courses"), list))
 
     projects = json.loads(_call_tool(ro, "get_projects")["content"][0]["text"])
-    check("get_projects is a stable scaffold",
-          isinstance(projects.get("projects"), list)
-          and projects.get("count") == 0)
+    check("get_projects returns a projects list",
+          projects.get("ok") is True
+          and isinstance(projects.get("projects"), list))
+    missing = json.loads(
+        _call_tool(ro, "get_project", {"project": "no-such-project"})
+        ["content"][0]["text"])
+    check("get_project reports a missing project",
+          missing.get("ok") is False and "error" in missing)
+    risk = json.loads(_call_tool(ro, "get_project_risk")["content"][0]["text"])
+    check("get_project_risk returns without projects",
+          risk.get("ok") is True and "most_at_risk" in risk)
 
     free = json.loads(_call_tool(ro, "find_available_time")["content"][0]["text"])
     check("find_available_time returns intervals + total",

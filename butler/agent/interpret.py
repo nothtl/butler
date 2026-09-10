@@ -58,6 +58,43 @@ _STATUS = (
 )
 _MOVE = ("move ", "reschedule", "defer", "push back", "push ", "shift ")
 
+# --- M3 project intelligence ------------------------------------------------
+_PROJECT_CREATE = (
+    "create a project", "new project", "add a project", "start a project",
+    "break", "milestone", "project plan",
+)
+_PROJECT_CREATE_HINTS = (
+    "i have a", "i'm starting", "im starting", "starting a", "kick off",
+    "set up", "plan out", "project due", "working on a project",
+)
+_PROJECT_EFFORT_RE = re.compile(
+    r"\b\d+(?:\.\d+)?\s*(?:hour|hr|h|minute|min|m)s?\b|\b(?:two|three|four|"
+    r"five|six|seven|eight|nine|ten)\s+hours?\b", re.I)
+_PROJECT_DEP = (
+    "depend", "blocking", "what's blocking", "whats blocking", "prerequisite",
+    "blocked by",
+)
+_PROJECT_RISK = (
+    "at risk", "most at risk", "risk", "behind", "on track", "slipping",
+    "am i behind",
+)
+_PROJECT_WORKLOAD = (
+    "how much work", "workload", "how many hours", "hours do i need",
+    "work left", "much work left", "how long will", "remaining effort",
+)
+_PROJECT_NEXT = (
+    "what should i work on", "work on next", "what's next", "whats next",
+    "next task", "what to work on",
+)
+_PROJECT_STATUS = (
+    "progress", "on track", "how far", "how is", "how's", "status",
+)
+_PROJECT_TARGETED = frozenset({
+    ActionKind.PROJECT_STATUS, ActionKind.PROJECT_WORKLOAD,
+    ActionKind.PROJECT_RISK, ActionKind.PROJECT_DEPENDENCIES,
+    ActionKind.PROJECT_NEXT,
+})
+
 _TEMPORAL_MARKERS = (
     "tonight", "this evening", "this morning", "this afternoon", "tomorrow",
     "next week", "this week", "rest of the week", "today", "after dinner",
@@ -122,6 +159,9 @@ class DeterministicInterpreter:
 
     # ---------------------------------------------------------- classify
     def _classify(self, low: str) -> tuple[RequestIntent, ActionKind, float]:
+        project = self._project_classify(low)
+        if project is not None:
+            return project
         if _match(low, _MOVE):
             action = ActionKind.RESCHEDULE if "reschedule" in low else ActionKind.MOVE
             if "defer" in low or "push" in low:
@@ -143,6 +183,42 @@ class DeterministicInterpreter:
         if legacy is not None:
             return legacy
         return RequestIntent.CHAT, ActionKind.UNKNOWN, 0.3
+
+    def _project_classify(self, low: str
+                          ) -> tuple[RequestIntent, ActionKind, float] | None:
+        names = self._project_names()
+        has = ("project" in low or any(n and n in low for n in names)
+               or "am i behind" in low or "on track" in low)
+        if not has:
+            return None
+        if _match(low, _PROJECT_DEP):
+            return RequestIntent.QUERY, ActionKind.PROJECT_DEPENDENCIES, 0.7
+        if _match(low, _PROJECT_RISK):
+            return RequestIntent.QUERY, ActionKind.PROJECT_RISK, 0.7
+        if _match(low, _PROJECT_WORKLOAD):
+            return RequestIntent.QUERY, ActionKind.PROJECT_WORKLOAD, 0.7
+        if _match(low, _PROJECT_NEXT):
+            return RequestIntent.ADVISE, ActionKind.PROJECT_NEXT, 0.7
+        explicit = _match(low, _PROJECT_CREATE) and (
+            "project" in low or "milestone" in low)
+        inferred = ("project" in low and
+                    (_match(low, _PROJECT_CREATE_HINTS)
+                     or _PROJECT_EFFORT_RE.search(low) is not None))
+        if explicit or inferred:
+            return RequestIntent.MUTATE, ActionKind.CREATE_PROJECT, 0.7
+        if _match(low, _PROJECT_STATUS) or "project" in low:
+            return RequestIntent.QUERY, ActionKind.PROJECT_STATUS, 0.65
+        return None
+
+    def _project_names(self) -> list[str]:
+        pmod = getattr(self.container, "projects", None)
+        if pmod is None or not hasattr(pmod, "list_projects"):
+            return []
+        try:
+            return [str(p.get("name", "")).strip().lower()
+                    for p in pmod.list_projects()]
+        except Exception:  # noqa: BLE001
+            return []
 
     def _legacy(self, low: str) -> tuple[RequestIntent, ActionKind, float] | None:
         decider = getattr(self.container, "decider", None)
@@ -203,6 +279,15 @@ class DeterministicInterpreter:
                     type=EntityType.COURSE, id=str(course.get("id", "")),
                     name=code, resolved=True, confidence=0.9,
                     source="course_table"))
+        for proj in self._project_rows():
+            name = str(proj.get("name", "") or "")
+            if len(name) < 3:
+                continue
+            if name.lower() in low:
+                out.append(EntityRef(
+                    type=EntityType.PROJECT, id=str(proj.get("id", "")),
+                    name=name, resolved=True, confidence=0.85,
+                    source="project_table"))
         for task in self._tasks():
             title = str(task.get("title", "") or "")
             if len(title) < 4:
@@ -222,6 +307,10 @@ class DeterministicInterpreter:
 
     def _target(self, action: ActionKind, entities: list[EntityRef],
                 low: str) -> EntityRef | None:
+        if action in _PROJECT_TARGETED:
+            proj = [e for e in entities
+                    if e.type == EntityType.PROJECT and e.resolved]
+            return proj[0] if proj else None
         if action not in _TARGET_REQUIRED:
             return None
         resolved = [e for e in entities if e.resolved]
@@ -273,6 +362,15 @@ class DeterministicInterpreter:
         return []
 
     # -------------------------------------------------------------- data
+    def _project_rows(self) -> list[dict[str, Any]]:
+        pmod = getattr(self.container, "projects", None)
+        if pmod is None or not hasattr(pmod, "list_projects"):
+            return []
+        try:
+            return list(pmod.list_projects())
+        except Exception:  # noqa: BLE001
+            return []
+
     def _courses(self) -> list[dict[str, Any]]:
         db = getattr(self.container, "db", None)
         if db is None or not hasattr(db, "courses"):
@@ -313,6 +411,7 @@ class DeterministicInterpreter:
 _MUTATING = frozenset({
     ActionKind.MOVE, ActionKind.RESCHEDULE, ActionKind.DEFER,
     ActionKind.CREATE_TASK, ActionKind.COMPLETE_TASK, ActionKind.UPDATE,
+    ActionKind.CREATE_PROJECT,
 })
 
 
@@ -330,7 +429,9 @@ class LLMInterpreter:
         "assistant. Output ONLY JSON, no prose. Schema keys: intent "
         "(advise|plan|evaluate|query|mutate|chat|unknown), action (recommend|"
         "plan_day|plan_week|feasibility|urgency|status|move|reschedule|defer|"
-        "create_task|complete_task|update|unknown), target, entities, scope, "
+        "create_task|complete_task|update|project_status|project_workload|"
+        "project_risk|project_dependencies|project_next|create_project|unknown), "
+        "target, entities, scope, "
         "constraints, preferences, temporal, confidence, raw_text. Never mark "
         "an inferred preference as a hard constraint. If unsure, use unknown "
         "and low confidence rather than inventing values."

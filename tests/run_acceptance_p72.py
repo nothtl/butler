@@ -368,7 +368,7 @@ def test_mcp() -> None:
     ro = MCPServer(c, profile="readonly")
     names = {t["name"] for t in ro._tools_spec()}
     check("executive_ask exposed", "executive_ask" in names, str(len(names)))
-    check("readonly count is 11", len(names) == 11, str(len(names)))
+    check("readonly count is 15", len(names) == 15, str(len(names)))
     full = MCPServer(c, profile="full")
     full_names = {t["name"] for t in full._tools_spec()}
     check("full profile unchanged (51)", len(full_names) == 51, str(len(full_names)))

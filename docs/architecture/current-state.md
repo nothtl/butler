@@ -302,7 +302,8 @@ pure solver, one safety/audit/idempotency layer.
 **AI Butler boundary (verified):** AI Butler is an MCP *client over stdio*; Pi
 Butler is the domain/scheduling authority. The integration seam is the MCP
 server, exposed as two disjoint profiles: `full` (historical 51 tools, OpenClaw)
-and `readonly` (11 side-effect-free executive tools for AI Butler). See
+and `readonly` (15 side-effect-free executive tools for AI Butler; M3 added the
+four project reads). See
 `docs/architecture/ai-butler-integration.md` for the verified protocol, config,
 failure behaviour, security model and migration plan.
 
@@ -337,3 +338,37 @@ Command:
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 .venv/bin/python -m compileall -q butler
 ```
+
+## 11. M3 as implemented (project intelligence)
+
+The mission milestone M3 (distinct from the older Phase 7 M3 "Memory 2.0"
+label) is **project intelligence**: a durable Goal → Project → Milestone → Task
+model. Full design in `docs/architecture/project-intelligence.md`.
+
+- **Schema.** `butler/db.py` adds `projects`, `milestones`, `task_deps`, and
+  three nullable `tasks` columns (`project_id`, `milestone_id`,
+  `remaining_minutes`, all default 0). Migration is in-place and idempotent;
+  the `tasks(project_id)` index is created after the `ALTER TABLE` loop because
+  `SCHEMA` runs first.
+- **Domain.** `butler/projects.py::ProjectIntelligence`: effort-based progress
+  (never task counts; `unknown` without estimates), explainable weighted risk,
+  validated dependency DAG (cycles rejected, inferred edges advisory),
+  read-only workload/available-minutes, and deterministic project proposals.
+  Wired into `Container` as `self.projects`.
+- **Agent layer.** New `ActionKind`s (`PROJECT_STATUS/WORKLOAD/RISK/
+  DEPENDENCIES/NEXT`, `CREATE_PROJECT`), `ContextSnapshot.projects`,
+  interpreter keyword classification + `EntityType.PROJECT`, and service
+  handlers. `CREATE_PROJECT` returns `NEEDS_CONFIRMATION` with a proposal and
+  never writes.
+- **MCP.** Read-only tools `get_project`, `get_project_workload`,
+  `get_project_risk`, `get_project_dependencies`; the `get_projects` scaffold
+  is replaced with a real handler. `full` stays exactly 51 tools.
+- **Safety.** `project_create` / `project_update` / `project_link` /
+  `project_milestone` / `project_dependency` are `low_risk_write`.
+- **Backward compatibility.** Ordinary tasks, courses, assignments, the
+  scheduler, the `full` MCP profile and the readonly profile all keep working.
+  Assignments are not forced into projects.
+
+**Baseline after M3:** `tests/run_acceptance_m3.py` (93 checks) added;
+`run_acceptance_mcp_readonly.py` grows to 32 checks (readonly is now 15 tools);
+`run_acceptance_p72.py` still passes with the readonly count updated.
