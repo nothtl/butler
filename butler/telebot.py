@@ -105,6 +105,8 @@ class TelegramBot:
         self._await_url: dict[int, str] = {}
         # N3: pending creation/link/organize proposals awaiting confirmation.
         self._pending_creation: dict[int, dict[str, Any]] = {}
+        # N4 hotfix: pending topic setup proposals (keyed chat:thread).
+        self._pending_topic: dict[str, dict[str, Any]] = {}
 
     async def _post_init(self, app: Any) -> None:
         """Reconcile topic control panels before polling starts (idempotent)."""
@@ -499,64 +501,144 @@ class TelegramBot:
         message is replaced (and re-pinned) without creating duplicates.
         """
         store = self._topic_store()
-        text, chash = store.render_panel(prof)
-        if not force and prof.pin_content_hash == chash and prof.pin_message_id:
-            return {"ok": True, "skipped": True, "message_id": prof.pin_message_id}
-        chat_id, thread_id = prof.chat_id, prof.thread_id
-        msg_id = int(prof.pin_message_id or 0)
-        if msg_id:
-            try:
-                await bot.edit_message_text(text=text, chat_id=chat_id,
-                                            message_id=msg_id)
-            except Exception as exc:  # noqa: BLE001 — replaced below
-                log.info("topic panel edit failed (%s); replacing", exc)
-                msg_id = 0
-        if not msg_id:
-            sent = await bot.send_message(chat_id=chat_id, text=text,
-                                          message_thread_id=thread_id or None)
-            msg_id = int(getattr(sent, "message_id", 0) or 0)
-        if msg_id:
-            try:
-                await bot.pin_chat_message(chat_id=chat_id, message_id=msg_id,
-                                           disable_notification=True)
-            except Exception as exc:  # noqa: BLE001 — pin is best effort
-                log.info("topic pin failed: %s", exc)
-        store.update(prof, pin_message_id=msg_id,
-                     pin_content_hash=chash,
-                     pin_message_version=int(prof.pin_message_version or 0) + 1)
-        return {"ok": True, "message_id": msg_id, "hash": chash}
+        lock = self._topic_lock(prof.chat_id, prof.thread_id)
+        async with lock:
+            fresh = store.get(prof.chat_id, prof.thread_id) or prof
+            text, chash = store.render_panel(fresh)
+            if not force and fresh.pin_content_hash == chash \
+                    and fresh.pin_message_id:
+                return {"ok": True, "skipped": True,
+                        "message_id": fresh.pin_message_id}
+            chat_id, thread_id = fresh.chat_id, fresh.thread_id
+            msg_id = int(fresh.pin_message_id or 0)
+            if msg_id:
+                try:
+                    await bot.edit_message_text(text=text, chat_id=chat_id,
+                                                message_id=msg_id)
+                except Exception as exc:  # noqa: BLE001 — replaced below
+                    log.info("topic panel edit failed (%s); replacing", exc)
+                    msg_id = 0
+            if not msg_id:
+                sent = await bot.send_message(chat_id=chat_id, text=text,
+                                              message_thread_id=thread_id or None)
+                msg_id = int(getattr(sent, "message_id", 0) or 0)
+                if msg_id:
+                    try:
+                        await bot.pin_chat_message(chat_id=chat_id,
+                                                   message_id=msg_id,
+                                                   disable_notification=True)
+                    except Exception as exc:  # noqa: BLE001 — pin is best effort
+                        log.info("topic pin failed: %s", exc)
+            store.update(fresh, pin_message_id=msg_id,
+                         pin_content_hash=chash,
+                         pin_message_version=int(fresh.pin_message_version or 0) + 1)
+            return {"ok": True, "message_id": msg_id, "hash": chash}
+
+    def _topic_lock(self, chat_id: int, thread_id: int) -> asyncio.Lock:
+        if not hasattr(self, "_topic_locks"):
+            self._topic_locks = {}
+        key = self._pending_topic_key(chat_id, thread_id)
+        lock = self._topic_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._topic_locks[key] = lock
+        return lock
+
+    def _pending_topic_key(self, chat_id: int, thread_id: int) -> str:
+        return f"{int(chat_id)}:{int(thread_id)}"
+
+    def _pending_topic_map(self) -> dict[str, dict[str, Any]]:
+        if not hasattr(self, "_pending_topic"):
+            self._pending_topic = {}
+        return self._pending_topic
+
+    def _setup_keyboard(self, thread_id: int) -> Any:
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        t = int(thread_id)
+        return InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Set up", callback_data=f"topic:setup:confirm:{t}"),
+            InlineKeyboardButton("⚙ Customize",
+                                 callback_data=f"topic:setup:customize:{t}"),
+            InlineKeyboardButton("✕ Cancel", callback_data=f"topic:setup:cancel:{t}"),
+        ]])
+
+    def _setup_summary(self, pending: dict[str, Any]) -> str:
+        from .topics import CAPABILITIES, CAP_LABELS, CAP_ICONS
+        name = pending.get("name") or "New topic"
+        lines = [f"Topic:\n  {name}", "",
+                 "Purpose:", f"  {pending.get('purpose') or '(not set)'}"]
+        desc = (pending.get("description") or "").strip()
+        if desc and desc.lower() != (pending.get("purpose") or "").lower():
+            lines += ["", "Description:", f"  {desc[:300]}"]
+        caps = pending.get("capabilities") or {}
+        enabled = [f"{CAP_ICONS.get('enabled')} {CAP_LABELS[c]}"
+                   for c in CAPABILITIES if caps.get(c) == "enabled"]
+        disabled = [f"{CAP_ICONS.get('disabled')} {CAP_LABELS[c]}"
+                    for c in CAPABILITIES if caps.get(c) != "enabled"]
+        lines += ["", "Suggested capabilities:"] + ["  " + x for x in enabled]
+        if disabled:
+            lines += ["  " + x for x in disabled]
+        conns = pending.get("connection_lines") or []
+        if conns:
+            lines += ["", "Connected:"] + ["  " + x for x in conns]
+        lines += ["", "Confirm to save and pin the control panel."]
+        return "\n".join(lines)
+
+    def _propose_topic_setup(self, update: Update, bot: Any, prof: Any,
+                             text: str) -> dict[str, Any]:
+        """Build a topic setup *proposal*; do not activate or pin yet."""
+        store = self._topic_store()
+        from .topics import interpret_purpose
+        interp = interpret_purpose(text)
+        # Name comes from the Telegram topic title, never the description.
+        name = (prof.name or "").strip()
+        links, ambiguous = store.resolve_links(name, interp["description"])
+        conns = [f"• {l['target_type']}: {l.get('target_id') or ''}".strip()
+                 for l in links]
+        pending = {
+            "chat_id": int(prof.chat_id), "thread_id": int(prof.thread_id),
+            "name": name, "purpose": interp["purpose"],
+            "description": interp["description"],
+            "capabilities": interp["capabilities"], "links": links,
+            "ambiguous": ambiguous, "connection_lines": conns,
+        }
+        self._pending_topic_map()[self._pending_topic_key(prof.chat_id,
+                                                    prof.thread_id)] = pending
+        return pending
+
+    async def _apply_topic_setup(self, chat_id: int, thread_id: int,
+                                 bot: Any) -> Any:
+        store = self._topic_store()
+        pending = self._pending_topic_map().get(self._pending_topic_key(chat_id,
+                                                                  thread_id))
+        prof = store.get(chat_id, thread_id)
+        if prof is None:
+            return None
+        if pending:
+            prof = store.update(
+                prof, name=pending.get("name") or prof.name,
+                purpose=pending.get("purpose") or prof.purpose,
+                description=pending.get("description") or prof.description,
+                capabilities=pending.get("capabilities") or prof.capabilities,
+                status="active")
+            for link in pending.get("links") or []:
+                store.add_link(prof, link["target_type"], link["target_id"],
+                               link["relation"], link["confidence"],
+                               link["provenance"])
+        else:
+            prof = store.update(prof, status="active")
+        prof = store.get(chat_id, thread_id)
+        await self._publish_topic_panel(bot, prof, force=True)
+        self._pending_topic_map().pop(self._pending_topic_key(chat_id, thread_id), None)
+        return store.get(chat_id, thread_id)
 
     async def _configure_topic_from_text(self, update: Update, bot: Any,
                                          prof: Any, text: str) -> Any:
-        """Turn a natural-language purpose into a configured, pinned topic."""
-        store = self._topic_store()
-        interp = store.interpret_purpose(text) \
-            if hasattr(store, "interpret_purpose") else None
-        # interpret_purpose lives at module level; use it directly.
-        from .topics import interpret_purpose
-        interp = interpret_purpose(text)
-        name = prof.name or interp["name_guess"] or "Topic"
-        links, ambiguous = store.resolve_links(name, interp["description"])
-        prof = store.update(prof, name=name, purpose=interp["purpose"],
-                            description=interp["description"],
-                            capabilities=interp["capabilities"], status="active")
-        for link in links:
-            store.add_link(prof, link["target_type"], link["target_id"],
-                           link["relation"], link["confidence"],
-                           link["provenance"])
-        prof = store.get(prof.chat_id, prof.thread_id)
-        await self._publish_topic_panel(bot, prof, force=True)
-        lines = [f"✅ Topic configured: {name}",
-                 f"Purpose: {interp['purpose']}",
-                 f"Capabilities: " + ", ".join(
-                     k for k, v in interp["capabilities"].items() if v == "enabled"),
-                 "The control panel is pinned above."]
-        if ambiguous:
-            cand = ambiguous[0]
-            names = ", ".join(c["name"] for c in cand["candidates"])
-            lines.append(f"⚠️ I found more than one {cand['target_type']} that "
-                         f"could match ({names}). Tell me which one to use.")
-        await update.effective_message.reply_text("\n".join(lines))
+        """Legacy shim: propose (does not activate/pin)."""
+        pending = self._propose_topic_setup(update, bot, prof, text)
+        await update.effective_message.reply_text(
+            self._setup_summary(pending),
+            reply_markup=self._setup_keyboard(prof.thread_id))
         return prof
 
     async def cmd_topics(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -640,6 +722,13 @@ class TelegramBot:
         if not self._authorized(update):
             return
         data = query.data or ""
+        if data.startswith("topic:setup:"):
+            await self._on_topic_setup_cb(update, context)
+            return
+        if data.startswith("topic:capconfirm:") or \
+                data.startswith("topic:capcancel:"):
+            await self._on_topic_cap_cb(update, context)
+            return
         parts = data.split(":")
         if len(parts) < 3:
             await query.edit_message_text("⚠️ Unrecognised action.")
@@ -696,6 +785,141 @@ class TelegramBot:
         rows.append([InlineKeyboardButton("🔄 Refresh panel",
                      callback_data=f"topic:refresh:{int(thread_id)}")])
         return InlineKeyboardMarkup(rows)
+
+    def _setup_cap_keyboard(self, thread_id: int, pending: dict[str, Any]) -> Any:
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        from .topics import CAPABILITIES, CAP_LABELS, CAP_ICONS
+        caps = pending.get("capabilities") or {}
+        rows = []
+        for cap in CAPABILITIES:
+            state = caps.get(cap, "disabled")
+            nxt = "disabled" if state == "enabled" else "enabled"
+            rows.append([InlineKeyboardButton(
+                f"{CAP_ICONS.get(state, '•')} {CAP_LABELS[cap]}",
+                callback_data=f"topic:setup:cap:{int(thread_id)}:{cap}:{nxt}")])
+        rows.append([InlineKeyboardButton("💾 Save & set up",
+                     callback_data=f"topic:setup:save:{int(thread_id)}"),
+                     InlineKeyboardButton("✕ Cancel",
+                     callback_data=f"topic:setup:cancel:{int(thread_id)}")])
+        return InlineKeyboardMarkup(rows)
+
+    def _pending_cap_map(self) -> dict[str, dict[str, Any]]:
+        if not hasattr(self, "_pending_cap"):
+            self._pending_cap = {}
+        return self._pending_cap
+
+    def _cap_proposal_keyboard(self, thread_id: int, cap: str, state: str) -> Any:
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        verb = "Enable" if state == "enabled" else "Disable"
+        return InlineKeyboardMarkup([[
+            InlineKeyboardButton(
+                f"✅ {verb}",
+                callback_data=f"topic:capconfirm:{int(thread_id)}:{cap}:{state}"),
+            InlineKeyboardButton(
+                "✕ Cancel",
+                callback_data=f"topic:capcancel:{int(thread_id)}"),
+        ]])
+
+    async def _on_topic_cap_cb(self, update: Update,
+                               context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        data = query.data or ""
+        parts = data.split(":")
+        # topic:capconfirm:<thread>:<cap>:<state> | topic:capcancel:<thread>
+        if len(parts) < 3:
+            await query.edit_message_text("⚠️ Unrecognised action.")
+            return
+        sub = parts[1]
+        try:
+            thread_id = int(parts[2])
+        except ValueError:
+            await query.edit_message_text("⚠️ Invalid topic.")
+            return
+        chat_id = query.message.chat.id
+        key = self._pending_topic_key(chat_id, thread_id)
+        pending = self._pending_cap_map().pop(key, None)
+        if pending is None:
+            await query.edit_message_text(
+                "That change expired. Please ask again.")
+            return
+        if sub == "capcancel":
+            await query.edit_message_text("Cancelled — no changes made.")
+            return
+        if len(parts) < 5:
+            await query.edit_message_text("⚠️ Invalid capability.")
+            return
+        cap, state = parts[3], parts[4]
+        if (cap, state) != (pending.get("cap"), pending.get("state")):
+            await query.edit_message_text(
+                "That change expired. Please ask again.")
+            return
+        store = self._topic_store()
+        prof = store.get(chat_id, thread_id)
+        if prof is None or prof.status != "active":
+            await query.edit_message_text("This topic isn't set up yet.")
+            return
+        prof = store.set_capability(prof, cap, state)
+        await self._publish_topic_panel(context.bot, prof, force=True)
+        from .topics import CAP_LABELS
+        verb = "enabled" if state == "enabled" else "disabled"
+        await query.edit_message_text(
+            f"✅ {CAP_LABELS.get(cap, cap)} {verb} for "
+            f"{prof.name or 'this topic'}. The control panel is updated.")
+
+    async def _on_topic_setup_cb(self, update: Update,
+                                 context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        data = query.data or ""
+        parts = data.split(":")
+        # topic:setup:<sub>:<thread>[:<cap>:<state>]
+        if len(parts) < 4:
+            await query.edit_message_text("⚠️ Unrecognised action.")
+            return
+        sub, thread_s = parts[2], parts[3]
+        try:
+            thread_id = int(thread_s)
+        except ValueError:
+            await query.edit_message_text("⚠️ Invalid topic.")
+            return
+        chat_id = query.message.chat.id
+        store = self._topic_store()
+        key = self._pending_topic_key(chat_id, thread_id)
+        if sub == "cancel":
+            prof = store.get(chat_id, thread_id)
+            if prof is not None:
+                store.update(prof, status="archived")
+            self._pending_topic_map().pop(key, None)
+            await query.edit_message_text("Cancelled — nothing was pinned.")
+            return
+        pending = self._pending_topic_map().get(key)
+        if pending is None:
+            await query.edit_message_text(
+                "That setup expired. Send /topic to start again.")
+            return
+        if sub == "confirm" or sub == "save":
+            prof = await self._apply_topic_setup(chat_id, thread_id, context.bot)
+            name = (prof.name if prof else None) or "Topic"
+            await query.edit_message_text(
+                f"✅ {name} is set up and its control panel is pinned.")
+            return
+        if sub == "customize":
+            await query.edit_message_text(
+                self._setup_summary(pending),
+                reply_markup=self._setup_cap_keyboard(thread_id, pending))
+            return
+        if sub == "cap":
+            if len(parts) < 6:
+                await query.edit_message_text("⚠️ Invalid capability.")
+                return
+            cap, state = parts[4], parts[5]
+            caps = dict(pending.get("capabilities") or {})
+            caps[cap] = state
+            pending["capabilities"] = caps
+            await query.edit_message_text(
+                self._setup_summary(pending),
+                reply_markup=self._setup_cap_keyboard(thread_id, pending))
+            return
+        await query.edit_message_text("⚠️ Unrecognised action.")
 
     # ------------------------------------------------------- N2: trackers
     def _tracker_ctx(self, update: Update) -> dict[str, Any]:
@@ -936,22 +1160,114 @@ class TelegramBot:
             return str(data["explanation"])
         return "Done."
 
-    async def _maybe_settings_nl(self, update: Update, message: str) -> bool:
+    def _capability_change(self, low: str) -> tuple[str, str] | None:
+        """Detect a capability + desired state in a settings phrase."""
+        from .topics import CAPABILITIES
+        words = {
+            "web": "web", "internet": "web", "online": "web",
+            "track": "tracking", "tracking": "tracking",
+            "proactive": "proactive", "alert": "proactive",
+            "notif": "proactive", "reminder": "reminders", "remind": "reminders",
+            "schedul": "scheduling", "schedule": "scheduling",
+            "memory": "memory", "remember": "memory",
+            "file": "file_organization", "organis": "file_organization",
+            "organiz": "file_organization",
+            "plan": "planning", "know": "knowledge",
+        }
+        cap = next((v for k, v in words.items() if k in low), None)
+        if cap is None or cap not in CAPABILITIES:
+            return None
+        off = bool(re.search(
+            r"\b(disable|disabled|turn off|switch off|stop|don'?t|do not|no|off)\b",
+            low))
+        on = bool(re.search(
+            r"\b(enable|enabled|turn on|switch on|allow|start|on)\b", low))
+        if off:
+            return cap, "disabled"
+        if on:
+            return cap, "enabled"
+        return None
+
+    async def _refresh_topic_panel(self, bot: Any, chat_id: int,
+                                   thread_id: int) -> bool:
+        store = self._topic_store()
+        prof = store.get(chat_id, thread_id) if store else None
+        if prof is None:
+            return False
+        await self._publish_topic_panel(bot, prof, force=True)
+        return True
+
+    async def _maybe_settings_nl(self, update: Update, message: str,
+                                 context: Any = None) -> bool:
         try:
             from .agent.interpret import DeterministicInterpreter
             from .agent.semantic import ActionKind
+            low = (message or "").lower()
+            chat_id = update.effective_chat.id
+            thread_id = getattr(update.effective_message,
+                                "message_thread_id", 0) or 0
+            bot = context.bot if context is not None \
+                else getattr(update, "get_bot", lambda: None)()
+            # Panel ownership: the bot updates its own pinned message.
+            if thread_id and re.search(r"\b(pin|pinned|panel)\b", low) and \
+                    re.search(r"\b(update|refresh|regenerate|edit)\b", low):
+                ok = await self._refresh_topic_panel(bot, chat_id, thread_id)
+                await update.effective_message.reply_text(
+                    "✅ Control panel refreshed." if ok
+                    else "There's no topic panel here yet.")
+                return True
             it = DeterministicInterpreter(self.container)
             req = it.interpret(message)
+            change = self._capability_change(low)
             if req.action not in (ActionKind.SETTINGS_UPDATE,
-                                  ActionKind.SETTINGS_VIEW):
+                                  ActionKind.SETTINGS_VIEW) \
+                    and not (req.action == ActionKind.UNKNOWN and change):
                 return False
-            from .agent.service import ExecutiveService
-            svc = ExecutiveService(self.container)
-            res = svc.ask(text=message, topic=self._tracker_ctx(update))
-            data = res.data if isinstance(res.data, dict) else {}
             if req.action == ActionKind.SETTINGS_VIEW:
+                from .agent.service import ExecutiveService
+                res = ExecutiveService(self.container).ask(
+                    text=message, topic=self._tracker_ctx(update))
+                data = res.data if isinstance(res.data, dict) else {}
                 await update.effective_message.reply_text(
                     data.get("text") or self.container.settings.render())
+                return True
+            # SETTINGS_UPDATE: scope-aware (topic-first, global only when clear).
+            global_intent = bool(re.search(
+                r"\b(global|globally|system|system-wide|everywhere|all topics|"
+                r"account|for butler)\b", low))
+            if thread_id and change and not global_intent:
+                store = self._topic_store()
+                prof = store.get(chat_id, thread_id) if store else None
+                if prof is None or prof.status != "active":
+                    await update.effective_message.reply_text(
+                        "This topic isn't set up yet — use /topic first.")
+                    return True
+                cap, state = change
+                if cap == "web" and state == "enabled" \
+                        and not getattr(self.container.cfg, "web_enabled", True):
+                    await update.effective_message.reply_text(
+                        "Web is disabled system-wide, so I can't enable it just "
+                        "for this topic. Say \"enable web globally\" first.")
+                    return True
+                key = self._pending_topic_key(chat_id, thread_id)
+                self._pending_cap_map()[key] = {"cap": cap, "state": state}
+                from .topics import CAP_LABELS
+                verb = "Enable" if state == "enabled" else "Disable"
+                await update.effective_message.reply_text(
+                    f"{verb} {CAP_LABELS.get(cap, cap)} for "
+                    f"{prof.name or 'this topic'}?",
+                    reply_markup=self._cap_proposal_keyboard(thread_id, cap, state))
+                return True
+            if req.action != ActionKind.SETTINGS_UPDATE:
+                return False
+            # global settings
+            from .agent.service import ExecutiveService
+            res = ExecutiveService(self.container).ask(
+                text=message, topic=self._tracker_ctx(update))
+            data = res.data if isinstance(res.data, dict) else {}
+            if res.status.value == "needs_confirmation":
+                await update.effective_message.reply_text(
+                    data.get("summary") or "Prepared — confirm to apply.")
             else:
                 await update.effective_message.reply_text(
                     data.get("summary") or "Settings updated.")
@@ -1213,7 +1529,7 @@ class TelegramBot:
             return
         if await self._maybe_memory_nl(update, message):
             return
-        if await self._maybe_settings_nl(update, message):
+        if await self._maybe_settings_nl(update, message, context):
             return
         intent = self.container.decider.parse(message)
         if intent.kind == "help":

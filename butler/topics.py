@@ -204,7 +204,7 @@ class TopicProfile:
             if "pin_content_hash" in row.keys() else "",
             template=str(row["template"] or "") if "template" in row.keys() else "",
             routing=str(row["routing"] or ""),
-            push_on=int(row["push_on"] or 0),
+            push_on=bool(row["push_on"]),
             push_time=str(row["push_time"] or "07:00"),
             push_freq=str(row["push_freq"] or "daily"),
         )
@@ -345,7 +345,10 @@ class TopicStore:
             return prof
         caps = dict(prof.capabilities)
         caps[capability] = state
-        return self.update(prof, capabilities=caps)
+        updated = self.update(prof, capabilities=caps)
+        self._audit("topic_capability", updated,
+                    detail={"capability": capability, "state": state})
+        return updated
 
     def list(self, status: str = "") -> list[TopicProfile]:
         rows = self.db.topic_settings_all()
@@ -446,13 +449,15 @@ class TopicStore:
     def linked_data(self, prof: TopicProfile) -> dict[str, Any]:
         """Resolve the referenced domain data (read-only) for context/panels."""
         data: dict[str, Any] = {"courses": [], "projects": [], "tasks": [],
-                                "food": None, "counts": {}, "storage": ""}
+                                "food": None, "counts": {}, "storage": "",
+                                "dangling": 0, "references": []}
         for link in self.links(prof):
             tt = str(link["target_type"])
             tid = int(link["target_id"] or 0)
             if tt == "course":
                 row = self.db.course_by_id(tid) if tid else None
                 if row is None:
+                    data["dangling"] += 1
                     continue
                 code = str(row["code"])
                 docs = self.db.course_documents(tid)
@@ -480,6 +485,7 @@ class TopicStore:
             elif tt == "project":
                 got = self.container.projects.get_project(tid) if tid else None
                 if got is None:
+                    data["dangling"] += 1
                     continue
                 data["projects"].append({
                     "id": tid, "name": got["name"],
@@ -496,6 +502,10 @@ class TopicStore:
                         pass
             elif tt == "meal_plan":
                 data["counts"]["meal_plan"] = 1
+            else:
+                data["references"].append({"target_type": tt,
+                                           "target_id": tid,
+                                           "relation": str(link.get("relation") or "")})
         return data
 
     def _course_storage(self, code: str) -> str:
@@ -519,10 +529,16 @@ class TopicStore:
                 continue
             icon = CAP_ICONS.get(state, "•")
             lines.append(f"{icon} {CAP_LABELS[cap]}")
+        note = self.provider_note(prof)
+        if note:
+            lines.append(f"⚠️ {note}")
         tracking = self.tracking_lines(prof)
         if tracking:
             lines += ["", "Tracking"] + tracking
         connected = self._connected_lines(prof, data)
+        if data.get("dangling"):
+            connected.append(
+                f"• {data['dangling']} connection(s) no longer available")
         if connected:
             lines += ["", "Connected"] + connected
         current = self._current_lines(data)
@@ -570,6 +586,9 @@ class TopicStore:
             out.append(f"• pantry ({data['food']['items']} item(s))")
         if counts.get("meal_plan"):
             out.append("• meal plan")
+        for ref in data.get("references", []):
+            rel = f" ({ref['relation']})" if ref.get("relation") else ""
+            out.append(f"• {ref['target_type']}{rel}")
         return out
 
     def _current_lines(self, data: dict[str, Any]) -> list[str]:
@@ -600,6 +619,12 @@ class TopicStore:
             lines.append("• Pantry (shared food data)")
         if data.get("counts", {}).get("meal_plan"):
             lines.append("• Meal plan (shared)")
+        for ref in data.get("references", []):
+            rel = f" ({ref['relation']})" if ref.get("relation") else ""
+            lines.append(f"• {ref['target_type']}{rel}")
+        if data.get("dangling"):
+            lines.append(
+                f"• {data['dangling']} connection(s) no longer available")
         if len(lines) == 2:
             lines.append("Nothing connected yet.")
         return "\n".join(lines)
@@ -620,6 +645,32 @@ class TopicStore:
         lines += ["", "Provenance:",
                   f"  • {self.why_enabled(prof, 'tracking')}"]
         return "\n".join(lines)
+
+    def provider_note(self, prof: TopicProfile) -> str:
+        """Honest provider state: capability on but provider unavailable."""
+        if not prof.enabled("web"):
+            return ""
+        web = getattr(self.container, "web", None)
+        if web is None or not getattr(web, "enabled", False):
+            return ("Web is enabled for this topic, but web access is "
+                    "currently disabled.")
+        provider = getattr(web, "search_provider", None)
+        pname = type(provider).__name__ if provider is not None else ""
+        if not pname or "null" in pname.lower():
+            return ("Web is enabled for this topic, but the web provider is "
+                    "currently unavailable.")
+        return ""
+
+    def destination_ok(self, chat_id: int, thread_id: int) -> bool:
+        """True when a destination is usable.
+
+        An unmanaged destination (no topic profile) is allowed; a managed
+        topic that is archived or not active is treated as stale.
+        """
+        prof = self.get(chat_id, thread_id)
+        if prof is None:
+            return True
+        return prof.status == "active"
 
     def why_enabled(self, prof: TopicProfile, capability: str) -> str:
         if prof.enabled(capability):
@@ -642,6 +693,9 @@ class TopicStore:
                   f"{'on' if prof.push_on else 'off'} · {prof.push_time} · "
                   f"{prof.push_freq}",
                   "Memory scope: this topic + global"]
+        note = self.provider_note(prof)
+        if note:
+            lines += ["", f"⚠️ {note}"]
         return "\n".join(lines)
 
     def storage_text(self, prof: TopicProfile) -> str:

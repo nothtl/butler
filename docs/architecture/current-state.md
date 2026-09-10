@@ -680,7 +680,8 @@ destination and not a new datastore. Full design in
   parallel table, no graph database, no ontology.
 - **Discovery.** New forum topic → `pending_setup` profile + setup prompt;
   the user's reply becomes purpose/capabilities/links and the topic becomes
-  `active` with a pinned control panel.
+  `active` with a pinned control panel. (Superseded by N4 hardening: the reply
+  now yields a confirmation-first setup proposal; see §22.)
 - **Capabilities.** `knowledge/tracking/memory/planning/scheduling/reminders/
   proactive/web/file_organization` with states; suggested deterministically
   from the description. Configuration only — no tracker engine (N2).
@@ -816,3 +817,60 @@ scheduler/memory/notification system. User docs: `docs/usage/telegram.md`,
 - **Tests.** `tests/run_acceptance_n4.py` (210 deterministic checks).
 
 **Baseline after N4:** all prior suites plus N4 pass (33 suites, 2161 checks).
+
+## 22. N4 hardening as implemented (confirmation-first topic UX)
+
+A hardening pass over the real Telegram UX and cross-subsystem behaviour found
+while using N1–N4 daily. No new architecture, scheduler, memory or domain
+system. Tests: `tests/run_acceptance_n4_hardening.py` (209 checks).
+
+- **Confirmation-first setup.** A new topic's purpose reply produces a
+  `_propose_topic_setup` object stored in `_pending_topic`; nothing is activated,
+  linked or pinned until the user taps **✅ Set up** (`_apply_topic_setup`) or
+  **⚙ Customize** → Save. The exact proposal shown is the object applied; the
+  description is not re-interpreted on confirmation. A pending topic never gets
+  a panel.
+- **Name / purpose / description separated.** The canonical name is the Telegram
+  topic title; the user's sentence becomes the description; the purpose is a
+  normalized label. A missing title stays empty ("New topic") and never borrows
+  the description.
+- **Scope-aware settings.** Inside a topic, capability phrases ("enable web",
+  "turn web on here", "disable scheduling here") resolve to the **topic**
+  capability via `TopicStore.set_capability`; explicit global phrases ("enable
+  web globally", "disable web everywhere") go to `SettingsService`. Topic
+  capability changes are proposal-first (`_pending_cap` + `[✅ Enable]/[✕ Cancel]`
+  callbacks); the interpreted scope is shown before applying.
+- **Panel ownership.** Capability/state changes persist → audit → regenerate →
+  hash → edit the stored pinned message → update metadata. The bot edits its own
+  panel; "update the pinned message" refreshes it instead of failing.
+- **Pin reconciliation.** Edit failure → send replacement → pin → update
+  `pin_message_id`/`pin_message_version`. Pins only on (re)send, so healthy
+  refreshes are edit-only. Exactly one panel per topic; restart reconciliation
+  is idempotent.
+- **Concurrency.** A per-topic `asyncio.Lock` serialises `_publish_topic_panel`,
+  and the panel row is re-read inside the lock, giving one canonical panel and a
+  monotonic version under simultaneous capability/tracker/connection updates.
+- **Callback security.** `chat_id` comes from the callback message (not client
+  data); callbacks are authorized, thread-validated, capability/state validated
+  by the store, and stale/expired proposals are rejected without mutation.
+- **Provider honesty.** `TopicStore.provider_note` distinguishes capability on
+  from provider healthy; the panel/settings report "Web is enabled … but the web
+  provider is currently unavailable" when applicable.
+- **Generic links & dangling links.** Unknown link target types are surfaced
+  generically (custom topics get relevance from `topic_links`, not domain
+  branches); missing targets are counted and shown as "N connection(s) no longer
+  available" and can be removed.
+- **Tracker destinations.** `TopicStore.destination_ok` marks archived/inactive
+  destinations stale; the tracker clears the destination, records a limitation
+  and falls back instead of sending to a dead topic. Unmanaged destinations stay
+  allowed; no cross-user leakage.
+- **Tests.** `tests/run_acceptance_n4_hardening.py` (209 checks) covering setup,
+  naming, scope, panel refresh/replacement, concurrency, callback security,
+  provider state, custom topics, shared context, dangling links, tracker
+  destinations/integration, confirmation policy, the exact web-search and
+  Food→Groceries/CS188 regressions, NL hardening, "this" resolution,
+  explanations, storage/pin consistency, error handling, restart, multi-user
+  isolation, DB bloat and the 20 final acceptance questions.
+
+**Baseline after N4 hardening:** all prior suites plus hardening pass
+(34 suites, 2373 checks).

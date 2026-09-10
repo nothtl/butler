@@ -185,16 +185,22 @@ def test_telegram_flow() -> None:
           and prof.status == PENDING_SETUP)
     check("T2 the setup prompt is sent",
           upd.message.sent and "What is this topic for" in upd.message.sent[0])
-    # reply with a purpose -> configure + pin
+    # reply with a purpose -> a setup proposal, but NO activation/pin yet
     upd2 = FakeUpdate("This is my CS188 course. Track homework and schedule.",
                       7)
     asyncio.run(bot.on_message(upd2, ctx))
     prof = c.topics.get(100, 7)
-    check("T3 the purpose reply activates the topic", prof.status == ACTIVE)
-    check("T4 the panel is sent", len(fb.sent) == 1)
-    check("T5 the panel is pinned", len(fb.pins) == 1)
-    check("T6 the user is told the topic is configured",
-          any("configured" in s for s in upd2.message.sent))
+    check("T3 the purpose reply shows a proposal, not activation",
+          prof.status == PENDING_SETUP)
+    check("T4 no panel is pinned before confirmation",
+          len(fb.sent) == 0 and len(fb.pins) == 0)
+    check("T4b the proposal is shown",
+          any("Confirm" in s or "Purpose" in s for s in upd2.message.sent))
+    # confirmation activates + pins
+    prof = asyncio.run(bot._apply_topic_setup(100, 7, fb))
+    check("T5 confirmation activates the topic", prof.status == ACTIVE)
+    check("T6 the panel is sent and pinned",
+          len(fb.sent) == 1 and len(fb.pins) == 1)
     # unauthorized user gets nothing
     c.cfg.telegram_open_when_empty = False
     c.cfg.telegram_allowed_users = [7]
@@ -202,7 +208,7 @@ def test_telegram_flow() -> None:
     asyncio.run(bot.on_message(upd3, ctx))
     check("T7 an unauthorized user is denied",
           c.topics.get(100, 8) is None and not upd3.message.sent)
-    check("T8 the discovery prompt is idempotent for existing topics",
+    check("T8 the confirmed topic stays active",
           c.topics.get(100, 7).status == ACTIVE)
 
 

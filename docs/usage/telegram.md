@@ -55,8 +55,10 @@ Replan my week.
 ## Topics
 
 In a Telegram forum, each topic is a context. Send any message in a new topic
-and Butler asks what it is for; describe it in your own words and Butler sets up
-a pinned control panel with the right capabilities. See
+and Butler asks what it is for. Describe it in your own words and Butler shows a
+**setup proposal** — nothing is activated or pinned until you tap **✅ Set up**
+(or **⚙ Customize** to adjust capabilities first). The topic name comes from the
+Telegram title; your sentence becomes the description. See
 [topics.md](topics.md).
 
 ## Tracking

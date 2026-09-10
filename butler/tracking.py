@@ -974,6 +974,17 @@ class TrackerEngine:
     def _candidates_for(self, tracker: Tracker, res: EvaluationResult,
                         now: int) -> list[Any]:
         from .proactive_engine import ProactiveCandidate
+        dest = {"chat_id": tracker.destination_chat_id,
+                "thread_id": tracker.destination_thread_id}
+        dest_note = ""
+        if tracker.destination_chat_id:
+            topics = getattr(self.container, "topics", None)
+            if topics is not None and hasattr(topics, "destination_ok") \
+                    and not topics.destination_ok(tracker.destination_chat_id,
+                                                  tracker.destination_thread_id):
+                dest = {}
+                dest_note = ("Destination topic is unavailable; "
+                             "delivering to the default chat.")
         out = []
         for prop in res.proposals:
             atype = prop.action_type
@@ -984,19 +995,21 @@ class TrackerEngine:
                       "low": 0.3}.get(tracker.priority, 0.5)
             summary = (f"{tracker.name}: {res.reason}" if tracker.name
                        else res.reason)
+            evidence = [{"kind": "tracker", "value": tracker.name},
+                        {"kind": "source", "value": tracker.source},
+                        {"kind": "reason", "value": res.reason}]
+            if dest_note:
+                evidence.append({"kind": "limitation", "value": dest_note})
             out.append(ProactiveCandidate(
                 key=key, category="tracker",
                 title=f"🔎 {tracker.name or 'Tracker'}",
                 summary=summary,
                 confidence=0.85, detected_at=now, urgency=impact,
                 impact=impact,
-                evidence=[{"kind": "tracker", "value": tracker.name},
-                          {"kind": "source", "value": tracker.source},
-                          {"kind": "reason", "value": res.reason}],
+                evidence=evidence,
                 proposed_action={"action": atype, **prop.params},
                 requires_confirmation=(atype in CONSEQUENTIAL_ACTIONS),
-                destination={"chat_id": tracker.destination_chat_id,
-                             "thread_id": tracker.destination_thread_id},
+                destination=dest,
                 explanation=self.explain_tracker(tracker, res)))
         return out
 
