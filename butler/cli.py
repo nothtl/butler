@@ -30,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
         "organize", "dupes", "dupes-trash", "trash", "trash-list", "recover",
         "mkdir", "move", "rename", "apply", "backup", "bot", "monitor", "remote",
         "mcp", "daemon",
-        "task", "tasks", "day", "now", "done", "skip", "start", "defer", "block",
+        "task", "tasks", "day", "week", "now", "done", "skip", "start", "defer", "block",
         "cancel", "resume", "cameup", "why",
         "whythis", "undo", "reschedule", "calendar",
         "course", "courses", "checkcourses", "materials", "ingest",
@@ -210,6 +210,10 @@ def dispatch(container: Container, ns: argparse.Namespace) -> int:
                                 "tasks": [dict(r) for r in container.db.tasks("active")]}, ns)
     if cmd == "day":
         return emit(container, {"kind": "day", **container.planner.plan_day()}, ns)
+    if cmd == "week":
+        days = _kwint(args, "days", 7)
+        return emit(container, {"kind": "week",
+                                **container.planner.plan_week(days=days)}, ns)
     if cmd == "now":
         return emit(container, {"kind": "now",
                                 **container.planner.what_now(" ".join(args))}, ns)

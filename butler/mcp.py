@@ -19,7 +19,7 @@ from typing import Any
 log = logging.getLogger("butler.mcp")
 
 SERVER_NAME = "butler"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 PROTOCOL = "2024-11-05"
 
 
@@ -76,6 +76,10 @@ class MCPServer:
             s("health", "Butler subsystem health + run mode.", {}, []),
             s("day", "Compute the schedule plan for today (read-only preview).",
               {}, []),
+            s("week", "Compute a read-only schedule preview for the next N days.",
+              {"days": {"type": "integer"}}, []),
+            s("course_sync", "Re-check tracked courses: scrape due dates and "
+              "import class-time blocks from their calendar feed.", {}, []),
             s("what_now", "What Butler recommends you do right now.", {},
               []),
             s("why", "Explain why the schedule changed (last plan diff).", {}, []),
@@ -200,6 +204,22 @@ class MCPServer:
                     **c.health.status()}
         if name == "day":
             return c.planner.plan_day()
+        if name == "week":
+            return c.planner.plan_week(days=int(a.get("days", 7) or 7))
+        if name == "course_sync":
+            out: dict[str, Any] = {}
+            if getattr(c, "courses", None) is not None:
+                for row in c.db.courses():
+                    code = str(row["code"])
+                    try:
+                        out[code] = c.courses.sync_page_assignments(code)
+                    except Exception as exc:  # noqa: BLE001
+                        out[code] = {"ok": False, "error": str(exc)}
+            try:
+                out["_calendar"] = c.planner.sync_course_events()
+            except Exception as exc:  # noqa: BLE001
+                out["_calendar"] = {"ok": False, "error": str(exc)}
+            return {"ok": True, "courses": out}
         if name == "what_now":
             return c.planner.what_now()
         if name == "why":

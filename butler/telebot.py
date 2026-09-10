@@ -651,6 +651,12 @@ class TelegramBot:
             await msg.reply_text(str(result["config"]))
         elif kind == "day":
             await msg.reply_text("📅 Today\n```\n" + result.get("text", "") + "\n```")
+        elif kind == "week":
+            lines = ["🗓 Week ahead"]
+            for d in result.get("days", []):
+                lines.append(f"\n{d.get('weekday', '')} {d.get('date', '')}")
+                lines.append(d.get("text", ""))
+            await msg.reply_text("\n".join(lines)[:3900])
         elif kind == "now":
             await msg.reply_text("▶️ " + result.get("answer", "Nothing to do."))
         elif kind == "plan_tasks":

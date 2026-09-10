@@ -192,6 +192,7 @@ CREATE TABLE IF NOT EXISTS courses(
     url            TEXT,
     platform       TEXT,
     semester       TEXT,
+    calendar_url   TEXT DEFAULT '',   -- public .ics feed for class times
     monitoring_enabled INTEGER DEFAULT 1,
     monitoring_interval INTEGER DEFAULT 3600,   -- seconds
     created_at     INTEGER,
@@ -522,6 +523,9 @@ class DB:
             "course_documents": [
                 ("task_id", "INTEGER DEFAULT 0"),
                 ("understanding", "TEXT DEFAULT ''"),
+            ],
+            "courses": [
+                ("calendar_url", "TEXT DEFAULT ''"),
             ],
         }
         for table, cols in pending.items():

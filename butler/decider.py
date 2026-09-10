@@ -201,6 +201,9 @@ class Decider:
             return Intent("now", raw=msg)
         if re.search(r"\b(my day|todays plan|today's plan|today's schedule|show todays|show today's|show.*day|what day)\b".replace("today's", "today?s"), low):
             return Intent("day", raw=msg)
+        if (re.search(r"\b(plan|show|preview|look at|see)\b.*\b(my )?(week|week ahead|next 7 days|next seven days)\b", low)
+                or re.search(r"\b(my week|week plan|weekly plan|week ahead|plan my week|next 7 days|next seven days)\b", low)):
+            return Intent("week", raw=msg)
         if re.search(r"\b(add( a)? task|new task|remind me to|i need to|todo:|task:|add todo)\b", low):
             return Intent("add_task", query=msg, raw=msg)
         if re.search(r"\b(came up|something came up|something has come up|urgent|interrupt)\b", low):
@@ -382,6 +385,8 @@ class Decider:
         # --- planner commands (Phase 2) ---
         if cmd == "day":
             return Intent("day", raw=raw)
+        if cmd in ("week", "weekplan", "next7", "weekahead"):
+            return Intent("week", raw=raw)
         if cmd == "now":
             return Intent("now", raw=raw)
         if cmd in ("tasks", "todo"):
@@ -572,6 +577,8 @@ class Decider:
         # --- planner / scheduler (Phase 2) ---
         if k == "day":
             return {"kind": "day", **self.planner.plan_day()}
+        if k == "week":
+            return {"kind": "week", **self.planner.plan_week()}
         if k == "now":
             if self.executive is not None and hasattr(self.executive, "recommend"):
                 return {"kind": "now", **self.executive.recommend(intent.raw)}
@@ -757,9 +764,31 @@ class Decider:
         if not codes:
             return {"kind": "course_assignments", "ok": False,
                     "error": "no courses to sync"}
-        results = {c: self.courses.sync_assignments(c) for c in codes}
-        total = sum(r.get("count", 0) for r in results.values())
-        return {"kind": "course_assignments", "results": results, "count": total}
+        results = {}
+        total = 0
+        for c in codes:
+            pdf = self.courses.sync_assignments(c)
+            try:
+                page = self.courses.sync_page_assignments(c)
+            except Exception as exc:  # noqa: BLE001  (page scrape is best-effort)
+                page = {"created": [], "updated": [], "error": str(exc)}
+            merged = {
+                "ok": bool(pdf.get("ok", True)) and bool(page.get("ok", True)),
+                "created": list(pdf.get("created", [])) + list(page.get("created", [])),
+                "updated": list(pdf.get("updated", [])) + list(page.get("updated", [])),
+                "error": pdf.get("error") or page.get("error"),
+            }
+            merged["count"] = len(merged["created"]) + len(merged["updated"])
+            results[c] = merged
+            total += merged["count"]
+        calendar = {}
+        if self.planner is not None and hasattr(self.planner, "sync_course_events"):
+            try:
+                calendar = self.planner.sync_course_events()
+            except Exception as exc:  # noqa: BLE001  (class times best-effort)
+                calendar = {"ok": False, "error": str(exc)}
+        return {"kind": "course_assignments", "results": results, "count": total,
+                "calendar": calendar}
 
     def _do_course_docs(self, intent: Intent) -> dict[str, Any]:
         if self.courses is None:

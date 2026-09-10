@@ -269,6 +269,12 @@ class CourseIntelligence:
         text_changed = snap.get("page_hash") not in (None, page_hash) and \
             _sha(self._page_text(html)) != snap.get("text_hash")
 
+        # Remember any public class-time calendar the page exposes so the
+        # planner can block those hours later.
+        cal = self._discover_calendar_url(html)
+        if cal and str(course["calendar_url"] or "") != cal:
+            self.db.update_course(int(course["id"]), calendar_url=cal)
+
         updates: list[dict[str, Any]] = []
         first_run = not snap.get("page_hash")
         if first_run:
@@ -301,6 +307,17 @@ class CourseIntelligence:
             result = self.sync_assignments(code)
             for item in result.get("created", []) + result.get("updated", []):
                 state = "updated" if item in result.get("updated", []) else "understood"
+                updates.append({
+                    "kind": "assignment", "code": code,
+                    "message": f"{code} — assignment {state}: {item['title']}",
+                    "task": item})
+
+        # Course page -> dated tasks: the site's schedule carries the real due
+        # dates. Re-scrape whenever the page text changed (or on first run).
+        if self._llm_ready() and (first_run or text_changed):
+            page_res = self.sync_page_assignments(code)
+            for item in page_res.get("created", []) + page_res.get("updated", []):
+                state = "updated" if item in page_res.get("updated", []) else "understood"
                 updates.append({
                     "kind": "assignment", "code": code,
                     "message": f"{code} — assignment {state}: {item['title']}",
@@ -341,11 +358,17 @@ class CourseIntelligence:
 
     def _classify_filename(self, name: str) -> str:
         n = name.lower()
-        if re.search(r"(project|assignment|hw|homework|pa\d|milestone|spec)", n):
+        # Graded work first (project specs, homeworks, programming assignments).
+        if re.search(r"(project|assignment|homework|\bhw\s?\d|\bpa\s?\d|milestone|spec)", n):
             return "Projects"
         if re.search(r"(exam|midterm|final|quiz|test)", n):
             return "Exams"
-        if re.search(r"(lecture|slide|lesson|week\d|module)", n):
+        # Lecture/discussion/section material is NOT an assignment: match the
+        # common ``lec01``/``disc01``/``sec01`` shorthands too, otherwise those
+        # slide decks fall through to "Readings" and the assignment LLM invents
+        # a deadline for them.
+        if re.search(r"(lecture|slides?|lesson|\blec\s?\d|\bdisc(ussion)?\s?\d|"
+                     r"\bsec(tion)?\s?\d|week\s?\d|module|recitation)", n):
             return "Lectures"
         return "Readings"
 
@@ -509,6 +532,143 @@ class CourseIntelligence:
         return {"ok": True, "code": code, "created": created, "updated": updated,
                 "count": len(created) + len(updated)}
 
+    # ---------------------------------------------------- page -> assignments
+    def sync_page_assignments(self, code: str,
+                              force: bool = False) -> dict[str, Any]:
+        """Scrape the course *page* (schedule/announcements) for graded items
+        and materialise dated tasks.
+
+        The website -- not the slide PDFs -- is the authoritative source for
+        *when* something is due. DeepSeek reads the page text and proposes a
+        list of items; the deterministic layer dedupes each item by a stable
+        key (so re-running never duplicates), derives priority from the
+        deadline and hands the tasks to the planner. No due date -> no task.
+        """
+        course = self.db.course_by_code(code)
+        if not course or not course["url"]:
+            return {"ok": False, "error": f"no course {code}"}
+        if not self._llm_ready():
+            return {"ok": True, "code": code, "created": [], "updated": [],
+                    "count": 0}
+        cid = int(course["id"])
+        url = str(course["url"])
+        try:
+            html, _ = self._fetch(url)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("page fetch failed %s: %s", url, exc)
+            return {"ok": False, "error": str(exc)}
+        text = self._page_text(html)
+        page_hash = _sha(text)
+        today = datetime.now().strftime("%A %Y-%m-%d")
+        system = (
+            "You extract graded items with explicit due dates from a course "
+            "website. Return ONLY a JSON object shaped like "
+            '{"assignments":[{"title":str,"due":"YYYY-MM-DD",'
+            '"time":"HH:MM" or "","est_hours":number,'
+            '"kind":"homework|project|exam|quiz"}]}. '
+            f"Today is {today}; resolve month/day names against the current "
+            "academic year. Include every homework, project, midterm, quiz and "
+            "final that has a stated due date. Never invent a date: omit any "
+            "item without one. No prose outside the JSON."
+        )
+        raw = self._llm((system, text[:9000]))
+        data = _safe_json(raw)
+        items = data.get("assignments") if isinstance(data, dict) else None
+        if not isinstance(items, list):
+            return {"ok": True, "code": code, "created": [], "updated": [],
+                    "count": 0}
+        created: list[dict[str, Any]] = []
+        updated: list[dict[str, Any]] = []
+        to_place: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            title = str(it.get("title") or "").strip()
+            due = str(it.get("due") or "").strip()
+            if not title or not due:
+                continue
+            slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60]
+            if not slug or slug in seen:
+                continue
+            seen.add(slug)
+            deadline = _due_ts(due, it.get("time") or "")
+            if not deadline:
+                continue
+            external_id = f"{url}#assignment/{slug}"
+            doc_id = self.db.add_course_document(
+                cid, title, document_type="assignment",
+                content_hash=page_hash, external_id=external_id)
+            row = dict(self.db.doc_by_id(doc_id))
+            stored = self._stored_understanding(row.get("understanding") or "")
+            task_id = int(row.get("task_id") or 0)
+            if task_id and not force and stored.get("content_hash") == page_hash:
+                continue
+            hours = float(it.get("est_hours") or 0)
+            if hours <= 0:
+                hours = {"project": 6.0, "exam": 4.0, "quiz": 2.0}.get(
+                    str(it.get("kind") or "").lower(), 2.0)
+            model = {
+                "title": title, "deadline": deadline, "est_hours": hours,
+                "requirements": [
+                    "due %s%s" % (due,
+                                  (" %s" % it["time"]) if it.get("time") else ""),
+                    "kind: %s" % (it.get("kind") or "assignment"),
+                ],
+            }
+            fields = self._task_fields(code, {"local_path": "", "url": url},
+                                       model)
+            item = {"doc_id": doc_id, "task_id": 0, "title": fields["title"],
+                    "deadline": fields["deadline"], "est_hours": hours,
+                    "est_minutes": fields["est_minutes"]}
+            if task_id:
+                if self._apply_update(task_id, fields):
+                    item["task_id"] = task_id
+                    updated.append(item)
+                    to_place.append({"task_id": task_id,
+                                     "est_minutes": fields["est_minutes"],
+                                     "deadline": fields["deadline"]})
+            else:
+                new_id = self.db.add_task(
+                    fields["title"], detail=fields["detail"],
+                    deadline=fields["deadline"], priority=fields["priority"],
+                    est_minutes=fields["est_minutes"], tags=fields["tags"])
+                if not new_id:
+                    continue
+                task_id = new_id
+                item["task_id"] = task_id
+                created.append(item)
+                to_place.append({"task_id": task_id,
+                                 "est_minutes": fields["est_minutes"],
+                                 "deadline": fields["deadline"]})
+            self._record_understanding(
+                doc_id, {"content_hash": page_hash, "version": 1}, model, task_id)
+        schedule = self._place_affected(to_place)
+        for item in created + updated:
+            item["schedule"] = schedule.get(item["task_id"], {})
+        return {"ok": True, "code": code, "created": created, "updated": updated,
+                "count": len(created) + len(updated)}
+
+    @staticmethod
+    def _discover_calendar_url(html: str) -> str:
+        """Find a public Google Calendar .ics feed referenced by the page."""
+        from urllib.parse import unquote, quote
+        m = re.search(
+            r"calendar\.google\.com/calendar/ical/([^\"'<>/]+)/public/basic\.ics",
+            html)
+        if m:
+            return ("https://calendar.google.com/calendar/ical/"
+                    f"{m.group(1)}/public/basic.ics")
+        for m in re.finditer(
+                r"calendar\.google\.com/calendar/embed\?[^\"'<>]*?src=([^\"'&<>]+)",
+                html):
+            cid = unquote(m.group(1))
+            if cid.startswith("$") or "{" in cid:
+                continue
+            return ("https://calendar.google.com/calendar/ical/"
+                    f"{quote(cid, safe='@')}/public/basic.ics")
+        return ""
+
     def _place_affected(self, items: list[dict[str, Any]]) -> dict[str, Any]:
         """Hand the newly created/updated tasks to the deterministic planner.
         Returns ``{task_id: {slots, capacity report}}`` (or {} when offline)."""
@@ -657,3 +817,21 @@ def _to_ts(value: Any) -> int:
         return int(dt.timestamp())
     except Exception:
         return 0
+
+
+def _due_ts(date_str: Any, time_str: Any = "") -> int:
+    """Timestamp for a page-scraped due date (date-only -> end of day)."""
+    raw = str(date_str or "").strip()
+    if not raw:
+        return 0
+    s = raw
+    t = str(time_str or "").strip()
+    if "T" not in s and t:
+        s = f"{s}T{t}"
+    try:
+        dt = datetime.fromisoformat(s)
+    except Exception:
+        return 0
+    if "T" not in raw:
+        dt = dt.replace(hour=23, minute=59)
+    return int(dt.timestamp())

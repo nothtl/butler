@@ -260,6 +260,140 @@ class Planner:
         except Exception:  # noqa: BLE001
             return None
 
+    # ------------------------------------------------------- course calendars
+    def sync_course_events(self, force: bool = False) -> dict[str, Any]:
+        """Import each course's public .ics feed as hard class-time blocks.
+
+        Lectures, discussions, office hours and exams are real commitments, so
+        the solver must schedule study work *around* them. Each course gets its
+        own ``source`` (``course:<CODE>``) so a refresh clears and reloads only
+        that feed, never local/Google events.
+        """
+        results: dict[str, Any] = {}
+        total = 0
+        for course in self.db.courses():
+            cal = str(course["calendar_url"] or "")
+            if not cal:
+                continue
+            code = str(course["code"])
+            source = f"course:{code}"
+            try:
+                fetched = self._fetch_course_ics(cal)
+            except Exception as exc:  # noqa: BLE001  keep existing blocks
+                log.warning("course calendar %s failed: %s", code, exc)
+                results[code] = {"ok": False, "error": str(exc)}
+                continue
+            self.db.clear_events(source)
+            for title, start, end, ext in fetched:
+                self.db.add_event(str(title), int(start), int(end),
+                                  source=source, external_id=ext)
+            results[code] = {"ok": True, "count": len(fetched)}
+            total += len(fetched)
+        return {"ok": True, "count": total, "courses": results}
+
+    def _fetch_course_ics(self, url: str,
+                          days: int = 45) -> list[tuple[str, int, int, str]]:
+        import requests
+        r = requests.get(url, timeout=30)
+        r.raise_for_status()
+        now = datetime.now()
+        window_start = datetime(now.year, now.month, now.day)
+        window_end = window_start + timedelta(days=days)
+        return self._expand_ics(r.text, window_start, window_end)
+
+    @staticmethod
+    def _expand_ics(text: str, window_start: datetime,
+                    window_end: datetime) -> list[tuple[str, int, int, str]]:
+        """Expand VEVENTs (incl. weekly RRULEs) into concrete occurrences."""
+        text = text.replace("\r\n", "\n").replace("\n ", "")
+        out: list[tuple[str, int, int, str]] = []
+        for blk in text.split("BEGIN:VEVENT")[1:]:
+            blk = blk.split("END:VEVENT")[0]
+            fields: dict[str, list[str]] = {}
+            for line in blk.split("\n"):
+                if not line.strip():
+                    continue
+                key, _, raw = line.partition(":")
+                base = key.split(";")[0].strip().upper()
+                fields.setdefault(base, []).append(raw.strip())
+            title = (fields.get("SUMMARY") or [""])[0]
+            uid = (fields.get("UID") or [""])[0]
+            start = Planner._ics_dt((fields.get("DTSTART") or [""])[0])
+            if not title or start is None:
+                continue
+            end = Planner._ics_dt((fields.get("DTEND") or [""])[0])
+            duration = int((end - start).total_seconds()) if end and end > start \
+                else 3600
+            rrule = (fields.get("RRULE") or [""])[0]
+            if rrule and rrule.upper().startswith("FREQ=WEEKLY"):
+                starts = Planner._expand_weekly(start, rrule, window_end)
+            else:
+                starts = [start]
+            exdates = {int(d.timestamp()) for d in
+                       (Planner._ics_dt(x) for x in fields.get("EXDATE", []))
+                       if d}
+            for s in starts:
+                if s < window_start or s > window_end:
+                    continue
+                ts = int(s.timestamp())
+                if ts in exdates:
+                    continue
+                ext = f"{uid}:{ts}" if uid else f"{title}:{ts}"
+                out.append((title, ts, ts + duration, ext))
+        out.sort(key=lambda x: x[1])
+        return out
+
+    @staticmethod
+    def _expand_weekly(start: datetime, rrule: str,
+                       window_end: datetime) -> list[datetime]:
+        parts: dict[str, str] = {}
+        for chunk in rrule.split(";"):
+            k, _, v = chunk.partition("=")
+            parts[k.strip().upper()] = v.strip()
+        try:
+            interval = max(1, int(parts.get("INTERVAL", "1")))
+        except ValueError:
+            interval = 1
+        weekdays = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
+        days = [weekdays[d[-2:].upper()] for d in parts.get("BYDAY", "").split(",")
+                if d[-2:].upper() in weekdays] or [start.weekday()]
+        until = Planner._ics_dt(parts["UNTIL"]) if parts.get("UNTIL") else None
+        count = int(parts["COUNT"]) if parts.get("COUNT", "").isdigit() else None
+        t = start.time()
+        start_date = start.date()
+        week0 = start_date - timedelta(days=start_date.weekday())  # WKST=MO
+        limit = max(window_end, until) if until else window_end
+        occ: list[datetime] = []
+        wk = 0
+        while wk <= 600:
+            base = week0 + timedelta(weeks=wk * interval)
+            if base > limit.date():
+                break
+            for wd in sorted(days):
+                d = base + timedelta(days=wd)
+                if d < start_date:
+                    continue
+                dt = datetime.combine(d, t)
+                if until and dt > until:
+                    continue
+                occ.append(dt)
+                if count is not None and len(occ) >= count:
+                    return occ
+            wk += 1
+        return occ
+
+    @staticmethod
+    def _ics_dt(raw: str) -> datetime | None:
+        raw = (raw or "").strip().rstrip("Z")
+        if not raw:
+            return None
+        try:
+            if "T" in raw:
+                return datetime.strptime(raw[:15], "%Y%m%dT%H%M%S")
+            return datetime.strptime(raw[:8], "%Y%m%d")
+        except ValueError:
+            return None
+
     # ------------------------------------------------------------------ tasks
     def _active_tasks(self, day_ts: int) -> list[sch.Task]:
         rows = self.db.tasks("active")  # todo + doing
@@ -338,6 +472,20 @@ class Planner:
                     self.sync_google()
                 except GCalError as exc:  # noqa: BLE001  (keep existing events)
                     log.warning("google calendar sync failed (kept existing events): %s", exc)
+        try:
+            if any(str(c["calendar_url"] or "") for c in self.db.courses()):
+                stamp = os.path.join(self.cfg.state_dir, "course_cal_last_sync")
+                fresh = os.path.exists(stamp) and \
+                    (datetime.now().timestamp() - os.path.getmtime(stamp) < 21600)
+                if not fresh:
+                    self.sync_course_events()
+                    try:
+                        with open(stamp, "w") as fh:
+                            fh.write(str(datetime.now().timestamp()))
+                    except OSError:
+                        pass
+        except Exception as exc:  # noqa: BLE001  (keep existing events)
+            log.warning("course calendar sync failed (kept existing events): %s", exc)
 
     def plan_day(self, day_ts: int | None = None) -> dict[str, Any]:
         day_ts = day_ts or self._today()
@@ -350,6 +498,26 @@ class Planner:
         self._mark_scheduled(state)
         self._sync_calendar()
         return self._summary(state)
+
+    def plan_week(self, day_ts: int | None = None,
+                  days: int = 7) -> dict[str, Any]:
+        """Read-only preview of the next ``days`` days (nothing persisted).
+
+        Solves each day independently against the same tasks and class-time
+        events so the user can see a week ahead. The active plan is left
+        untouched; commit any single day with ``plan_day``.
+        """
+        day_ts = day_ts or self._today()
+        self._maybe_sync()
+        base = datetime.fromtimestamp(self._day_start_ts(day_ts))
+        out: list[dict[str, Any]] = []
+        for i in range(max(1, int(days))):
+            d = base + timedelta(days=i)
+            summary = self._summary(self._solve(int(d.timestamp())))
+            summary["date"] = d.strftime("%Y-%m-%d")
+            summary["weekday"] = d.strftime("%a")
+            out.append(summary)
+        return {"ok": True, "days": out, "count": len(out)}
 
     def _mark_scheduled(self, state: sch.PlanState) -> None:
         """Promote any freshly-placed ``todo`` task to ``scheduled``.

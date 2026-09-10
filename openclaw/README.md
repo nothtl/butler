@@ -12,7 +12,7 @@ truth (`tools/*` re-read the DB on every call, so answers are always fresh).
  │                 context,goals}                │
  │        MCP server "butler" (stdio) ─────────┐ │
  └─────────────────────────────────────────────┼─┘
-    .venv/bin/python -m butler.mcp_stdio  <=== 49 tools  ▼
+    .venv/bin/python -m butler.mcp_stdio  <=== 51 tools  ▼
                  Butler Python domain (planner, courses, food, ...)
 ```
 
@@ -82,7 +82,7 @@ child process (see config). Verify all tools list:
 
 ```bash
 openclaw mcp list
-openclaw mcp probe butler     # -> butler: 49 tools
+openclaw mcp probe butler     # -> butler: 51 tools
 ```
 
 A live tool call through the model also works:
