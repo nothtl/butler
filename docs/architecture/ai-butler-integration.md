@@ -1,4 +1,4 @@
-# AI Butler integration — architecture & boundary (M1)
+# AI Butler integration — architecture & boundary (M1/M2)
 
 Status: M1 integration spike. Describes how Pi Butler and
 [AI Butler](https://github.com/LumabyteCo/aibutler) fit together, the exact
@@ -66,7 +66,7 @@ read-only client cannot reach a mutating tool even by guessing its name
 (enforced in `_call_tool`, not just hidden from `tools/list`).
 
 - **`full`** — the historical 51-tool surface for OpenClaw. Unchanged.
-- **`readonly`** — the M1 executive surface for AI Butler (10 tools):
+- **`readonly`** — the M1/M2 executive surface for AI Butler (11 tools):
 
 | Tool | Returns | Side effects |
 |------|---------|--------------|
@@ -80,11 +80,54 @@ read-only client cannot reach a mutating tool even by guessing its name
 | `get_projects` | stable scaffold (real model in M3) | none |
 | `find_available_time` | free waking intervals (`day_offset`, `min_minutes`) | none |
 | `get_week` | read-only N-day preview | none |
+| `executive_ask` | typed `AgentResult` for a text/structured request | none |
+
+`executive_ask` is the M2 higher-level entry point: it accepts either free text
+(`text`) or an already-structured request (`request`) plus `include_context`,
+runs the deterministic `ExecutiveService` (validate → resolve → bounded snapshot
+→ existing domain logic), and returns the structured `AgentResult` as JSON. It
+never mutates: gated actions return `needs_confirmation` with candidate actions
+for the authorised layer to apply after consent.
 
 Not yet exposed (designed, gated, later milestones): task create/update/complete,
 schedule/defer/reschedule, calendar write, project/milestone update. Every
 future action must pass the existing `SafetyPolicy → permission → idempotency →
 execution → audit` path in `AgentRuntime`.
+
+## 2.1 M2 typed semantic contract
+
+M2 adds a stable, typed contract so an external reasoning runtime can express
+intent/constraints/context in structured form without Pi Butler growing a regex
+router. All models are stdlib dataclasses/enums (`butler/agent/semantic.py`);
+no new dependency.
+
+- **`AgentRequest`** — intent, action, target, entities, scope, constraints,
+  preferences, temporal, conversation, confidence, ambiguity,
+  requires_confirmation, raw_text. `from_dict(strict=True)` rejects unknown
+  fields, unknown enums, bad confidence and incoherent target/action pairs.
+- **`AgentResult`** — status, answer/data, facts, recommendations, warnings,
+  conflicts, assumptions, missing_information, candidate_actions,
+  confirmation_required, provenance, optional context.
+- **Constraints** — HARD vs SOFT and explicit vs inferred are separate axes;
+  `__post_init__` makes it impossible for an inferred source
+  (`routine_inferred`, `location_inferred`, `preference_learned`) to be HARD.
+- **Temporal** — `butler/agent/temporal.py` resolves tonight/tomorrow/in two
+  hours/after dinner/before class/this/next week/bare clock, preserves the
+  original phrase, marks inferred anchors as soft (confidence < 1) and leaves
+  unknown phrases `unresolved`. Boundaries are DST-safe (`zoneinfo`, calendar
+  arithmetic — never a flat 86 400 s).
+- **Context** — `ContextBuilder.build_snapshot(request)` gathers a bounded,
+  request-scoped `ContextSnapshot` (tasks/courses/commitments/windows/plan),
+  never a full DB dump.
+- **Flow** — NL → `DeterministicInterpreter` (or `LLMInterpreter`, strictly
+  validated) → `AgentRequest` → `ExecutiveService` (validate → resolve
+  entities/ambiguity against live state + bounded focus → snapshot → existing
+  deterministic domain logic) → `AgentResult`. The legacy `decider` remains the
+  fallback; no second agent loop is introduced.
+- **Mutations are gated** — `move`/`reschedule`/`defer`/… return
+  `needs_confirmation` with candidate actions and never touch state.
+
+`executive_ask` exposes this service over MCP (read-only profile).
 
 ## 3. Failure & fallback behaviour
 
@@ -161,6 +204,7 @@ possible without a rewrite.
 
 ```
 .venv/bin/python tests/run_acceptance_mcp_readonly.py   # 30 checks (M1)
+.venv/bin/python tests/run_acceptance_p72.py            # 76 checks (M2 semantic)
 .venv/bin/python tests/run_acceptance_mcp.py            # 19 checks (parity)
 # end-to-end stdio, as AI Butler connects:
 printf '%s\n' '<initialize>' '<tools/list>' '<tools/call get_time>' \

@@ -302,9 +302,20 @@ pure solver, one safety/audit/idempotency layer.
 **AI Butler boundary (verified):** AI Butler is an MCP *client over stdio*; Pi
 Butler is the domain/scheduling authority. The integration seam is the MCP
 server, exposed as two disjoint profiles: `full` (historical 51 tools, OpenClaw)
-and `readonly` (10 side-effect-free executive tools for AI Butler). See
+and `readonly` (11 side-effect-free executive tools for AI Butler). See
 `docs/architecture/ai-butler-integration.md` for the verified protocol, config,
 failure behaviour, security model and migration plan.
+
+**M2 typed semantic contract:** `butler/agent/semantic.py` (request/result
+models, HARD-vs-SOFT + explicit-vs-inferred constraints, ambiguity, bounded
+conversation context), `temporal.py` (deterministic, DST-safe phrase
+resolution), `context.py` (`build_snapshot`, JIT bounded context),
+`interpret.py` (`DeterministicInterpreter`, strictly-validated
+`LLMInterpreter`), `service.py` (`ExecutiveService`: validate → resolve →
+snapshot → existing domain logic → `AgentResult`), `session.py` (bounded
+focus/recent entities), and the readonly `executive_ask` MCP tool. Mutating
+actions are gated (`needs_confirmation`) and never executed here. The legacy
+`decider` remains the fallback; no second agent loop was introduced.
 
 **Redundancy if AI Butler is adopted:** only the Python *LLM loop* becomes
 redundant — `butler/agent/intent.py` LLM fallback, `prompts.py`, and the
@@ -313,11 +324,12 @@ typed registry, the solver/planner, and the safety/audit/idempotency layer
 remain authoritative. The registry/MCP seam added in M1/M2 is what makes this
 possible without a rewrite.
 
-**Baseline after M1 (this mission):** `run_acceptance_mcp_readonly.py` adds 30
-checks; MCP `VERSION = "1.4.0"`; the `full` profile is still exactly 51 tools.
-Two pre-existing proactive acceptance checks (`run_acceptance_p3.py`,
-`run_acceptance_p45.py`) are time-of-day dependent and fail only when the suite
-runs during configured quiet hours (22:00–08:00); they are unrelated to M1.
+**Baseline after M2 (this mission):** `run_acceptance_mcp_readonly.py` (30
+checks) and `run_acceptance_p72.py` (76 checks) cover the M1/M2 boundary; MCP
+`VERSION = "1.4.0"`; the `full` profile is still exactly 51 tools. The
+previously time-of-day-dependent proactive checks (`run_acceptance_p3.py`,
+`run_acceptance_p45.py`) are now pinned with a test-local frozen clock and are
+deterministic at any hour without weakening production quiet hours.
 
 Command:
 ```

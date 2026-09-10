@@ -215,7 +215,7 @@ class ToolRegistry:
 
 
 _JSON_TYPES = {"int": "integer", "float": "number", "bool": "boolean",
-               "list": "array", "dict": "object"}
+               "list": "array", "dict": "object", "object": "object"}
 
 
 def _json_schema(p: Param) -> dict[str, Any]:
@@ -248,6 +248,10 @@ def _coerce(tool: str, p: Param, value: Any) -> Any:
             elif not isinstance(value, (list, tuple)):
                 raise ValueError("not a list")
             value = list(value)
+        elif p.type in ("dict", "object"):
+            if not isinstance(value, dict):
+                raise ValueError("not an object")
+            value = dict(value)
         else:  # str
             value = str(value)
     except (TypeError, ValueError) as exc:

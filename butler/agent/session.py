@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .models import Intent
+from .semantic import ConversationContext, EntityRef
 
 
 @dataclass
@@ -40,6 +41,15 @@ class Session:
     data: dict[str, Any] = field(default_factory=dict)
     last_intent: Intent | None = None
     pending: dict[str, PendingAction] = field(default_factory=dict)
+    # M2: minimal, bounded conversation state. This is deliberately *not* a
+    # second agent runtime — just enough to resolve "that" / "the other one"
+    # and to carry a topic across one or two turns.
+    topic: str = ""
+    focus_entity: EntityRef | None = None
+    recent_entities: list[EntityRef] = field(default_factory=list)
+    last_result: dict[str, Any] = field(default_factory=dict)
+
+    MAX_RECENT_ENTITIES = 8
 
     # ---------------------------------------------------------------- turns
     def add_turn(self, role: str, content: str,
@@ -77,11 +87,46 @@ class Session:
     def clear_pending(self) -> None:
         self.pending.clear()
 
+    # ----------------------------------------------------- conversation state
+    def note_entity(self, ref: EntityRef, *, focus: bool = True) -> None:
+        """Record a referenced entity; optionally make it the conversation focus."""
+        key = ref.key()
+        self.recent_entities = [r for r in self.recent_entities
+                                if r.key() != key]
+        self.recent_entities.insert(0, ref)
+        del self.recent_entities[self.MAX_RECENT_ENTITIES:]
+        if focus and ref.resolved:
+            self.focus_entity = ref
+
+    def set_focus(self, ref: EntityRef | None) -> None:
+        self.focus_entity = ref
+        if ref is not None:
+            self.note_entity(ref)
+
+    def set_topic(self, topic: str) -> None:
+        self.topic = str(topic or "")
+
+    def note_result(self, digest: dict[str, Any]) -> None:
+        self.last_result = dict(digest or {})
+
+    def conversation(self) -> ConversationContext:
+        return ConversationContext(
+            topic=self.topic,
+            focus=self.focus_entity,
+            recent_entities=list(self.recent_entities),
+            last_result=dict(self.last_result),
+            turn_count=len(self.turns),
+        )
+
     def reset(self) -> None:
         self.turns.clear()
         self.data.clear()
         self.pending.clear()
         self.last_intent = None
+        self.topic = ""
+        self.focus_entity = None
+        self.recent_entities.clear()
+        self.last_result.clear()
 
 
 class SessionStore:

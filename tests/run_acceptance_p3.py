@@ -8,10 +8,12 @@ real Container/Decider pipeline. Prints PASS/FAIL for each assertion.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import sys
 import tempfile
+from datetime import datetime as _datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -30,6 +32,31 @@ def check(name: str, cond: bool, note: str = "") -> None:
     else:
         FAIL += 1
         print(f"  FAIL  {name}  {note}")
+
+
+@contextlib.contextmanager
+def frozen_clock(hour: int = 12, minute: int = 0):
+    """Pin ``butler.proactive``'s wall clock to a fixed time-of-day.
+
+    The proactive checks are about content/throttling, not about *when* the
+    suite happens to run. Freezing the clock makes them independent of the
+    machine's real time (quiet hours are 22:00-08:00) without weakening the
+    production quiet-hours behaviour.
+    """
+    import butler.proactive as proactive
+
+    class _Frozen(_datetime):
+        @classmethod
+        def now(cls, tz=None):  # noqa: D401
+            base = _datetime.now(tz) if tz else _datetime.now()
+            return base.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+    original = proactive.datetime
+    proactive.datetime = _Frozen
+    try:
+        yield
+    finally:
+        proactive.datetime = original
 
 
 def make_pdf(path: str, body: str) -> None:
@@ -177,7 +204,8 @@ def main() -> int:
           snap["free_minutes_today"])
     msgs = c.proactive.collect()
     check("proactive collect returns a list", isinstance(msgs, list))
-    prun = c.proactive.run()
+    with frozen_clock():
+        prun = c.proactive.run()
     check("proactive run completes", prun.get("ok") is True, str(prun))
 
     print("\n=== Phase 3: Decider wiring ===")

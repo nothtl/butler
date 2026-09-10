@@ -247,6 +247,15 @@ def build_mcp_registry(container: Any) -> ToolRegistry:
     add("get_week", "Read-only schedule preview for the next N days.",
         lambda a: c.planner.plan_week(days=int(a.get("days", 7) or 7)),
         [P("days", "int", default=7)], action="day", profile="readonly")
+    add("executive_ask", "Typed executive query. Accepts a structured request "
+        "object (the M2 semantic contract) or raw text; validates it, gathers "
+        "request-scoped context and returns an AgentResult. Strictly read-only: "
+        "mutating actions return needs_confirmation and never execute.",
+        lambda a: _executive_ask(c, a),
+        [P("request", "object", default={}),
+         P("text", "str", default=""),
+         P("include_context", "bool", default=False)],
+        action="ask", profile="readonly")
 
     return reg
 
@@ -390,6 +399,21 @@ def _get_projects(c: Any) -> dict[str, Any]:
     return {"ok": True, "count": len(rows), "projects": rows,
             "note": "Project intelligence (Goal→Project→Milestone→Task) is "
                     "scheduled for M3; this is a stable read-only placeholder."}
+
+
+def _executive_ask(c: Any, a: dict[str, Any]) -> dict[str, Any]:
+    from .service import ExecutiveService
+    svc = getattr(c, "_executive_service", None)
+    if svc is None:
+        svc = ExecutiveService(c)
+        try:
+            c._executive_service = svc
+        except Exception:  # noqa: BLE001 — container may use __slots__
+            pass
+    result = svc.ask(request=a.get("request") or None,
+                     text=str(a.get("text", "") or ""),
+                     include_context=bool(a.get("include_context", False)))
+    return result.to_dict()
 
 
 def _find_available_time(c: Any, a: dict[str, Any]) -> dict[str, Any]:

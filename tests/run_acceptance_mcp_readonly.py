@@ -32,7 +32,7 @@ FAIL = 0
 READONLY_TOOLS = {
     "get_time", "get_context", "get_day", "plan_day", "get_schedule",
     "get_tasks", "get_courses", "get_projects", "find_available_time",
-    "get_week",
+    "get_week", "executive_ask",
 }
 
 

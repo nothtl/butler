@@ -1,0 +1,377 @@
+"""Phase 7 / M2: natural language -> typed :class:`AgentRequest`.
+
+Interpretation is deliberately layered:
+
+* :class:`DeterministicInterpreter` is the safe default. It does **not** grow a
+  pile of regexes; it uses a small, ordered keyword table, the existing
+  :class:`~butler.decider.Decider` parser as a legacy fallback, live entity
+  lookup, and the deterministic :class:`~butler.agent.temporal.TemporalResolver`.
+* :class:`LLMInterpreter` lets a model *propose* a structured request, but the
+  proposal is parsed with ``AgentRequest.from_dict(strict=True)`` and never
+  trusted: unknown fields, unknown enums, bad confidence and incoherent
+  target/action combinations are rejected before any domain logic runs.
+
+The rest of the system depends only on the :class:`SemanticInterpreter`
+protocol, so an external reasoning runtime can supply its own interpretation
+without changing the executive layer.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+from typing import Any, Protocol, runtime_checkable
+
+from .errors import SemanticValidationError
+from .semantic import (
+    ActionKind, AgentRequest, Ambiguity, AmbiguityKind, Constraint,
+    ConstraintKind, ConstraintSource, EntityRef, EntityType, Hardness,
+    RequestIntent, TemporalRange, _TARGET_REQUIRED,
+)
+from .temporal import Clock, TemporalResolver
+
+log = logging.getLogger("butler.agent.interpret")
+
+# Ordered, most-specific-first. Substring matching only — not a regex pile.
+_ADVISE = (
+    "what should i", "what should we", "should i", "recommend",
+    "what now", "help me decide", "best use of", "how should i spend",
+    "what's the best", "whats the best",
+)
+_PLAN = (
+    "plan my", "plan the", "plan day", "plan week", "plan out",
+    "make a plan", "schedule my", "schedule the",
+)
+_FEASIBILITY = (
+    "can i", "do i have time", "is there time", "will i have time",
+    "do i have enough", "enough time", "fit in", "feasible", "possible to",
+)
+_URGENCY = (
+    "most urgent", "what's urgent", "whats urgent", "what is urgent",
+    "priority", "priorities", "what matters most", "top tasks",
+    "what should i prioritize",
+)
+_STATUS = (
+    "status", "how am i doing", "what's on", "whats on", "what do i have",
+    "overview", "summary", "brief me", "catch me up",
+)
+_MOVE = ("move ", "reschedule", "defer", "push back", "push ", "shift ")
+
+_TEMPORAL_MARKERS = (
+    "tonight", "this evening", "this morning", "this afternoon", "tomorrow",
+    "next week", "this week", "rest of the week", "today", "after dinner",
+    "after supper", "before class", "before my class", "right now", "now",
+)
+
+_REFERENCE_RE = re.compile(
+    r"\b(that|it|this|the other assignment|the other one|the other|"
+    r"that one|that task|that block|the same one)\b", re.I)
+
+_COURSE_CODE_RE = re.compile(r"\b([A-Za-z]{2,6}\s?\d{2,4}[A-Za-z]?)\b")
+
+
+@runtime_checkable
+class SemanticInterpreter(Protocol):
+    """Anything that can turn text into a typed request (or ``None``)."""
+
+    def interpret(self, text: str, *, context: Any = None,
+                  user: str = "user") -> Any: ...
+
+
+def _match(text: str, table: tuple[str, ...]) -> bool:
+    return any(token in text for token in table)
+
+
+class DeterministicInterpreter:
+    """Rule-light, deterministic interpretation with a legacy fallback."""
+
+    def __init__(self, container: Any, *, now_ts: int | None = None):
+        self.container = container
+        self.cfg = getattr(container, "cfg", None)
+        self.clock = Clock.from_config(self.cfg, now_ts=now_ts) \
+            if self.cfg is not None else Clock(now_ts=now_ts)
+        self.resolver = TemporalResolver(
+            self.clock,
+            sleep_start=int(getattr(self.cfg, "sleep_start", 23 * 60) or 0),
+            sleep_end=int(getattr(self.cfg, "sleep_end", 7 * 60) or 0),
+            class_windows=self._class_windows(),
+        )
+
+    # ------------------------------------------------------------- public
+    def interpret(self, text: str, *, context: Any = None,
+                  user: str = "user") -> AgentRequest:
+        raw = (text or "").strip()
+        low = raw.lower()
+        intent, action, confidence = self._classify(low)
+        phrase, temporal = self._temporal(low)
+        scope = self.resolver.scope(phrase, temporal)
+        entities = self._entities(low)
+        target = self._target(action, entities, low)
+        preferences = self._preferences(low)
+        constraints = self._constraints(preferences)
+        ambiguity = self._ambiguity(action, target, low)
+
+        return AgentRequest(
+            intent=intent, action=action, target=target, entities=entities,
+            scope=scope, constraints=constraints, preferences=preferences,
+            temporal=temporal, conversation=context, confidence=confidence,
+            ambiguity=ambiguity, requires_confirmation=(action in _MUTATING),
+            raw_text=raw, source="deterministic",
+        )
+
+    # ---------------------------------------------------------- classify
+    def _classify(self, low: str) -> tuple[RequestIntent, ActionKind, float]:
+        if _match(low, _MOVE):
+            action = ActionKind.RESCHEDULE if "reschedule" in low else ActionKind.MOVE
+            if "defer" in low or "push" in low:
+                action = ActionKind.DEFER
+            return RequestIntent.MUTATE, action, 0.7
+        if _match(low, _PLAN):
+            action = ActionKind.PLAN_WEEK if "week" in low else ActionKind.PLAN_DAY
+            return RequestIntent.PLAN, action, 0.75
+        if _match(low, _FEASIBILITY):
+            return RequestIntent.EVALUATE, ActionKind.FEASIBILITY, 0.7
+        if _match(low, _URGENCY):
+            return RequestIntent.QUERY, ActionKind.URGENCY, 0.7
+        if _match(low, _STATUS):
+            return RequestIntent.QUERY, ActionKind.STATUS, 0.6
+        if _match(low, _ADVISE):
+            return RequestIntent.ADVISE, ActionKind.RECOMMEND, 0.75
+        # legacy deterministic parser as the last structured fallback
+        legacy = self._legacy(low)
+        if legacy is not None:
+            return legacy
+        return RequestIntent.CHAT, ActionKind.UNKNOWN, 0.3
+
+    def _legacy(self, low: str) -> tuple[RequestIntent, ActionKind, float] | None:
+        decider = getattr(self.container, "decider", None)
+        if decider is None or not hasattr(decider, "parse"):
+            return None
+        try:
+            intent = decider.parse(low)
+        except Exception:  # noqa: BLE001 — interpretation must never crash
+            log.debug("legacy parse failed", exc_info=True)
+            return None
+        kind = str(getattr(intent, "kind", "") or "")
+        mapping = {
+            "now": (RequestIntent.ADVISE, ActionKind.RECOMMEND),
+            "why": (RequestIntent.QUERY, ActionKind.URGENCY),
+            "why_this": (RequestIntent.QUERY, ActionKind.URGENCY),
+            "day": (RequestIntent.PLAN, ActionKind.PLAN_DAY),
+            "week": (RequestIntent.PLAN, ActionKind.PLAN_WEEK),
+            "move_block": (RequestIntent.MUTATE, ActionKind.MOVE),
+            "defer_feedback": (RequestIntent.MUTATE, ActionKind.DEFER),
+            "briefing": (RequestIntent.QUERY, ActionKind.STATUS),
+            "review": (RequestIntent.QUERY, ActionKind.STATUS),
+        }
+        if kind in mapping:
+            req_intent, action = mapping[kind]
+            return req_intent, action, 0.65
+        return None
+
+    # ------------------------------------------------------------ temporal
+    def _temporal(self, low: str) -> tuple[str, TemporalRange]:
+        phrase = ""
+        for marker in _TEMPORAL_MARKERS:
+            if marker in low:
+                phrase = marker
+                break
+        if not phrase:
+            m = re.search(
+                r"\bin\s+[a-z0-9\-]+\s*(?:hour|hr|h|minute|min|m|day|d|week|w)s?\b",
+                low)
+            if m:
+                phrase = m.group(0)
+        if not phrase:
+            m = re.search(r"\b(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)\b", low)
+            if m:
+                phrase = m.group(0)
+        if not phrase:
+            return "", TemporalRange()
+        return phrase, self.resolver.resolve(phrase)
+
+    # ------------------------------------------------------------ entities
+    def _entities(self, low: str) -> list[EntityRef]:
+        out: list[EntityRef] = []
+        for course in self._courses():
+            code = str(course.get("code", "") or "")
+            if not code:
+                continue
+            if re.search(r"\b" + re.escape(code.lower()) + r"\b", low):
+                out.append(EntityRef(
+                    type=EntityType.COURSE, id=str(course.get("id", "")),
+                    name=code, resolved=True, confidence=0.9,
+                    source="course_table"))
+        for task in self._tasks():
+            title = str(task.get("title", "") or "")
+            if len(title) < 4:
+                continue
+            if title.lower() in low:
+                out.append(EntityRef(
+                    type=EntityType.TASK, id=str(task.get("id", "")),
+                    name=title, resolved=True, confidence=0.8,
+                    source="task_table"))
+        if not out:
+            m = _COURSE_CODE_RE.search(low)
+            if m:
+                out.append(EntityRef(
+                    type=EntityType.COURSE, name=m.group(1).strip().upper(),
+                    resolved=False, confidence=0.3, source="mention"))
+        return out
+
+    def _target(self, action: ActionKind, entities: list[EntityRef],
+                low: str) -> EntityRef | None:
+        if action not in _TARGET_REQUIRED:
+            return None
+        resolved = [e for e in entities if e.resolved]
+        if resolved:
+            return resolved[0]
+        m = _REFERENCE_RE.search(low)
+        if m:
+            return EntityRef(type=EntityType.UNKNOWN, name=m.group(0).lower(),
+                             resolved=False, confidence=0.2, source="pronoun")
+        return None
+
+    # --------------------------------------------------------- preferences
+    def _preferences(self, low: str) -> list[str]:
+        prefs: list[str] = []
+        try:
+            from .. import affinity
+            weights = affinity.preference_weights(low)
+            prefs += [f"prefer:{k}" for k, v in weights.items() if v > 0]
+            if affinity.is_tired(low):
+                prefs.append("low_energy")
+        except Exception:  # noqa: BLE001
+            pass
+        return sorted(set(prefs))[:8]
+
+    def _constraints(self, preferences: list[str]) -> list[Constraint]:
+        out: list[Constraint] = []
+        sleep_start = int(getattr(self.cfg, "sleep_start", 23 * 60) or 0)
+        sleep_end = int(getattr(self.cfg, "sleep_end", 7 * 60) or 0)
+        if sleep_start and sleep_end:
+            out.append(Constraint(
+                kind=ConstraintKind.SLEEP, hardness=Hardness.HARD,
+                source=ConstraintSource.SYSTEM, label="sleep",
+                value={"start_min": sleep_start, "end_min": sleep_end},
+                note="authoritative quiet window"))
+        if "low_energy" in preferences:
+            out.append(Constraint(
+                kind=ConstraintKind.ENERGY, hardness=Hardness.SOFT,
+                source=ConstraintSource.EXPLICIT_USER, label="low_energy"))
+        return out
+
+    # ---------------------------------------------------------- ambiguity
+    def _ambiguity(self, action: ActionKind, target: EntityRef | None,
+                   low: str) -> list[Ambiguity]:
+        if action in _TARGET_REQUIRED and target is None:
+            return [Ambiguity(
+                kind=AmbiguityKind.ENTITY, field_name="target",
+                mention=low[:60],
+                reason="I need to know which task or block you mean")]
+        return []
+
+    # -------------------------------------------------------------- data
+    def _courses(self) -> list[dict[str, Any]]:
+        db = getattr(self.container, "db", None)
+        if db is None or not hasattr(db, "courses"):
+            return []
+        try:
+            return [dict(r) for r in db.courses()]
+        except Exception:  # noqa: BLE001
+            return []
+
+    def _tasks(self) -> list[dict[str, Any]]:
+        db = getattr(self.container, "db", None)
+        if db is None or not hasattr(db, "tasks"):
+            return []
+        try:
+            return [dict(r) for r in db.tasks("active")]
+        except Exception:  # noqa: BLE001
+            return []
+
+    def _class_windows(self) -> list[tuple[int, int, str]]:
+        """(start_ts, end_ts, title) for upcoming classes, if available."""
+        db = getattr(self.container, "db", None)
+        if db is None or not hasattr(db, "events_between"):
+            return []
+        try:
+            now = self.clock.now_ts()
+            rows = db.events_between(now, now + 14 * 86400)
+        except Exception:  # noqa: BLE001
+            return []
+        out = []
+        for r in rows:
+            title = str(r["title"] or "")
+            if "class" in title.lower() or "lecture" in title.lower():
+                out.append((int(r["start_ts"]), int(r["end_ts"]), title))
+        return out
+
+
+#: Actions whose mere interpretation never authorises a side effect.
+_MUTATING = frozenset({
+    ActionKind.MOVE, ActionKind.RESCHEDULE, ActionKind.DEFER,
+    ActionKind.CREATE_TASK, ActionKind.COMPLETE_TASK, ActionKind.UPDATE,
+})
+
+
+class LLMInterpreter:
+    """Let a model propose an :class:`AgentRequest`; validate it strictly.
+
+    The model output is treated as untrusted input: it must be a single JSON
+    object matching the request schema. Anything else raises
+    :class:`SemanticValidationError`, which the service turns into an
+    ``invalid`` result rather than guessing.
+    """
+
+    SYSTEM = (
+        "You convert a user's message into a single JSON object for a personal "
+        "assistant. Output ONLY JSON, no prose. Schema keys: intent "
+        "(advise|plan|evaluate|query|mutate|chat|unknown), action (recommend|"
+        "plan_day|plan_week|feasibility|urgency|status|move|reschedule|defer|"
+        "create_task|complete_task|update|unknown), target, entities, scope, "
+        "constraints, preferences, temporal, confidence, raw_text. Never mark "
+        "an inferred preference as a hard constraint. If unsure, use unknown "
+        "and low confidence rather than inventing values."
+    )
+
+    def __init__(self, llm: Any):
+        self.llm = llm
+
+    def interpret(self, text: str, *, context: Any = None,
+                  user: str = "user") -> Any:
+        raw = (text or "").strip()
+        payload = self._call(raw)
+        if payload is None:
+            return None
+        if not isinstance(payload, dict):
+            raise SemanticValidationError("llm: response was not a JSON object")
+        payload.setdefault("raw_text", raw)
+        payload.setdefault("source", "llm")
+        req = AgentRequest.from_dict(payload, strict=True)
+        if context is not None and req.conversation is None:
+            req.conversation = context
+        return req
+
+    def _call(self, text: str) -> Any:
+        prompt = (self.SYSTEM, text)
+        try:
+            out = self.llm(prompt) if callable(self.llm) else \
+                self.llm._llm(prompt)
+        except Exception as exc:  # noqa: BLE001
+            raise SemanticValidationError(f"llm: call failed ({exc})") from exc
+        if not out:
+            return None
+        start, end = out.find("{"), out.rfind("}")
+        if start < 0 or end < start:
+            raise SemanticValidationError("llm: no JSON object in response")
+        try:
+            return json.loads(out[start:end + 1])
+        except (TypeError, ValueError) as exc:
+            raise SemanticValidationError(
+                f"llm: malformed JSON ({exc})") from exc
+
+
+def default_interpreter(container: Any) -> DeterministicInterpreter:
+    return DeterministicInterpreter(container)

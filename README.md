@@ -57,10 +57,10 @@ config to use the bot.
 disjoint profiles selected by `BUTLER_MCP_PROFILE`:
 
 - **`full`** (default) — the historical 51-tool surface used by OpenClaw.
-- **`readonly`** — a 10-tool, side-effect-free executive surface
+- **`readonly`** — an 11-tool, side-effect-free executive surface
   (`get_time`, `get_context`, `get_day`, `plan_day`, `get_schedule`,
   `get_tasks`, `get_courses`, `get_projects`, `find_available_time`,
-  `get_week`) for an external agent runtime such as
+  `get_week`, `executive_ask`) for an external agent runtime such as
   [AI Butler](https://github.com/LumabyteCo/aibutler).
 
 The readonly profile is enforced at dispatch, not just hidden from

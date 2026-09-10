@@ -26,11 +26,13 @@ Telegram/decider wiring obey the Phase 4.5 rules:
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import sys
 import tempfile
 import time
+from datetime import datetime as _datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -51,6 +53,26 @@ def check(name: str, cond: bool, note: str = "") -> None:
     else:
         FAIL += 1
         print(f"  FAIL  {name}  {note}")
+
+
+@contextlib.contextmanager
+def frozen_clock(hour: int = 12, minute: int = 0):
+    """Pin ``butler.proactive``'s wall clock so quiet hours never mask the
+    throttling checks (independent of when the suite runs)."""
+    import butler.proactive as proactive
+
+    class _Frozen(_datetime):
+        @classmethod
+        def now(cls, tz=None):  # noqa: D401
+            base = _datetime.now(tz) if tz else _datetime.now()
+            return base.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+    original = proactive.datetime
+    proactive.datetime = _Frozen
+    try:
+        yield
+    finally:
+        proactive.datetime = original
 
 
 class FakeHA:
@@ -343,7 +365,8 @@ def main() -> int:
     now = time.time()
     pr._state["last_push"] = now
     pr._state["last_messages"] = []
-    res = pr.run()
+    with frozen_clock():
+        res = pr.run()
     check("15 cooldown respected (no re-push within cooldown)",
           res.get("ok") is False and res.get("reason") == "cooldown",
           str(res.get("reason")))
