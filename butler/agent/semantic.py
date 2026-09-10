@@ -501,6 +501,7 @@ class Provenance:
     tool: str = ""
     generated: int = 0
     deterministic: bool = True
+    request_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return _dump(self)
@@ -514,6 +515,7 @@ class Provenance:
             tool=str(d.get("tool", "") or ""),
             generated=int(d.get("generated", 0) or 0),
             deterministic=bool(d.get("deterministic", True)),
+            request_id=str(d.get("request_id", "") or ""),
         )
 
 
@@ -727,11 +729,12 @@ class AgentResult:
 
     def with_provenance(self, source: str, method: str, *,
                         tool: str = "", deterministic: bool = True,
-                        generated: int = 0) -> "AgentResult":
+                        generated: int = 0,
+                        request_id: str = "") -> "AgentResult":
         self.provenance.append(Provenance(
             source=source, method=method, tool=tool,
             generated=generated or int(time.time()),
-            deterministic=deterministic))
+            deterministic=deterministic, request_id=request_id))
         return self
 
     @classmethod

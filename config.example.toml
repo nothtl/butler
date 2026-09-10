@@ -1,0 +1,161 @@
+# Pi Butler — example configuration.
+#
+# Copy to ~/.config/butler/config.toml (or point BUTLER_CONFIG at it) and edit.
+# NEVER put real secrets here if the file is committed or world-readable:
+# prefer environment variables for tokens/keys (see below).
+#
+# Env overrides: BUTLER_CONFIG, BUTLER_DATA_DIR, BUTLER_TIMEZONE,
+# BUTLER_TELEGRAM_TOKEN, BUTLER_LLM_KEY, BUTLER_GCAL_ID, BUTLER_GCAL_READ,
+# BUTLER_HA_TOKEN, BUTLER_REMOTE_TOKEN.
+
+[user]
+# IANA timezone, e.g. "America/Los_Angeles". Empty = system local.
+timezone = ""
+
+[storage]
+data_dir = "~/ButlerStorage"
+roots = ["~/Downloads", "~/Documents", "~/Desktop", "~/ButlerStorage"]
+index_roots = ["~/Downloads", "~/Documents", "~/Desktop"]
+course_dir = "~/University"
+incoming_dir = "~/Incoming"
+courses = []
+max_file_size_mb = 256
+
+[trash]
+retention_days = 30
+
+[telegram]
+# token = "123456:ABC..."          # prefer env BUTLER_TELEGRAM_TOKEN
+# allowed_users = [123456789]      # empty = deny-by-default (safe)
+# open_when_empty = false          # true = anyone may use the bot (dev only)
+
+[backup]
+dir = "~/Backups"
+schedule = "daily"
+
+[remote]
+enabled = false
+port = 7841
+# token = "..."                    # prefer env BUTLER_REMOTE_TOKEN
+
+[embed]
+model = "BAAI/bge-small-en-v1.5"
+dim = 384
+
+[ai]
+# api_key = "sk-..."               # prefer env BUTLER_LLM_KEY
+base_url = "https://api.openai.com/v1"
+model = "gpt-4o-mini"
+rag_top_k = 6
+
+[ocr]
+enabled = false
+
+[scheduler]
+enabled = true
+reindex_every_hours = 6
+digest = "daily"
+# digest_chat = 123456789
+
+[planner]
+sleep_start = 1380
+sleep_end = 420
+buffer_fraction = 0.20
+buffer_minutes = 15
+min_slot_minutes = 25
+urgency_deadline_days = 3
+undo_history_max = 50
+google_calendar_enabled = false
+google_calendar_credentials = "~/.config/butler/client_secret.json"
+# local_calendar_file = "~/University/schedule.ics"
+
+[links]
+dir = "~/ButlerStorage/links"
+check_hours = 24
+download = true
+
+[web]
+enabled = true
+search_provider = "offline"        # offline | duckduckgo
+max_results = 8
+max_sources = 5
+timeout = 12
+max_content_chars = 20000
+max_fetch_bytes = 2000000
+cache_ttl = 3600
+domain_allowlist = []
+user_agent = "Butler/4 (+personal assistant)"
+
+[optimizer]
+enabled = true
+default_strategy = "balanced"      # baseline|deadline_first|risk_first|priority_first|balanced
+max_horizon_days = 14
+max_session_minutes = 90
+max_iterations = 50
+churn_penalty = 1.0
+fragmentation_penalty = 1.0
+
+[memory]
+enabled = true
+max_scan = 500
+search_limit = 8
+context_limit = 5
+min_confidence = 0.35
+routine_min_observations = 3
+routine_confidence_min = 0.5
+routine_stale_days = 21
+temporal_ttl_days = 7
+course_stale_days = 120
+project_stale_days = 30
+estimate_min_samples = 3
+estimate_min_ratio = 1.15
+max_value_chars = 2000
+allow_web_facts = true
+
+[proactive]
+enabled = true
+schedule = "hourly"
+# notify_chat = 123456789
+quiet_start = 1320                 # 22:00 (0 disables)
+quiet_end = 480                    # 08:00
+cooldown_minutes = 15
+max_per_cadence = 5
+dedup_window_minutes = 30
+engine_enabled = true
+daily_budget = 5
+critical_budget = 2
+min_priority = "medium"
+deadline_risk_ratio = 1.0
+min_free_window_minutes = 60
+risk_increase = 0.15
+min_confidence = 0.6
+candidate_expiry_minutes = 1440
+prep_lead_minutes = 60
+web_check_enabled = false
+web_ttl_minutes = 360
+max_candidates = 50
+quiet_critical = true
+briefing_enabled = true
+cat_deadline_risk = true
+cat_free_time = true
+cat_missed_task = true
+cat_schedule_conflict = true
+cat_project_risk = true
+cat_estimate = true
+cat_routine = true
+cat_travel = true
+cat_web_change = true
+cat_food = true
+cat_course = true
+
+[home_assistant]
+enabled = false
+# url = "http://homeassistant.local:8123"
+# token = "..."                    # prefer env BUTLER_HA_TOKEN
+
+[routines]
+enabled = true
+
+[timeline]
+enabled = true
+retention_days = 30

@@ -571,3 +571,52 @@ notification system or autonomous agent. Full design in
 
 **Baseline after M7:** `tests/run_acceptance_m7.py` (112 deterministic checks)
 added; all prior suites pass with the readonly count updated to 30.
+
+## 16. M8 as implemented (final integration, deployment & hardening)
+
+Milestone M8 turns M1–M7 into a coherent, installable, always-on product. It
+adds no new subsystem; it integrates, hardens, documents and end-to-end
+validates. Product version **1.0.0** (`butler/__init__.py`), MCP version
+**1.5.0**.
+
+### Implemented
+- **Onboarding/config.** `config.example.toml` (no secrets, env-var guidance)
+  and `./butler.sh config-check` with first-run hints.
+- **Health.** `Health.subsystems()` / `Health.report()` classify every
+  subsystem as `HEALTHY` / `DEGRADED` / `UNAVAILABLE` / `DISABLED` (database,
+  migrations, filesystem, telegram, model, google_calendar, web, mcp, memory,
+  scheduler, optimizer, proactive, heartbeat, recovery). `./butler.sh health`.
+- **Database hardening.** Persisted `PRAGMA user_version` (`SCHEMA_VERSION=8`),
+  WAL mode, `busy_timeout`, `synchronous=NORMAL`, `foreign_keys=ON`,
+  `quick_check`, idempotent in-place migration, WAL checkpoint on close.
+- **Backup/restore.** `./butler.sh backup` / `db-backup` / `backups` /
+  `restore <file>`; restore refuses files outside the backup dir and takes a
+  pre-restore snapshot.
+- **Startup/shutdown.** `butler/app.py::ButlerApp` loads config, recovers stale
+  scheduler leases and proactive state, validates access posture, exposes
+  ready/health, starts jobs and shuts down cleanly on `SIGTERM`/`SIGINT`
+  (stops scheduler/monitor, closes the DB).
+- **Error UX & observability.** `butler/ux.py` (`friendly_error`, `redact_text`,
+  `chunk_text`, `new_request_id`); errors never leak raw internals or secrets,
+  Telegram replies are chunked, and every result carries a correlation id in its
+  provenance.
+- **Security posture.** `butler/security.py` reviews Telegram access, config
+  permissions, secret-shaped values, confirmation gating and MCP profile
+  safety; `./butler.sh security`.
+- **Docs.** `docs/deployment/raspberry-pi.md`, `docs/release-checklist.md`,
+  rewritten `README.md`.
+- **Tests.** `tests/run_acceptance_m8.py` and an aggregate
+  `tests/run_acceptance_final.py` (PASS/FAIL/SKIPPED/DEGRADED summary).
+
+### Degraded / optional
+- Telegram, Google Calendar, the LLM and the web provider are optional; each is
+  reported `DISABLED`/`DEGRADED`/`UNAVAILABLE` and degrades without crashing the
+  product. Deterministic features work with no LLM and no web.
+- Home Assistant presence is optional and zone-only.
+
+### Future
+- Voice input, additional front-ends, more proactive detectors and integrations
+  are maintenance/enhancement work, not new architecture phases.
+
+**Baseline after M8:** `tests/run_acceptance_m8.py` (150+ checks) and
+`tests/run_acceptance_final.py` added; all prior suites remain green.

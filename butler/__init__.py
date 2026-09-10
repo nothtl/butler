@@ -13,4 +13,5 @@ __all__ = [
     "Search", "Organizer", "Plan", "PlanItem", "Decider", "Intent",
 ]
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
+PRODUCT_NAME = "Pi Butler"

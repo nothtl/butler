@@ -78,6 +78,15 @@ async def msg_reply(message: Any, text: str, **kw: Any) -> Any:
     return await message.reply_text(text, **kw)
 
 
+async def reply_long(message: Any, text: str, **kw: Any) -> Any:
+    """Send a possibly-long message in platform-safe chunks."""
+    from .ux import chunk_text
+    last = None
+    for piece in chunk_text(text):
+        last = await message.reply_text(piece, **kw)
+    return last
+
+
 class TelegramBot:
     def __init__(self, container: Container):
         self.container = container
@@ -426,7 +435,9 @@ class TelegramBot:
             await update.effective_message.reply_text("\n".join(lines))
         except Exception as exc:
             log.warning("topics error: %s", exc)
-            await update.effective_message.reply_text(f"⚠️ {exc}")
+            from .ux import friendly_error
+            await update.effective_message.reply_text(
+                f"⚠️ {friendly_error(exc)}")
 
     # ------------------------------------------------------------ handlers
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -578,7 +589,9 @@ class TelegramBot:
         try:
             result = await self._resolve(intent, user, via_agent=via_agent)
         except Exception as exc:
-            await update.effective_message.reply_text(f"⚠️ {exc}")
+            log.warning("dispatch failed: %s", exc, exc_info=True)
+            from .ux import friendly_error
+            await update.effective_message.reply_text(f"⚠️ {friendly_error(exc)}")
             return
         await self._render(update, intent, result)
 
@@ -603,7 +616,7 @@ class TelegramBot:
         msg = update.effective_message
         kind = getattr(intent, "kind", None) or result.get("kind", "")
         if kind == "help":
-            await msg.reply_text(result["text"])
+            await reply_long(msg, result["text"])
             return
         if isinstance(result, Plan):  # a Plan — ask for confirmation (feature 12)
             plan = result
@@ -667,13 +680,13 @@ class TelegramBot:
         elif kind == "status":
             await msg.reply_text(str(result["config"]))
         elif kind == "day":
-            await msg.reply_text("📅 Today\n```\n" + result.get("text", "") + "\n```")
+            await reply_long(msg, "📅 Today\n```\n" + result.get("text", "") + "\n```")
         elif kind == "week":
             lines = ["🗓 Week ahead"]
             for d in result.get("days", []):
                 lines.append(f"\n{d.get('weekday', '')} {d.get('date', '')}")
                 lines.append(d.get("text", ""))
-            await msg.reply_text("\n".join(lines)[:3900])
+            await reply_long(msg, "\n".join(lines))
         elif kind == "now":
             await msg.reply_text("▶️ " + result.get("answer", "Nothing to do."))
         elif kind == "plan_tasks":
@@ -927,7 +940,7 @@ class TelegramBot:
         elif kind == "briefing":
             await self._reply_briefing(msg, result)
         elif kind == "review":
-            await msg.reply_text(result.get("text", "Nothing to review yet."))
+            await reply_long(msg, result.get("text", "Nothing to review yet."))
         elif kind == "proactive":
             messages = result.get("messages", [])
             if not messages:
@@ -1275,7 +1288,9 @@ class TelegramBot:
                 text = self._apply_text(applied)
                 await query.edit_message_text(f"✅ Applied.\n{text}")
             except Exception as exc:
-                await query.edit_message_text(f"⚠️ {exc}")
+                from .ux import friendly_error
+                await query.edit_message_text(
+                    f"⚠️ {friendly_error(exc)}")
         elif action == "cancel":
             self.pending.pop(plan_id, None)
             await query.edit_message_text("Cancelled — nothing was changed.")

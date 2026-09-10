@@ -23,6 +23,10 @@ ACTIVE_TASK_STATUSES = ("todo", "doing", "scheduled")
 TERMINAL_STATUSES = ("completed", "skipped", "cancelled", "deferred", "blocked")
 _VALID_TASK_STATUSES = ACTIVE_TASK_STATUSES + TERMINAL_STATUSES
 
+#: Current schema revision. Bumped whenever a migration is added; persisted in
+#: ``PRAGMA user_version`` so startup can detect an old/new database.
+SCHEMA_VERSION = 8
+
 
 def normalize_status(status: str) -> str:
     s = (status or "").strip().lower()
@@ -703,9 +707,40 @@ class DB:
         self.conn = sqlite3.connect(self.path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self._lock = __import__("threading").Lock()
+        # Hardening: wait briefly instead of failing immediately under
+        # contention, and keep durable writes reasonably cheap on the Pi.
+        for pragma in ("PRAGMA busy_timeout=5000",
+                       "PRAGMA synchronous=NORMAL",
+                       "PRAGMA foreign_keys=ON"):
+            try:
+                self.conn.execute(pragma)
+            except sqlite3.Error:  # pragma: no cover — best effort
+                pass
         self.conn.executescript(SCHEMA)
         self._migrate()
+        self._set_schema_version()
         self.conn.commit()
+
+    def _set_schema_version(self) -> None:
+        try:
+            self.conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+        except sqlite3.Error:  # pragma: no cover
+            pass
+
+    def schema_version(self) -> int:
+        try:
+            row = self.conn.execute("PRAGMA user_version").fetchone()
+            return int(row[0]) if row else 0
+        except sqlite3.Error:  # pragma: no cover
+            return 0
+
+    def integrity_check(self) -> str:
+        """SQLite ``quick_check`` result (``"ok"`` when healthy)."""
+        try:
+            row = self.conn.execute("PRAGMA quick_check").fetchone()
+            return str(row[0]) if row else "unknown"
+        except sqlite3.Error as exc:  # pragma: no cover
+            return f"error: {exc}"
 
     def _migrate(self) -> None:
         """Idempotently add newly-introduced columns to pre-existing tables.
@@ -747,6 +782,10 @@ class DB:
 
     def close(self) -> None:
         try:
+            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except Exception:  # noqa: BLE001 — checkpoint is best effort
+            pass
+        try:
             self.conn.close()
         except Exception:
             pass
@@ -759,6 +798,8 @@ class DB:
             pass
         self.conn = sqlite3.connect(self.path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA busy_timeout=5000")
+        self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.executescript("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
         self.conn.commit()
 

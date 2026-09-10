@@ -39,6 +39,7 @@ def main(argv: list[str] | None = None) -> int:
         "mealhistory", "rate", "context", "where", "around",
         "briefing", "review",
         "health", "audit", "restore", "mode",
+        "version", "security", "config-check", "backups", "db-backup", "start",
     ])
     p.add_argument("args", nargs="*")
     p.add_argument("--yes", action="store_true", help="auto-confirm bulk plans")
@@ -49,6 +50,12 @@ def main(argv: list[str] | None = None) -> int:
     if ns.command == "help":
         print(p.format_help())
         return 0
+    if ns.command == "version":
+        from . import __version__, PRODUCT_NAME
+        print(f"{PRODUCT_NAME} {__version__}")
+        return 0
+    if ns.command == "config-check":
+        return config_check(ns)
 
     from .core import Container
     container = Container()
@@ -56,8 +63,38 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return dispatch(container, ns)
     except Exception as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        from .ux import friendly_error, redact_text
+        print(f"error: {redact_text(friendly_error(exc))}", file=sys.stderr)
         return 1
+
+
+def config_check(ns: argparse.Namespace) -> int:
+    """Validate configuration and print first-run onboarding hints."""
+    from .config import Config
+    try:
+        cfg = Config.load()
+        cfg.validate()
+    except Exception as exc:  # noqa: BLE001
+        print(f"config error: {exc}", file=sys.stderr)
+        return 1
+    print(f"config OK: {cfg.config_path}")
+    print(f"  data_dir : {cfg.data_dir}")
+    print(f"  timezone : {cfg.timezone or '(system local)'}")
+    hints = []
+    if not cfg.telegram_token:
+        hints.append("Telegram not configured (set telegram.token or "
+                     "BUTLER_TELEGRAM_TOKEN)")
+    elif not cfg.telegram_allowed_users and not cfg.telegram_open_when_empty:
+        hints.append("Telegram is deny-by-default; add allowed_users")
+    if not cfg.llm_api_key:
+        hints.append("No LLM key; deterministic features only")
+    if not cfg.google_calendar_enabled:
+        hints.append("Google Calendar disabled (optional)")
+    if cfg.web_search_provider == "offline":
+        hints.append("Web provider offline (optional)")
+    for h in hints:
+        print(f"  hint: {h}")
+    return 0
 
 
 def dispatch(container: Container, ns: argparse.Namespace) -> int:
@@ -143,9 +180,21 @@ def dispatch(container: Container, ns: argparse.Namespace) -> int:
         plan = container.decider.parse(" ".join(args) if args else "")
         return apply_plan(container, plan, ns)
     if cmd == "backup":
+        if getattr(container.cfg, "backup_dir", ""):
+            return emit(container, {"kind": "db_backup",
+                                    **container.recovery.db_backup("cli backup")}, ns)
         return emit(container, {"kind": "backup", **container.backup.status()}, ns)
+    if cmd == "db-backup":
+        return emit(container, {"kind": "db_backup",
+                                **container.recovery.db_backup("cli db-backup")}, ns)
+    if cmd == "backups":
+        return emit(container, {"kind": "backups",
+                                "backups": container.recovery.list_backups()}, ns)
+    if cmd == "security":
+        from .security import review
+        return emit(container, {"kind": "security", **review(container)}, ns)
     if cmd == "health":
-        return emit(container, {"kind": "health", **container.health.status()}, ns)
+        return emit(container, {"kind": "health", **container.health.report()}, ns)
     if cmd == "audit":
         limit = int(args[0]) if args and args[0].isdigit() else 50
         return emit(container, {"kind": "audit",
@@ -185,13 +234,11 @@ def dispatch(container: Container, ns: argparse.Namespace) -> int:
             srv.stop()
         return 0
     if cmd == "bot":
-        from .telebot import TelegramBot
         import logging as _logging
         _logging.basicConfig(level=_logging.INFO,
                              format="%(asctime)s %(name)s %(levelname)s %(message)s")
-        bot = TelegramBot(container)
-        bot.run_forever()
-        return 0
+        from .app import ButlerApp
+        return ButlerApp(container).run_bot()
     if cmd == "mcp":
         from .mcp import MCPServer
         return MCPServer(container).run()
@@ -390,21 +437,12 @@ def dispatch(container: Container, ns: argparse.Namespace) -> int:
                                 "text": "usage: butler calendar connect|sync|create [name]|list|use <id>|current"}, ns)
     if cmd == "daemon":
         # run course monitor + scheduler together in the foreground
-        from .monitor import CourseMonitor
-        from .scheduler import Scheduler
-        mon = CourseMonitor(container)
-        sched = Scheduler(container)
-        mon.start()
-        sched.start()
-        print("butler daemon: monitoring", mon.watch_paths(), "| scheduler on")
-        try:
-            import time as _t
-            while True:
-                _t.sleep(3600)
-        except KeyboardInterrupt:
-            mon.stop()
-            sched.stop()
-        return 0
+        from .app import ButlerApp
+        return ButlerApp(container).run_daemon()
+    if cmd == "start":
+        # alias for daemon (production foreground service)
+        from .app import ButlerApp
+        return ButlerApp(container).run_daemon()
     return 1
 
 
@@ -487,6 +525,27 @@ def _last(a: list[str]) -> str:
 def render(c: Container, r: dict) -> str:
     from .telebot import human_size
     k = r.get("kind")
+    if k == "health":
+        lines = [f"Butler {r.get('version', '?')} — {r.get('overall', '?')}"]
+        for name, info in (r.get("subsystems") or {}).items():
+            lines.append(f"  {info['state']:<11} {name}: {info.get('detail', '')}")
+        hb = (r.get("heartbeat") or {})
+        if hb.get("uptime_seconds") is not None:
+            lines.append(f"  uptime: {hb['uptime_seconds']}s")
+        return "\n".join(lines)
+    if k == "security":
+        lines = [f"security: {'ok' if r.get('ok') else str(r.get('warnings')) + ' warning(s)'}"]
+        for f in r.get("findings", []):
+            lines.append(f"  [{f['severity']}] {f['id']}: {f['detail']}")
+        return "\n".join(lines)
+    if k == "db_backup":
+        if r.get("ok"):
+            return f"backup written: {r.get('dest')} ({human_size(r.get('size_bytes'))})"
+        return f"backup failed: {r.get('detail')}"
+    if k == "backups":
+        bs = r.get("backups", [])
+        return "\n".join(f"#{b.get('id')} {b.get('dest')} ({b.get('status')})"
+                         for b in bs) or "No backups yet."
     if k == "status":
         cfg = r["config"]
         return (

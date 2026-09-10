@@ -31,6 +31,7 @@ from .semantic import (
     _TARGET_REQUIRED,
 )
 from .temporal import Clock, TemporalResolver
+from ..ux import new_request_id
 
 log = logging.getLogger("butler.agent.service")
 
@@ -65,6 +66,7 @@ class ExecutiveService:
         # When True, memory-mutating actions return a proposal instead of
         # executing (used by the strictly read-only `executive_ask` MCP tool).
         self._read_only = False
+        self.request_id = ""
 
     # --------------------------------------------------------------- public
     def ask(self, *, request: Any = None, text: str = "", user: str = "user",
@@ -91,6 +93,7 @@ class ExecutiveService:
         except SemanticValidationError as exc:
             return AgentResult.invalid(str(exc))
         self._read_only = bool(read_only)
+        self.request_id = new_request_id()
         session = self.session(user)
         ambiguities = self._resolve(req, session)
         if ambiguities:
@@ -112,7 +115,8 @@ class ExecutiveService:
             res.context = snapshot
         if not res.provenance:
             res.with_provenance("executive_service", req.action.value,
-                                deterministic=True)
+                                deterministic=True,
+                                request_id=getattr(self, "request_id", ""))
         self._remember(session, req, res)
         return res
 

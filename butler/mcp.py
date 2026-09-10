@@ -27,7 +27,7 @@ from .agent.mcp_tools import build_mcp_registry
 log = logging.getLogger("butler.mcp")
 
 SERVER_NAME = "butler"
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 PROTOCOL = "2024-11-05"
 DEFAULT_PROFILE = "full"
 
