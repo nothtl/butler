@@ -62,7 +62,8 @@ constraint. Every side effect goes through
 `safety → permission → idempotency → execution → audit`.
 
 See `docs/architecture/current-state.md` for the full, current implementation
-map and `docs/architecture/` for the per-milestone design notes.
+map and `docs/architecture/` for the per-milestone design notes. User guides:
+`docs/usage/telegram.md`, `docs/usage/topics.md`, `docs/usage/settings.md`.
 
 ## Safety model
 

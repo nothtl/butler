@@ -776,3 +776,43 @@ source of truth. Full design in `docs/architecture/creation-and-organization.md`
 - **Tests.** `tests/run_acceptance_n3.py` (165 deterministic checks).
 
 **Baseline after N3:** all prior suites plus N3 pass (32 suites, 1951 checks).
+
+## 21. N4 as implemented (final Telegram UX, settings & workflows)
+
+The final major post-M8 milestone: make the existing subsystems feel like one
+simple assistant from Telegram, with a single command set, a single settings
+layer and end-to-end workflows. No new architecture, database paradigm or
+scheduler/memory/notification system. User docs: `docs/usage/telegram.md`,
+`docs/usage/topics.md`, `docs/usage/settings.md`.
+
+- **Command cleanup.** Removed the duplicate `/organize` registration; one
+  canonical command set (`/start /help /topics /topic /add /track /trackers
+  /link /organize /day /week /now /tasks /projects /courses /food /grocery
+  /memory /settings /context /health /undo`) with legacy aliases preserved and
+  a grouped `/help` that teaches natural language.
+- **SettingsService** (`butler/settings.py`, wired as `Container.settings`): one
+  thin layer over the existing `Config`, persisting safe overrides in the
+  existing `app_settings` table and applying them at startup. Whitelisted keys
+  for scheduling/notifications/memory/integrations/location; secrets never shown.
+- **Natural-language settings.** "Don't schedule work after 10 PM.", "Quiet
+  hours 11 PM to 7 AM.", "Stop proactively messaging me about low-priority
+  things.", "Disable web.", "Track location only at zone level." → interpret →
+  apply (or propose on the read-only surface) → persist → audit.
+- **Topic UX.** Onboarding summary, capability states, the pinned control panel
+  (edit-in-place, content hash, replace+repin, restart reconciliation) and the
+  Settings/Connections/Details/Storage views from N1 are the single topic
+  surface; system settings live separately.
+- **Tracker UX.** Human-readable `/trackers`, explanations and "why did you
+  notify me?"; no raw event ids.
+- **Scheduling UX.** Natural-language scheduling returns a proposal; the
+  optimizer/safety/calendar path is unchanged.
+- **Location.** Zone-level precision only, shown in settings; no raw GPS.
+- **Health/errors.** `/health` renders friendly subsystem states; errors become
+  human text (`friendly_error`), never stack traces.
+- **CLI parity.** `topics`, `trackers`, `settings`, `add`, `link` added, all
+  calling the same services.
+- **MCP parity.** Read-only topic context, trackers, tracker evaluation,
+  preview/resolution remain (readonly 37; `full` 51).
+- **Tests.** `tests/run_acceptance_n4.py` (210 deterministic checks).
+
+**Baseline after N4:** all prior suites plus N4 pass (33 suites, 2161 checks).

@@ -128,6 +128,13 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("add", self.cmd_add))
         self.app.add_handler(CommandHandler("link", self.cmd_link))
         self.app.add_handler(CommandHandler("organize", self.cmd_organize))
+        self.app.add_handler(CommandHandler("projects", self.cmd_projects))
+        self.app.add_handler(CommandHandler("courses", self.cmd_courses))
+        self.app.add_handler(CommandHandler("food", self.cmd_food))
+        self.app.add_handler(CommandHandler("grocery", self.cmd_grocery))
+        self.app.add_handler(CommandHandler("memory", self.cmd_memory))
+        self.app.add_handler(CommandHandler("context", self.cmd_context))
+        self.app.add_handler(CommandHandler("health", self.cmd_health))
         self.app.add_handler(CommandHandler("storage", self.cmd_storage))
         self.app.add_handler(CommandHandler("list", self.cmd_slash_wrap))
         self.app.add_handler(CommandHandler("find", self.cmd_slash_wrap))
@@ -136,7 +143,6 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("ask", self.cmd_slash_wrap))
         self.app.add_handler(CommandHandler("teach", self.cmd_slash_wrap))
         self.app.add_handler(CommandHandler("resume", self.cmd_slash_wrap))
-        self.app.add_handler(CommandHandler("organize", self.cmd_slash_wrap))
         self.app.add_handler(CommandHandler("dupes", self.cmd_slash_wrap))
         self.app.add_handler(CommandHandler("trash", self.cmd_slash_wrap))
         self.app.add_handler(CommandHandler("recover", self.cmd_slash_wrap))
@@ -146,6 +152,7 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("empty", self.cmd_slash_wrap))
         # Phase 2 planner commands
         self.app.add_handler(CommandHandler("day", self.cmd_slash_wrap))
+        self.app.add_handler(CommandHandler("week", self.cmd_slash_wrap))
         self.app.add_handler(CommandHandler("now", self.cmd_slash_wrap))
         self.app.add_handler(CommandHandler("tasks", self.cmd_slash_wrap))
         self.app.add_handler(CommandHandler("task", self.cmd_slash_wrap))
@@ -879,6 +886,95 @@ class TelegramBot:
         arg = (update.message.text or "").partition(" ")[2].strip()
         await self._maybe_creation_nl(update, f"organize {arg}".strip())
 
+    # --------------------------------------------------- N4 NL routing
+    async def _maybe_memory_nl(self, update: Update, message: str) -> bool:
+        try:
+            from .agent.interpret import DeterministicInterpreter
+            from .agent.semantic import ActionKind
+            it = DeterministicInterpreter(self.container)
+            req = it.interpret(message)
+            memory_actions = {
+                ActionKind.MEMORY_QUERY, ActionKind.MEMORY_SEARCH,
+                ActionKind.MEMORY_EXPLAIN, ActionKind.MEMORY_LEARN,
+                ActionKind.MEMORY_FORGET, ActionKind.MEMORY_CONFIRM,
+                ActionKind.MEMORY_CORRECT,
+            }
+            if req.action not in memory_actions:
+                return False
+            from .agent.service import ExecutiveService
+            svc = ExecutiveService(self.container)
+            res = svc.ask(text=message, topic=self._tracker_ctx(update))
+            await update.effective_message.reply_text(self._render_memory_result(res))
+            return True
+        except Exception as exc:  # noqa: BLE001
+            log.warning("memory NL dispatch failed: %s", exc)
+            return False
+
+    def _render_memory_result(self, res: Any) -> str:
+        from .agent.semantic import ResultStatus
+        data = res.data if isinstance(res.data, dict) else {}
+        if res.status == ResultStatus.AMBIGUOUS:
+            return ("Which memory do you mean? " +
+                    ", ".join(str(c.get("value", ""))[:40]
+                              for c in (data.get("candidates") or [])[:4]))
+        if res.status == ResultStatus.NEEDS_CONFIRMATION:
+            return "Prepared — confirm to apply."
+        if res.status != ResultStatus.OK:
+            return "I couldn't do that: " + (res.error or "; ".join(res.warnings)
+                                             or "unknown error")
+        if "stored" in data:
+            return "Remembered."
+        if "forgotten" in data:
+            return "Forgotten."
+        rows = data.get("memories") or []
+        if rows:
+            lines = ["🧠 What I remember"]
+            for m in rows[:10]:
+                lines.append(f"• {m.get('value')}")
+            return "\n".join(lines)
+        if data.get("explanation"):
+            return str(data["explanation"])
+        return "Done."
+
+    async def _maybe_settings_nl(self, update: Update, message: str) -> bool:
+        try:
+            from .agent.interpret import DeterministicInterpreter
+            from .agent.semantic import ActionKind
+            it = DeterministicInterpreter(self.container)
+            req = it.interpret(message)
+            if req.action not in (ActionKind.SETTINGS_UPDATE,
+                                  ActionKind.SETTINGS_VIEW):
+                return False
+            from .agent.service import ExecutiveService
+            svc = ExecutiveService(self.container)
+            res = svc.ask(text=message, topic=self._tracker_ctx(update))
+            data = res.data if isinstance(res.data, dict) else {}
+            if req.action == ActionKind.SETTINGS_VIEW:
+                await update.effective_message.reply_text(
+                    data.get("text") or self.container.settings.render())
+            else:
+                await update.effective_message.reply_text(
+                    data.get("summary") or "Settings updated.")
+            return True
+        except Exception as exc:  # noqa: BLE001
+            log.warning("settings NL dispatch failed: %s", exc)
+            return False
+
+    async def cmd_settings(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._authorized(update):
+            return
+        try:
+            text = self.container.settings.render()
+            thread_id = getattr(update.effective_message,
+                                "message_thread_id", 0)
+            if thread_id:
+                text += ("\n\nFor this topic's settings, open /topic and tap "
+                         "⚙ Settings.")
+            await update.effective_message.reply_text(text)
+        except Exception as exc:
+            from .ux import friendly_error
+            await update.effective_message.reply_text(f"⚠️ {friendly_error(exc)}")
+
     async def on_creation_cb(self, update: Update,
                              context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
@@ -927,7 +1023,106 @@ class TelegramBot:
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._authorized(update):
             return
-        await update.effective_message.reply_text(self.container.decider._help()["text"])
+        await update.effective_message.reply_text(self._help_text())
+
+    def _help_text(self) -> str:
+        return (
+            "BUTLER HELP\n\n"
+            "Try saying:\n"
+            "  \"What should I do today?\"\n"
+            "  \"Track CS188 assignments.\"\n"
+            "  \"Add this to my project.\"\n"
+            "  \"Remember I prefer 2-hour work blocks.\"\n"
+            "  \"What's low in my pantry?\"\n"
+            "  \"Add milk to groceries.\"\n"
+            "  \"Replan my week.\"\n\n"
+            "Planning\n"
+            "  /day      today's plan\n"
+            "  /week     the week ahead\n"
+            "  /now      what to do now\n"
+            "  /tasks    your tasks\n"
+            "  /projects your projects\n\n"
+            "Knowledge\n"
+            "  /add      add something\n"
+            "  /link     connect information\n"
+            "  /organize organize files\n\n"
+            "Tracking\n"
+            "  /track    tell me to watch something\n"
+            "  /trackers what I'm watching\n\n"
+            "Topics\n"
+            "  /topics   your topics\n"
+            "  /topic    this topic's panel\n\n"
+            "Personal\n"
+            "  /memory   what I remember\n"
+            "  /settings how I behave\n"
+            "  /context  what I know right now\n\n"
+            "System\n"
+            "  /health   subsystem status\n"
+            "  /undo     undo the last change"
+        )
+
+    async def cmd_projects(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._authorized(update):
+            return
+        try:
+            rows = self.container.projects.list_projects()
+            if not rows:
+                await update.effective_message.reply_text("No projects yet.")
+                return
+            lines = ["📁 Projects"]
+            for p in rows[:20]:
+                lines.append(f"• {p['name']} — {p.get('status', '')} "
+                             f"({p.get('remaining_minutes', 0)}m left)")
+            await update.effective_message.reply_text("\n".join(lines))
+        except Exception as exc:
+            from .ux import friendly_error
+            await update.effective_message.reply_text(f"⚠️ {friendly_error(exc)}")
+
+    async def cmd_courses(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._authorized(update):
+            return
+        await self._dispatch(update, "show courses",
+                             user=update.effective_user.username or "telegram")
+
+    async def cmd_food(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._authorized(update):
+            return
+        await self._dispatch(update, "what do i have",
+                             user=update.effective_user.username or "telegram")
+
+    async def cmd_grocery(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._authorized(update):
+            return
+        await self._dispatch(update, "grocery list",
+                             user=update.effective_user.username or "telegram")
+
+    async def cmd_memory(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._authorized(update):
+            return
+        await self._maybe_memory_nl(update, "what do you remember about me")
+
+    async def cmd_context(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._authorized(update):
+            return
+        await self._dispatch(update, "context",
+                             user=update.effective_user.username or "telegram")
+
+    async def cmd_health(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._authorized(update):
+            return
+        try:
+            subs = self.container.health.subsystems()
+            icons = {"HEALTHY": "🟢", "DEGRADED": "🟡", "UNAVAILABLE": "🔴",
+                     "DISABLED": "⚪"}
+            lines = [f"Butler {self.container.health.report().get('version', '')} — "
+                     f"{self.container.health.overall()}", ""]
+            for name, info in subs.items():
+                lines.append(f"{icons.get(info['state'], '•')} "
+                             f"{name.replace('_', ' ').title()}")
+            await update.effective_message.reply_text("\n".join(lines))
+        except Exception as exc:
+            from .ux import friendly_error
+            await update.effective_message.reply_text(f"⚠️ {friendly_error(exc)}")
 
     async def cmd_storage(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._authorized(update):
@@ -1015,6 +1210,10 @@ class TelegramBot:
         if await self._maybe_tracker_nl(update, message):
             return
         if await self._maybe_creation_nl(update, message):
+            return
+        if await self._maybe_memory_nl(update, message):
+            return
+        if await self._maybe_settings_nl(update, message):
             return
         intent = self.container.decider.parse(message)
         if intent.kind == "help":

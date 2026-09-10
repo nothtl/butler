@@ -32,6 +32,7 @@ from .proactive_engine import ProactiveEngine
 from .topics import TopicStore
 from .tracking import TrackerEngine
 from .creation import CreationService
+from .settings import SettingsService
 from .food import Chef, FoodInventory
 from .nas import FileManager
 from .house import HomeAssistant
@@ -60,6 +61,9 @@ class Container:
             unknown_category=self.cfg.affinity_unknown_category,
         )
         self.db = DB(self.cfg)
+        # --- N4: consolidated runtime settings (apply persisted overrides) ---
+        self.settings = SettingsService(self)
+        self.settings.apply_to_config()
         # --- Settings + reward library (motivation). Seed the default treats. ---
         from . import motivation
         motivation.seed_rewards(self.db)

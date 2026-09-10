@@ -40,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
         "briefing", "review",
         "health", "audit", "restore", "mode",
         "version", "security", "config-check", "backups", "db-backup", "start",
+        "topics", "trackers", "settings", "add", "link",
     ])
     p.add_argument("args", nargs="*")
     p.add_argument("--yes", action="store_true", help="auto-confirm bulk plans")
@@ -195,6 +196,29 @@ def dispatch(container: Container, ns: argparse.Namespace) -> int:
         return emit(container, {"kind": "security", **review(container)}, ns)
     if cmd == "health":
         return emit(container, {"kind": "health", **container.health.report()}, ns)
+    if cmd == "topics":
+        rows = container.topics.list() if hasattr(container, "topics") else []
+        return emit(container, {"kind": "topics",
+                                "topics": [t.to_dict() for t in rows]}, ns)
+    if cmd == "trackers":
+        rows = container.trackers.list(limit=100) if hasattr(container, "trackers") else []
+        return emit(container, {"kind": "trackers",
+                                "trackers": [t.to_dict() for t in rows]}, ns)
+    if cmd == "settings":
+        return emit(container, {"kind": "text",
+                                "text": container.settings.render()}, ns)
+    if cmd in ("add", "link"):
+        from .agent.service import ExecutiveService
+        text = " ".join(args)
+        if cmd == "link":
+            text = f"link this to {text}".strip()
+        else:
+            text = f"add {text}".strip()
+        res = ExecutiveService(container).ask(text=text)
+        return emit(container, {"kind": "text",
+                                "text": res.data.get("message")
+                                if isinstance(res.data, dict)
+                                else "; ".join(res.warnings) or "Done."}, ns)
     if cmd == "audit":
         limit = int(args[0]) if args and args[0].isdigit() else 50
         return emit(container, {"kind": "audit",

@@ -162,6 +162,9 @@ class ActionKind(str, Enum):
     UPDATE_ITEM = "update_item"
     ORGANIZE_ITEMS = "organize_items"
     PREVIEW_CREATION = "preview_creation"
+    # --- N4 system settings ---
+    SETTINGS_VIEW = "settings_view"
+    SETTINGS_UPDATE = "settings_update"
     UNKNOWN = "unknown"
 
 

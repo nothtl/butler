@@ -279,6 +279,20 @@ _PREVIEW_CREATION = (
     "preview this", "what would you do", "show me what you'll", "dry run this",
 )
 
+# --- N4 system settings -----------------------------------------------------
+_SETTINGS_VIEW = (
+    "show settings", "butler settings", "my settings", "show my settings",
+    "what are my settings",
+)
+_SETTINGS_UPDATE = (
+    "don't schedule work after", "do not schedule work after",
+    "don't schedule after", "no work after", "don't schedule before",
+    "quiet hours", "set quiet", "make quiet hours",
+    "stop proactively", "disable proactive", "enable proactive",
+    "disable web", "enable web", "disable memory", "enable memory",
+    "ask before changing my calendar", "track location only",
+)
+
 _TEMPORAL_MARKERS = (
     "tonight", "this evening", "this morning", "this afternoon", "tomorrow",
     "next week", "this week", "rest of the week", "today", "after dinner",
@@ -359,6 +373,9 @@ class DeterministicInterpreter:
         creation = self._creation_classify(low)
         if creation is not None:
             return creation
+        settings = self._settings_classify(low)
+        if settings is not None:
+            return settings
         proactive = self._proactive_classify(low)
         if proactive is not None:
             return proactive
@@ -451,6 +468,14 @@ class DeterministicInterpreter:
                 re.search(r"\badd\b[^.]*\b(pantry|groceries|grocery|"
                           r"shopping list|fridge|freezer)\b", low)):
             return RequestIntent.MUTATE, ActionKind.CREATE_ITEM, 0.7
+        return None
+
+    def _settings_classify(self, low: str
+                           ) -> tuple[RequestIntent, ActionKind, float] | None:
+        if _match(low, _SETTINGS_UPDATE):
+            return RequestIntent.MUTATE, ActionKind.SETTINGS_UPDATE, 0.75
+        if _match(low, _SETTINGS_VIEW):
+            return RequestIntent.QUERY, ActionKind.SETTINGS_VIEW, 0.7
         return None
 
     def _proactive_classify(self, low: str

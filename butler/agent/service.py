@@ -294,6 +294,8 @@ class ExecutiveService:
             ActionKind.LINK_ITEMS: self._creation_link,
             ActionKind.UPDATE_ITEM: self._creation_update,
             ActionKind.ORGANIZE_ITEMS: self._creation_organize,
+            ActionKind.SETTINGS_VIEW: self._settings_view,
+            ActionKind.SETTINGS_UPDATE: self._settings_update,
             ActionKind.WEB_SEARCH: self._web_search,
             ActionKind.WEB_RESEARCH: self._web_research,
             ActionKind.WEB_FETCH: self._web_fetch,
@@ -1288,6 +1290,51 @@ class ExecutiveService:
             else ResultStatus.AMBIGUOUS, data={"resolution": res},
             facts=[{"kind": "resolve_reference", "status": res.get("status"),
                     "candidates": len(res.get("candidates", []))}])
+
+    # --------------------------------------------------- settings handlers
+    def _settings_module(self) -> Any:
+        return getattr(self.container, "settings", None)
+
+    def _settings_view(self, req: AgentRequest, snap: Any) -> AgentResult:
+        settings = self._settings_module()
+        if settings is None:
+            return AgentResult(status=ResultStatus.UNAVAILABLE,
+                               error="settings unavailable")
+        return AgentResult(
+            status=ResultStatus.OK,
+            data={"settings": settings.snapshot(), "text": settings.render()},
+            facts=[{"kind": "settings_view"}])
+
+    def _settings_update(self, req: AgentRequest, snap: Any) -> AgentResult:
+        settings = self._settings_module()
+        if settings is None:
+            return AgentResult(status=ResultStatus.UNAVAILABLE,
+                               error="settings unavailable")
+        parsed = settings.parse(req.raw_text or "")
+        if not parsed or not parsed.get("changes"):
+            return AgentResult(
+                status=ResultStatus.UNAVAILABLE,
+                warnings=["I couldn't tell which setting to change."])
+        if self._read_only:
+            return AgentResult(
+                status=ResultStatus.NEEDS_CONFIRMATION,
+                confirmation_required=True,
+                data={"proposed_action": "settings_update",
+                      "changes": parsed["changes"], "summary": parsed["summary"]},
+                candidate_actions=[{"action": "settings_update",
+                                    "changes": parsed["changes"],
+                                    "requires_confirmation": True}],
+                warnings=[parsed["summary"]])
+        applied = {}
+        for key, value in parsed["changes"].items():
+            res = settings.set(key, value)
+            if res.get("ok"):
+                applied[key] = res.get("value")
+        return AgentResult(
+            status=ResultStatus.OK,
+            data={"applied": applied, "summary": parsed["summary"]},
+            facts=[{"kind": "settings_update", "applied": sorted(applied)}],
+            warnings=[parsed["summary"]])
 
     # ---------------------------------------------------- optimizer handlers
     def _optimizer_module(self) -> Any:
