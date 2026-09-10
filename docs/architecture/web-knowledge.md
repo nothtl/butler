@@ -154,7 +154,8 @@ Read-only tools (profile `readonly`, still side-effect free):
 - `web_fetch(url)`
 - `knowledge_lookup(query)`
 
-`readonly` now exposes **23** tools (M5 added the four optimizer reads); `full`
+`readonly` now exposes **27** tools (M5 added the four optimizer reads and M6
+the four memory reads); `full`
 remains exactly **51**. All four
 web actions classify as `ActionClass.READ` in `butler/safety.py`.
 

@@ -156,6 +156,46 @@ _RESCHEDULE_OPT = (
     "move my study session", "shift things around",
 )
 
+# --- M6 long-term memory ----------------------------------------------------
+# Checked FIRST: "what do you know about me" is a memory question, while
+# "what do you know about my CS168 deadline" is local knowledge (M4).
+_MEMORY_QUERY = (
+    "what do you remember", "what have you learned", "what have you learnt",
+    "show me my memories", "show my memories", "list my memories",
+    "show me what you remember", "what do you know about me",
+    "show me my learned routines", "my learned routines",
+    "what are my routines", "show me my routines", "show my routines",
+)
+_MEMORY_SEARCH = (
+    "search my memory", "search my memories", "search memory for",
+    "look up in my memory", "find in my memory", "search your memory",
+)
+_MEMORY_EXPLAIN = (
+    "why do you think i", "why do you think that i",
+    "why did you schedule this", "why did you suggest",
+    "why did you schedule", "explain why you",
+    "why do you remember", "why do you believe i",
+)
+_MEMORY_LEARN = (
+    "remember that", "remember i", "remember my", "please remember",
+    "note that i", "keep in mind that", "don't forget that",
+    "do not forget that", "remember this",
+)
+_MEMORY_FORGET = (
+    "forget that", "forget my", "forget about", "forget the",
+    "stop remembering", "don't remember", "do not remember",
+    "forget what i",
+)
+_MEMORY_CONFIRM = (
+    "confirm that", "confirm my", "yes that's right about me",
+    "that's correct about me", "you're right about me", "yes i do prefer",
+)
+_MEMORY_CORRECT = (
+    "actually i prefer", "no i prefer", "no, i prefer", "correct that",
+    "update my preference", "i changed my mind", "these days i prefer",
+    "that's wrong about me",
+)
+
 _TEMPORAL_MARKERS = (
     "tonight", "this evening", "this morning", "this afternoon", "tomorrow",
     "next week", "this week", "rest of the week", "today", "after dinner",
@@ -227,6 +267,9 @@ class DeterministicInterpreter:
     # ---------------------------------------------------------- classify
     def _classify(self, low: str, context: Any = None
                   ) -> tuple[RequestIntent, ActionKind, float]:
+        memory = self._memory_classify(low)
+        if memory is not None:
+            return memory
         knowledge = self._knowledge_classify(low)
         if knowledge is not None:
             return knowledge
@@ -260,6 +303,24 @@ class DeterministicInterpreter:
         if legacy is not None:
             return legacy
         return RequestIntent.CHAT, ActionKind.UNKNOWN, 0.3
+
+    def _memory_classify(self, low: str
+                         ) -> tuple[RequestIntent, ActionKind, float] | None:
+        if _match(low, _MEMORY_LEARN):
+            return RequestIntent.MUTATE, ActionKind.MEMORY_LEARN, 0.75
+        if _match(low, _MEMORY_FORGET):
+            return RequestIntent.MUTATE, ActionKind.MEMORY_FORGET, 0.75
+        if _match(low, _MEMORY_CONFIRM):
+            return RequestIntent.MUTATE, ActionKind.MEMORY_CONFIRM, 0.7
+        if _match(low, _MEMORY_CORRECT):
+            return RequestIntent.MUTATE, ActionKind.MEMORY_CORRECT, 0.7
+        if _match(low, _MEMORY_EXPLAIN):
+            return RequestIntent.QUERY, ActionKind.MEMORY_EXPLAIN, 0.7
+        if _match(low, _MEMORY_SEARCH):
+            return RequestIntent.QUERY, ActionKind.MEMORY_SEARCH, 0.7
+        if _match(low, _MEMORY_QUERY):
+            return RequestIntent.QUERY, ActionKind.MEMORY_QUERY, 0.7
+        return None
 
     def _knowledge_classify(self, low: str
                             ) -> tuple[RequestIntent, ActionKind, float] | None:
@@ -427,6 +488,10 @@ class DeterministicInterpreter:
         if action == ActionKind.FIND_BEST_SLOT:
             resolved = [e for e in entities if e.resolved]
             return resolved[0] if resolved else None
+        if action in (ActionKind.MEMORY_FORGET, ActionKind.MEMORY_CORRECT,
+                      ActionKind.MEMORY_CONFIRM, ActionKind.MEMORY_EXPLAIN):
+            resolved = [e for e in entities if e.resolved]
+            return resolved[0] if resolved else None
         if action in _PROJECT_TARGETED:
             proj = [e for e in entities
                     if e.type == EntityType.PROJECT and e.resolved]
@@ -558,7 +623,8 @@ class LLMInterpreter:
         "project_risk|project_dependencies|project_next|create_project|"
         "web_search|web_research|web_fetch|knowledge_lookup|optimize_day|"
         "optimize_week|evaluate_schedule|reschedule_optimized|find_best_slot|"
-        "unknown), "
+        "memory_query|memory_search|memory_explain|memory_forget|"
+        "memory_confirm|memory_correct|memory_learn|unknown), "
         "target, entities, scope, "
         "constraints, preferences, temporal, confidence, raw_text. Never mark "
         "an inferred preference as a hard constraint. If unsure, use unknown "

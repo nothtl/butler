@@ -190,6 +190,25 @@ class Config:
     optimizer_max_iterations: int = 50             # bounded local improvement
     optimizer_churn_penalty: float = 1.0           # weight on preserving blocks
     optimizer_fragmentation_penalty: float = 1.0   # weight on fewer splits
+
+    # --- long-term memory + learning (M6) ---
+    # Memory is durable, provenance-aware and conservative. Inferred memories
+    # are soft and can never become hard constraints.
+    memory_enabled: bool = True
+    memory_max_scan: int = 500             # bounded retrieval candidate set
+    memory_search_limit: int = 8           # default results returned
+    memory_context_limit: int = 5          # memories injected into a snapshot
+    memory_min_confidence: float = 0.35    # below this, inferred writes are rejected
+    memory_routine_min_observations: int = 3
+    memory_routine_confidence_min: float = 0.5
+    memory_routine_stale_days: int = 21
+    memory_temporal_ttl_days: int = 7
+    memory_course_stale_days: int = 120
+    memory_project_stale_days: int = 30
+    memory_estimate_min_samples: int = 3
+    memory_estimate_min_ratio: float = 1.15   # learn only if off by >= 15%
+    memory_max_value_chars: int = 2000
+    memory_allow_web_facts: bool = True
     # --- NAS / file system (Phase 3) ---
     nas_enabled: bool = False
     nas_dir: str = ""                      # e.g. /mnt/storage
@@ -476,6 +495,34 @@ class Config:
         cfg.optimizer_fragmentation_penalty = float(opt.get("fragmentation_penalty",
                                                             cfg.optimizer_fragmentation_penalty))
 
+        mem = page.get("memory", {})
+        cfg.memory_enabled = bool(mem.get("enabled", cfg.memory_enabled))
+        cfg.memory_max_scan = int(mem.get("max_scan", cfg.memory_max_scan))
+        cfg.memory_search_limit = int(mem.get("search_limit", cfg.memory_search_limit))
+        cfg.memory_context_limit = int(mem.get("context_limit", cfg.memory_context_limit))
+        cfg.memory_min_confidence = float(mem.get("min_confidence",
+                                                  cfg.memory_min_confidence))
+        cfg.memory_routine_min_observations = int(mem.get("routine_min_observations",
+                                                          cfg.memory_routine_min_observations))
+        cfg.memory_routine_confidence_min = float(mem.get("routine_confidence_min",
+                                                          cfg.memory_routine_confidence_min))
+        cfg.memory_routine_stale_days = int(mem.get("routine_stale_days",
+                                                    cfg.memory_routine_stale_days))
+        cfg.memory_temporal_ttl_days = int(mem.get("temporal_ttl_days",
+                                                   cfg.memory_temporal_ttl_days))
+        cfg.memory_course_stale_days = int(mem.get("course_stale_days",
+                                                   cfg.memory_course_stale_days))
+        cfg.memory_project_stale_days = int(mem.get("project_stale_days",
+                                                    cfg.memory_project_stale_days))
+        cfg.memory_estimate_min_samples = int(mem.get("estimate_min_samples",
+                                                      cfg.memory_estimate_min_samples))
+        cfg.memory_estimate_min_ratio = float(mem.get("estimate_min_ratio",
+                                                      cfg.memory_estimate_min_ratio))
+        cfg.memory_max_value_chars = int(mem.get("max_value_chars",
+                                                 cfg.memory_max_value_chars))
+        cfg.memory_allow_web_facts = bool(mem.get("allow_web_facts",
+                                                  cfg.memory_allow_web_facts))
+
         nas = page.get("nas", {})
         cfg.nas_enabled = bool(nas.get("enabled", cfg.nas_enabled))
         cfg.nas_dir = _expand(nas.get("dir", "")) or cfg.nas_dir
@@ -658,6 +705,21 @@ class Config:
             raise ValueError(
                 f"invalid optimizer_default_strategy: "
                 f"{self.optimizer_default_strategy}")
+        if self.memory_max_scan < 1 or self.memory_search_limit < 1 \
+                or self.memory_context_limit < 1:
+            raise ValueError("memory scan/search/context limits must be >= 1")
+        if not (0.0 <= self.memory_min_confidence <= 1.0):
+            raise ValueError("memory_min_confidence must be within [0, 1]")
+        if self.memory_routine_min_observations < 1:
+            raise ValueError("memory_routine_min_observations must be >= 1")
+        if self.memory_estimate_min_samples < 1:
+            raise ValueError("memory_estimate_min_samples must be >= 1")
+        if self.memory_max_value_chars < 1:
+            raise ValueError("memory_max_value_chars must be >= 1")
+        if self.memory_routine_stale_days < 0 or self.memory_temporal_ttl_days < 0 \
+                or self.memory_course_stale_days < 0 \
+                or self.memory_project_stale_days < 0:
+            raise ValueError("memory staleness windows must be >= 0")
 
     def _validate_timezone(self, tz: str) -> None:
         try:
@@ -726,6 +788,21 @@ class Config:
             "optimizer_max_iterations": self.optimizer_max_iterations,
             "optimizer_churn_penalty": self.optimizer_churn_penalty,
             "optimizer_fragmentation_penalty": self.optimizer_fragmentation_penalty,
+            "memory_enabled": self.memory_enabled,
+            "memory_max_scan": self.memory_max_scan,
+            "memory_search_limit": self.memory_search_limit,
+            "memory_context_limit": self.memory_context_limit,
+            "memory_min_confidence": self.memory_min_confidence,
+            "memory_routine_min_observations": self.memory_routine_min_observations,
+            "memory_routine_confidence_min": self.memory_routine_confidence_min,
+            "memory_routine_stale_days": self.memory_routine_stale_days,
+            "memory_temporal_ttl_days": self.memory_temporal_ttl_days,
+            "memory_course_stale_days": self.memory_course_stale_days,
+            "memory_project_stale_days": self.memory_project_stale_days,
+            "memory_estimate_min_samples": self.memory_estimate_min_samples,
+            "memory_estimate_min_ratio": self.memory_estimate_min_ratio,
+            "memory_max_value_chars": self.memory_max_value_chars,
+            "memory_allow_web_facts": self.memory_allow_web_facts,
             "nas_enabled": self.nas_enabled,
             "nas_dir": self.nas_dir,
             "nas_inbox_dir": self.nas_inbox_dir,

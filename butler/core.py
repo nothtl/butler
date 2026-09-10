@@ -27,6 +27,7 @@ from .course import CourseIntelligence
 from .projects import ProjectIntelligence
 from .web import WebKnowledge
 from .optimizer import ScheduleOptimizer
+from .memory import Memory
 from .food import Chef, FoodInventory
 from .nas import FileManager
 from .house import HomeAssistant
@@ -83,6 +84,8 @@ class Container:
         self.web = WebKnowledge(self)
         # --- M5: deterministic multi-day schedule optimization (read-only) ---
         self.optimizer = ScheduleOptimizer(self)
+        # --- M6: long-term memory + learning (durable, provenance-aware) ---
+        self.memory = Memory(self)
         self.food = FoodInventory(self)
         self.chef = Chef(self)
         # NAS dirs must be inside the managed roots for the deterministic engine.

@@ -556,6 +556,71 @@ CREATE TABLE IF NOT EXISTS task_deps(
 );
 CREATE INDEX IF NOT EXISTS idx_task_deps_task ON task_deps(task_id);
 CREATE INDEX IF NOT EXISTS idx_task_deps_dep ON task_deps(depends_on);
+
+-- ---------------------------------------------------------------------------
+-- M6: long-term memory + learning. A typed, provenance-aware, auditable store
+-- of things Butler should remember across conversations. Inferred memories can
+-- never become hard constraints; the write gate is the only way in.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS memories(
+    id                INTEGER PRIMARY KEY,
+    type              TEXT NOT NULL,          -- core_fact | preference | routine | ...
+    subject           TEXT DEFAULT '',         -- e.g. "CS168", "CS168 Project 2"
+    key               TEXT DEFAULT '',         -- stable attribute name
+    value             TEXT DEFAULT '',         -- human-readable value (JSON ok)
+    source            TEXT DEFAULT '',         -- free-form origin label
+    source_detail     TEXT DEFAULT '',         -- url / task id / note
+    confidence        REAL DEFAULT 0.0,        -- 0..1
+    provenance        TEXT DEFAULT '',         -- explicit_user | routine_inferred | ...
+    created_at        INTEGER DEFAULT 0,
+    updated_at        INTEGER DEFAULT 0,
+    observed_at       INTEGER DEFAULT 0,
+    expires_at        INTEGER DEFAULT 0,       -- 0 = never
+    last_confirmed_at INTEGER DEFAULT 0,
+    confirmation_state TEXT DEFAULT 'unconfirmed',
+    scope             TEXT DEFAULT 'personal', -- personal | external
+    tags              TEXT DEFAULT '',         -- comma-separated
+    active            INTEGER DEFAULT 1,
+    supersedes_id     INTEGER DEFAULT 0,
+    superseded_by     INTEGER DEFAULT 0,
+    usage_count       INTEGER DEFAULT 0,
+    last_used_at      INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_mem_type ON memories(type);
+CREATE INDEX IF NOT EXISTS idx_mem_active ON memories(active);
+CREATE INDEX IF NOT EXISTS idx_mem_subject ON memories(subject);
+CREATE INDEX IF NOT EXISTS idx_mem_key ON memories(key);
+CREATE INDEX IF NOT EXISTS idx_mem_updated ON memories(updated_at);
+CREATE INDEX IF NOT EXISTS idx_mem_conf ON memories(confidence);
+
+CREATE TABLE IF NOT EXISTS memory_evidence(
+    id          INTEGER PRIMARY KEY,
+    memory_id   INTEGER NOT NULL,
+    kind        TEXT DEFAULT '',
+    ref         TEXT DEFAULT '',
+    detail      TEXT DEFAULT '',
+    observed_at INTEGER DEFAULT 0,
+    created_at  INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_mev_memory ON memory_evidence(memory_id);
+
+CREATE TABLE IF NOT EXISTS memory_observations(
+    id            INTEGER PRIMARY KEY,
+    kind          TEXT DEFAULT '',            -- routine | estimate | behaviour
+    subject       TEXT DEFAULT '',
+    key           TEXT DEFAULT '',
+    value         TEXT DEFAULT '',
+    signature     TEXT NOT NULL,
+    count         INTEGER DEFAULT 0,
+    first_seen    INTEGER DEFAULT 0,
+    last_seen     INTEGER DEFAULT 0,
+    confidence    REAL DEFAULT 0.0,
+    source_events TEXT DEFAULT '',            -- JSON list of evidence refs
+    created_at    INTEGER DEFAULT 0,
+    updated_at    INTEGER DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mobs_sig ON memory_observations(signature);
+CREATE INDEX IF NOT EXISTS idx_mobs_kind ON memory_observations(kind);
 """
 
 

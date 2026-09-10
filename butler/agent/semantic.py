@@ -134,6 +134,14 @@ class ActionKind(str, Enum):
     EVALUATE_SCHEDULE = "evaluate_schedule"
     RESCHEDULE_OPTIMIZED = "reschedule_optimized"
     FIND_BEST_SLOT = "find_best_slot"
+    # --- M6 long-term memory + learning ---
+    MEMORY_QUERY = "memory_query"
+    MEMORY_SEARCH = "memory_search"
+    MEMORY_EXPLAIN = "memory_explain"
+    MEMORY_FORGET = "memory_forget"
+    MEMORY_CONFIRM = "memory_confirm"
+    MEMORY_CORRECT = "memory_correct"
+    MEMORY_LEARN = "memory_learn"
     UNKNOWN = "unknown"
 
 
@@ -574,6 +582,11 @@ class ContextSnapshot:
     external_facts: list[dict[str, Any]] = field(default_factory=list)
     research_summary: str = ""
     research_timestamp: int = 0
+    # --- M6: bounded, relevant long-term memory (never a full dump) ---
+    relevant_memories: list[dict[str, Any]] = field(default_factory=list)
+    memory_summary: str = ""
+    memory_warnings: list[str] = field(default_factory=list)
+    memory_timestamp: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return _dump(self)

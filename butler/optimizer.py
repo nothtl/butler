@@ -156,6 +156,9 @@ class TaskItem:
     affinity: int = 0
     effort_known: bool = True
     tags: str = ""
+    # M6: a *soft* planning multiplier learned from memory (1.0 = no adjustment).
+    # It never rewrites the stored estimate; it only affects planning geometry.
+    effort_factor: float = 1.0
 
     def to_dict(self) -> dict[str, Any]:
         return _dump(self)
@@ -552,7 +555,9 @@ class ScheduleOptimizer:
                     project_deadline=pdeadline, project_risk=risk,
                     project_risk_level=level, deps=deps,
                     affinity=0, effort_known=bool(est or rem),
-                    tags=str(row["tags"] or "")))
+                    tags=str(row["tags"] or ""),
+                    effort_factor=self._effort_factor(str(row["title"] or ""),
+                                                      str(row["tags"] or ""))))
             except Exception:  # noqa: BLE001 — one bad row must not kill the plan
                 continue
         return out
@@ -579,6 +584,15 @@ class ScheduleOptimizer:
             return out
         except Exception:  # noqa: BLE001
             return []
+
+    def _effort_factor(self, title: str, tags: str) -> float:
+        mem = getattr(self.container, "memory", None)
+        if mem is None or not hasattr(mem, "effort_factor"):
+            return 1.0
+        try:
+            return float(mem.effort_factor(title, tags) or 1.0)
+        except Exception:  # noqa: BLE001 — memory must never break planning
+            return 1.0
 
     def _now(self) -> int:
         if self._clock is not None and hasattr(self._clock, "now_ts"):
@@ -663,7 +677,13 @@ def _optimize(req: ScheduleRequest) -> OptimizationResult:
     sessions: list[ScheduledSession] = []
     finish: dict[int, int] = {}
     placed: dict[int, int] = {}
-    remaining_by_id = {t.task_id: t.remaining_minutes for t in active}
+    # M6: apply the learned (soft) planning multiplier; the stored estimate is
+    # never rewritten. 1.0 when there is no learned adjustment.
+    remaining_by_id = {
+        t.task_id: max(1, int(round(t.remaining_minutes *
+                                    max(0.1, float(getattr(t, "effort_factor", 1.0)
+                                                   or 1.0)))))
+        for t in active}
     by_id = {t.task_id: t for t in active}
 
     def _day_of(ts: int) -> int | None:

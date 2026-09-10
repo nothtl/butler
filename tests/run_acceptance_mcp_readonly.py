@@ -35,7 +35,8 @@ READONLY_TOOLS = {
     "get_project_workload", "get_project_risk", "get_project_dependencies",
     "find_available_time", "get_week", "web_search", "web_research",
     "web_fetch", "knowledge_lookup", "optimize_day", "optimize_week",
-    "evaluate_schedule", "find_best_slot", "executive_ask",
+    "evaluate_schedule", "find_best_slot", "memory_search",
+    "memory_get_relevant", "memory_list", "memory_history", "executive_ask",
 }
 
 

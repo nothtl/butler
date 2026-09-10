@@ -95,6 +95,9 @@ class ContextBuilder:
         presence = snap.get("presence") or {}
         routines = self._routines()
         current_plan = self._current_plan(request, planner, days)
+        memories, mem_summary, mem_warnings = self._memory(request, now)
+        if memories:
+            sources.append("memory")
 
         return ContextSnapshot(
             now=now, timezone=tz_name, day_start=day_start, day_end=day_end,
@@ -105,7 +108,43 @@ class ContextBuilder:
             current_plan=current_plan, presence=presence, routines=routines,
             preferences=list(request.preferences), sources=sources,
             truncated=truncated, focus=request.target.name if request.target else "",
+            relevant_memories=memories, memory_summary=mem_summary,
+            memory_warnings=mem_warnings, memory_timestamp=now,
         )
+
+    # ------------------------------------------------------------- memory
+    def _memory(self, request: AgentRequest, now: int
+                ) -> tuple[list[dict[str, Any]], str, list[str]]:
+        """Bounded retrieval of relevant long-term memories for this request."""
+        mem = getattr(self.container, "memory", None)
+        if mem is None or not hasattr(mem, "get_relevant"):
+            return [], "", []
+        try:
+            subject = ""
+            if request.target is not None and request.target.name:
+                subject = request.target.name
+            entities = [e.name for e in request.entities if e.name][:6]
+            context = {"query": request.raw_text or "", "subject": subject,
+                       "entities": entities,
+                       "types": [e.type.value for e in request.entities][:4]}
+            limit = int(getattr(self.container.cfg, "memory_context_limit", 5))
+            rows = mem.get_relevant(context, limit=limit, now=now)
+            warnings: list[str] = []
+            if any(r.get("provenance") in ("routine_inferred", "llm_inferred")
+                   for r in rows):
+                warnings.append("some memories are inferred, not confirmed")
+            if any(r.get("scope") == "external" for r in rows):
+                warnings.append("some memories are external evidence, not "
+                                "personal facts")
+            summary = ""
+            if rows:
+                summary = "; ".join(
+                    f"{r.get('subject') or r.get('type')}: {r.get('value')}"
+                    for r in rows[:limit])
+            return rows, summary, warnings
+        except Exception:  # noqa: BLE001 — memory must never break context
+            log.debug("memory retrieval failed", exc_info=True)
+            return [], "", []
 
     # ------------------------------------------------------------- internals
     def _engine_snapshot(self) -> dict[str, Any]:

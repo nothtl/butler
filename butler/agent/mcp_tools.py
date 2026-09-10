@@ -310,6 +310,32 @@ def build_mcp_registry(container: Any) -> ToolRegistry:
         [P("task", "str", default=""), P("days", "int", default=7),
          P("strategy", "str", default="")],
         action="find_best_slot", profile="readonly")
+    # --- M6: long-term memory (strictly read-only) ---
+    add("memory_search", "Search durable long-term memory (typed, provenance-"
+        "aware). Read-only.",
+        lambda a: _memory_search(c, a),
+        [P("query", "str", required=True), P("types", "list", default=[]),
+         P("limit", "int", default=0)],
+        action="memory_search", profile="readonly")
+    add("memory_get_relevant", "Bounded retrieval of memories relevant to a "
+        "context (query/subject/entities/tags). Read-only.",
+        lambda a: _memory_get_relevant(c, a),
+        [P("query", "str", default=""), P("subject", "str", default=""),
+         P("entities", "list", default=[]), P("tags", "list", default=[]),
+         P("types", "list", default=[]), P("limit", "int", default=0)],
+        action="memory_query", profile="readonly")
+    add("memory_list", "List memories with type/state/scope filters. Read-only.",
+        lambda a: _memory_list(c, a),
+        [P("types", "list", default=[]), P("state", "str", default=""),
+         P("active_only", "bool", default=False), P("scope", "str", default=""),
+         P("limit", "int", default=50)],
+        action="memory_query", profile="readonly")
+    add("memory_history", "Full history for a subject/key, including superseded "
+        "rows. Read-only.",
+        lambda a: _memory_history(c, a),
+        [P("subject", "str", default=""), P("key", "str", default=""),
+         P("limit", "int", default=50)],
+        action="memory_query", profile="readonly")
     add("executive_ask", "Typed executive query. Accepts a structured request "
         "object (the M2 semantic contract) or raw text; validates it, gathers "
         "request-scoped context and returns an AgentResult. Strictly read-only: "
@@ -635,6 +661,66 @@ def _find_best_slot(c: Any, a: dict[str, Any]) -> dict[str, Any]:
             "optimization": res.to_dict()}
 
 
+def _memory_module(c: Any) -> Any:
+    return getattr(c, "memory", None)
+
+
+def _str_list(a: dict[str, Any], key: str) -> list[str]:
+    raw = a.get(key) or []
+    if isinstance(raw, str):
+        raw = [raw]
+    return [str(x).strip() for x in raw if str(x).strip()]
+
+
+def _memory_search(c: Any, a: dict[str, Any]) -> dict[str, Any]:
+    mem = _memory_module(c)
+    if mem is None:
+        return {"ok": False, "error": "memory unavailable"}
+    query = str(a.get("query", "") or "").strip()
+    if not query:
+        return {"ok": False, "error": "query is required"}
+    types = _str_list(a, "types") or None
+    limit = int(a.get("limit", 0) or 0) or None
+    rows = mem.search(query, types=types, limit=limit)
+    return {"ok": True, "query": query, "count": len(rows), "memories": rows}
+
+
+def _memory_get_relevant(c: Any, a: dict[str, Any]) -> dict[str, Any]:
+    mem = _memory_module(c)
+    if mem is None:
+        return {"ok": False, "error": "memory unavailable"}
+    context = {"query": str(a.get("query", "") or ""),
+               "subject": str(a.get("subject", "") or ""),
+               "entities": _str_list(a, "entities"),
+               "tags": _str_list(a, "tags"),
+               "types": _str_list(a, "types") or None}
+    limit = int(a.get("limit", 0) or 0) or None
+    rows = mem.get_relevant(context, limit=limit)
+    return {"ok": True, "count": len(rows), "memories": rows}
+
+
+def _memory_list(c: Any, a: dict[str, Any]) -> dict[str, Any]:
+    mem = _memory_module(c)
+    if mem is None:
+        return {"ok": False, "error": "memory unavailable"}
+    rows = mem.list(types=_str_list(a, "types") or None,
+                    state=str(a.get("state", "") or ""),
+                    active_only=bool(a.get("active_only", False)),
+                    scope=str(a.get("scope", "") or ""),
+                    limit=int(a.get("limit", 50) or 50))
+    return {"ok": True, "count": len(rows), "memories": rows}
+
+
+def _memory_history(c: Any, a: dict[str, Any]) -> dict[str, Any]:
+    mem = _memory_module(c)
+    if mem is None:
+        return {"ok": False, "error": "memory unavailable"}
+    rows = mem.history(subject=str(a.get("subject", "") or ""),
+                       key=str(a.get("key", "") or ""),
+                       limit=int(a.get("limit", 50) or 50))
+    return {"ok": True, "count": len(rows), "memories": rows}
+
+
 def _executive_ask(c: Any, a: dict[str, Any]) -> dict[str, Any]:
     from .service import ExecutiveService
     svc = getattr(c, "_executive_service", None)
@@ -646,7 +732,8 @@ def _executive_ask(c: Any, a: dict[str, Any]) -> dict[str, Any]:
             pass
     result = svc.ask(request=a.get("request") or None,
                      text=str(a.get("text", "") or ""),
-                     include_context=bool(a.get("include_context", False)))
+                     include_context=bool(a.get("include_context", False)),
+                     read_only=True)
     return result.to_dict()
 
 

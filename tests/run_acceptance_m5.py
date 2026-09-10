@@ -631,8 +631,8 @@ def test_regression() -> None:
     ro_names = {t["name"] for t in ro._tools_spec()}
     opt_tools = {"optimize_day", "optimize_week", "evaluate_schedule",
                  "find_best_slot"}
-    check("G2 the readonly profile exposes the optimizer and 23 tools",
-          opt_tools <= ro_names and len(ro_names) == 23, str(len(ro_names)))
+    check("G2 the readonly profile exposes the optimizer and 27 tools",
+          opt_tools <= ro_names and len(ro_names) == 27, str(len(ro_names)))
     check("G2b the full profile stays free of the executive surface",
           not (opt_tools & full_names) and "executive_ask" not in full_names)
 

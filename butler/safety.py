@@ -59,6 +59,11 @@ _KNOWN_RISK: dict[str, str] = {
     "optimize_day": "read", "optimize_week": "read",
     "evaluate_schedule": "read", "find_best_slot": "read",
     "reschedule_optimized": "low_risk_write",
+    # M6: memory reads are side-effect free; memory mutations are Butler-owned,
+    # reversible (forget/confirm/correct) and fully audited.
+    "memory_query": "read", "memory_search": "read", "memory_explain": "read",
+    "memory_learn": "low_risk_write", "memory_forget": "low_risk_write",
+    "memory_confirm": "low_risk_write", "memory_correct": "low_risk_write",
     # --- low-risk write (Butler-owned, reversible) ---
     "add_task": "low_risk_write", "task_update": "low_risk_write",
     "plan_make": "low_risk_write", "plan_apply": "low_risk_write",
@@ -105,6 +110,7 @@ _DEGRADED_ALLOW_WRITE = {
     "add_task", "mark_done", "task_lifecycle", "plan_make", "plan_apply",
     "index", "route", "project_create", "project_update", "project_link",
     "project_milestone", "project_dependency",
+    "memory_learn", "memory_forget", "memory_confirm", "memory_correct",
 }
 
 

@@ -62,10 +62,13 @@ class ExecutiveService:
         self.interpreter = interpreter or DeterministicInterpreter(
             container, now_ts=now_ts)
         self._fallback_session: Any = None
+        # When True, memory-mutating actions return a proposal instead of
+        # executing (used by the strictly read-only `executive_ask` MCP tool).
+        self._read_only = False
 
     # --------------------------------------------------------------- public
     def ask(self, *, request: Any = None, text: str = "", user: str = "user",
-            include_context: bool = False) -> AgentResult:
+            include_context: bool = False, read_only: bool = False) -> AgentResult:
         try:
             if request is not None:
                 req = request if isinstance(request, AgentRequest) \
@@ -78,14 +81,16 @@ class ExecutiveService:
                 req.validate()
         except SemanticValidationError as exc:
             return AgentResult.invalid(str(exc))
-        return self.handle(req, user=user, include_context=include_context)
+        return self.handle(req, user=user, include_context=include_context,
+                           read_only=read_only)
 
     def handle(self, req: AgentRequest, *, user: str = "user",
-               include_context: bool = False) -> AgentResult:
+               include_context: bool = False, read_only: bool = False) -> AgentResult:
         try:
             req.validate()
         except SemanticValidationError as exc:
             return AgentResult.invalid(str(exc))
+        self._read_only = bool(read_only)
         session = self.session(user)
         ambiguities = self._resolve(req, session)
         if ambiguities:
@@ -258,6 +263,13 @@ class ExecutiveService:
             ActionKind.EVALUATE_SCHEDULE: self._evaluate_schedule,
             ActionKind.FIND_BEST_SLOT: self._find_best_slot,
             ActionKind.RESCHEDULE_OPTIMIZED: self._reschedule_optimized,
+            ActionKind.MEMORY_QUERY: self._memory_query,
+            ActionKind.MEMORY_SEARCH: self._memory_search,
+            ActionKind.MEMORY_EXPLAIN: self._memory_explain,
+            ActionKind.MEMORY_LEARN: self._memory_learn,
+            ActionKind.MEMORY_FORGET: self._memory_forget,
+            ActionKind.MEMORY_CONFIRM: self._memory_confirm,
+            ActionKind.MEMORY_CORRECT: self._memory_correct,
             ActionKind.WEB_SEARCH: self._web_search,
             ActionKind.WEB_RESEARCH: self._web_research,
             ActionKind.WEB_FETCH: self._web_fetch,
@@ -584,6 +596,171 @@ class ExecutiveService:
                       ["this project is prepared from an inferred description; "
                        "confirmation is required before it is saved"]),
             assumptions=["all proposal fields are marked inferred provenance"])
+
+    # ------------------------------------------------------ memory handlers
+    def _memory_module(self) -> Any:
+        return getattr(self.container, "memory", None)
+
+    def _memory_unavailable(self) -> AgentResult:
+        return AgentResult(status=ResultStatus.UNAVAILABLE,
+                           error="memory unavailable")
+
+    def _memory_ident(self, req: AgentRequest) -> Any:
+        if req.target is not None and req.target.resolved:
+            return req.target.id or req.target.name
+        if req.target is not None and req.target.name:
+            return req.target.name
+        return _clean_memory_query(req.raw_text)
+
+    def _memory_gated(self, req: AgentRequest) -> AgentResult:
+        """A read-only proposal for a memory mutation (never executes)."""
+        return AgentResult(
+            status=ResultStatus.NEEDS_CONFIRMATION,
+            confirmation_required=True,
+            data={"proposed_action": req.action.value,
+                  "text": req.raw_text, "committed": False},
+            facts=[{"kind": "memory_proposal", "action": req.action.value,
+                    "text": req.raw_text}],
+            candidate_actions=[{"action": req.action.value,
+                                "text": req.raw_text,
+                                "requires_confirmation": True}],
+            warnings=["this memory change is prepared but not applied; "
+                      "confirmation is required"],
+            assumptions=["read-only executive surface: memory writes require "
+                         "the user's explicit confirmation"])
+
+    def _memory_query(self, req: AgentRequest, snap: Any) -> AgentResult:
+        mem = self._memory_module()
+        if mem is None:
+            return self._memory_unavailable()
+        rows = mem.list(active_only=False, limit=50)
+        routines = list(getattr(snap, "routines", []) or [])
+        inferred = sum(1 for r in rows
+                       if r.get("provenance") in ("routine_inferred",
+                                                  "llm_inferred"))
+        result = AgentResult(
+            status=ResultStatus.OK,
+            data={"memories": rows, "routines": routines, "count": len(rows)},
+            facts=[{"kind": "memory_query", "count": len(rows),
+                    "confirmed": sum(1 for r in rows
+                                     if r.get("confirmation_state") == "confirmed"),
+                    "inferred": inferred,
+                    "routines": len(routines)}],
+            assumptions=["memories are Butler-owned and reversible; inferred "
+                         "memories are soft and never hard constraints"])
+        if inferred:
+            result.warnings.append("some memories are inferred, not confirmed")
+        return result
+
+    def _memory_search(self, req: AgentRequest, snap: Any) -> AgentResult:
+        mem = self._memory_module()
+        if mem is None:
+            return self._memory_unavailable()
+        q = _clean_memory_query(req.raw_text)
+        rows = mem.search(q)
+        return AgentResult(
+            status=ResultStatus.OK,
+            data={"query": q, "memories": rows, "count": len(rows)},
+            facts=[{"kind": "memory_search", "query": q, "count": len(rows)}])
+
+    def _memory_explain(self, req: AgentRequest, snap: Any) -> AgentResult:
+        mem = self._memory_module()
+        if mem is None:
+            return self._memory_unavailable()
+        ident = self._memory_ident(req)
+        ex = mem.explain(ident)
+        if ex is None:
+            return AgentResult(
+                status=ResultStatus.UNAVAILABLE,
+                warnings=["I don't have a memory that explains that"],
+                missing_information=["memory"])
+        return AgentResult(
+            status=ResultStatus.OK, data={"explanation": ex},
+            facts=[{"kind": "memory_explain",
+                    "id": ex["memory"]["id"],
+                    "provenance": ex["memory"]["provenance"],
+                    "confirmed": ex["confirmed"], "inferred": ex["inferred"]}],
+            warnings=(["this is an inferred pattern, not a rule"]
+                      if ex["inferred"] else []))
+
+    def _memory_learn(self, req: AgentRequest, snap: Any) -> AgentResult:
+        if self._read_only:
+            return self._memory_gated(req)
+        mem = self._memory_module()
+        if mem is None:
+            return self._memory_unavailable()
+        res = mem.remember_explicit(req.raw_text or "")
+        if not res.get("ok"):
+            status = ResultStatus.INVALID if "secret" in str(res.get("reason", "")) \
+                else ResultStatus.UNAVAILABLE
+            return AgentResult(status=status, data=res,
+                               warnings=[str(res.get("reason", ""))])
+        stored = res.get("stored") or {}
+        return AgentResult(
+            status=ResultStatus.OK,
+            data={"stored": stored, "action": res.get("action")},
+            facts=[{"kind": "memory_learn", "action": res.get("action"),
+                    "type": stored.get("type"),
+                    "provenance": stored.get("provenance"),
+                    "confirmation_state": stored.get("confirmation_state"),
+                    "id": stored.get("id")}],
+            assumptions=["explicit user statement stored as confirmed memory"])
+
+    def _memory_forget(self, req: AgentRequest, snap: Any) -> AgentResult:
+        if self._read_only:
+            return self._memory_gated(req)
+        mem = self._memory_module()
+        if mem is None:
+            return self._memory_unavailable()
+        res = mem.forget(self._memory_ident(req))
+        if res.get("ambiguous"):
+            cands = res.get("candidates", [])
+            return AgentResult.ambiguous([Ambiguity(
+                kind=AmbiguityKind.ENTITY, field_name="memory",
+                mention=(req.raw_text or "")[:60],
+                candidates=cands,
+                reason="which memory should I forget? I won't guess")])
+        if not res.get("ok"):
+            return AgentResult(status=ResultStatus.UNAVAILABLE, data=res,
+                               warnings=[str(res.get("error", "no match"))])
+        return AgentResult(
+            status=ResultStatus.OK, data={"forgotten": res.get("memory")},
+            facts=[{"kind": "memory_forget",
+                    "id": (res.get("memory") or {}).get("id")}])
+
+    def _memory_confirm(self, req: AgentRequest, snap: Any) -> AgentResult:
+        if self._read_only:
+            return self._memory_gated(req)
+        mem = self._memory_module()
+        if mem is None:
+            return self._memory_unavailable()
+        res = mem.confirm(self._memory_ident(req))
+        if not res.get("ok"):
+            return AgentResult(status=ResultStatus.UNAVAILABLE, data=res,
+                               warnings=[str(res.get("error", "no match"))])
+        return AgentResult(
+            status=ResultStatus.OK, data={"confirmed": res.get("memory")},
+            facts=[{"kind": "memory_confirm",
+                    "id": (res.get("memory") or {}).get("id")}])
+
+    def _memory_correct(self, req: AgentRequest, snap: Any) -> AgentResult:
+        if self._read_only:
+            return self._memory_gated(req)
+        mem = self._memory_module()
+        if mem is None:
+            return self._memory_unavailable()
+        res = mem.correct(req.raw_text or "")
+        if not res.get("ok"):
+            status = ResultStatus.INVALID if "secret" in str(res.get("reason", "")) \
+                else ResultStatus.UNAVAILABLE
+            return AgentResult(status=status, data=res,
+                               warnings=[str(res.get("reason", ""))])
+        return AgentResult(
+            status=ResultStatus.OK,
+            data={"stored": res.get("stored"), "action": res.get("action")},
+            facts=[{"kind": "memory_correct",
+                    "action": res.get("action"),
+                    "id": (res.get("stored") or {}).get("id")}])
 
     # ---------------------------------------------------- optimizer handlers
     def _optimizer_module(self) -> Any:
@@ -1067,6 +1244,39 @@ def _clean_web_query(text: str) -> str:
     q = (text or "").strip()
     low = q.lower()
     for prefix in _WEB_STRIP:
+        if low.startswith(prefix):
+            q = q[len(prefix):].strip(" ?.,:;!-")
+            break
+    return q or (text or "").strip()
+
+
+#: Longest-first so "forget that i prefer" strips before "forget that".
+_MEMORY_STRIP = (
+    "show me what you remember about", "show me what you remember",
+    "what do you remember about", "what do you remember",
+    "what have you learned about", "what have you learned",
+    "what have you learnt about", "what have you learnt",
+    "show me my learned routines", "show me my routines",
+    "show my memories", "list my memories", "show me my memories",
+    "search my memories for", "search my memory for", "search my memories",
+    "search my memory", "look up in my memory", "find in my memory",
+    "why do you think i", "why did you suggest", "why did you schedule this",
+    "explain why you", "why do you remember",
+    "please remember that", "remember that", "remember this",
+    "note that i", "keep in mind that", "don't forget that",
+    "do not forget that", "please remember", "remember",
+    "forget that i", "forget that", "forget about", "forget my",
+    "forget the", "stop remembering", "don't remember", "forget what i",
+    "confirm that", "confirm my",
+    "actually i prefer", "no i prefer", "correct that", "update my preference",
+    "i changed my mind", "these days i prefer", "that's wrong about me",
+)
+
+
+def _clean_memory_query(text: str) -> str:
+    q = (text or "").strip()
+    low = q.lower()
+    for prefix in _MEMORY_STRIP:
         if low.startswith(prefix):
             q = q[len(prefix):].strip(" ?.,:;!-")
             break

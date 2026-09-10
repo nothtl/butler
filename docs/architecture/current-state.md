@@ -302,9 +302,9 @@ pure solver, one safety/audit/idempotency layer.
 **AI Butler boundary (verified):** AI Butler is an MCP *client over stdio*; Pi
 Butler is the domain/scheduling authority. The integration seam is the MCP
 server, exposed as two disjoint profiles: `full` (historical 51 tools, OpenClaw)
-and `readonly` (23 side-effect-free executive tools for AI Butler; M3 added the
+and `readonly` (27 side-effect-free executive tools for AI Butler; M3 added the
 four project reads, M4 the four web/knowledge reads, M5 the four optimization
-reads). See
+reads, M6 the four memory reads). See
 `docs/architecture/ai-butler-integration.md` for the verified protocol, config,
 failure behaviour, security model and migration plan.
 
@@ -473,3 +473,57 @@ adds a deterministic optimization layer around it. Full design in
 added; `run_acceptance_mcp_readonly.py` (32), `run_acceptance_p72.py` (77),
 `run_acceptance_m3.py` (93) and `run_acceptance_m4.py` (95) pass with the
 readonly count updated to 23; all prior suites remain green.
+
+## 14. M6 as implemented (long-term memory + learning)
+
+Milestone M6 adds a durable, typed, provenance-aware memory store. It **reuses**
+existing infrastructure rather than duplicating it: the timeline as evidence,
+the routine subsystem as the routine detector, the audit layer for mutation
+records and redaction, and the in-process conversation session for focus. Full
+design in `docs/architecture/memory-learning.md`.
+
+- **Module.** `butler/memory.py::Memory` (wired as `Container.memory`) with a
+  single `MemoryWriteGate` every write must pass through.
+- **Types.** `core_fact`, `preference`, `routine`, `project_fact`, `course_fact`,
+  `episodic_event`, `temporal_note`, `user_instruction`.
+- **Schema.** New idempotent tables `memories`, `memory_evidence`,
+  `memory_observations` with indexes on type/active/subject/key/updated/confidence.
+- **Trust.** `TRUST` ranks provenance from `explicit_user` (1.0) through
+  observed sources and `web_verified` to `routine_inferred`/`llm_inferred`.
+  Inferred memories can never become hard constraints and can never override an
+  explicit one; the gate refuses such writes.
+- **Confirmation states.** `unconfirmed`, `confirmed`, `inferred`, `rejected`,
+  `stale`. Only explicit confirmation (or an explicit user statement) yields
+  `confirmed`.
+- **Learning.** `record_estimate_sample` learns a soft effort multiplier after
+  N samples; `sync_routines` mirrors the existing routine detector into typed
+  `routine` memories; `observe` records behavioural evidence.
+- **Decay.** Per-type staleness windows; `refresh_staleness` marks (never
+  deletes) stale/expired memories; `temporal_note` expires automatically.
+- **Conflicts.** A newer explicit value supersedes the old row (`active=0`,
+  `supersedes_id`/`superseded_by`); history is retained and `explain` shows the
+  chain.
+- **Retrieval.** Bounded, deterministic keyword/tag/entity/recency/confidence/
+  trust scoring; `search`, `get_relevant`, `list`, `history`, `explain`.
+- **Privacy.** Secret/credential patterns are rejected; web content stays
+  `external` evidence and can never become a personal fact or instruction;
+  instruction-like untrusted text is rejected.
+- **Agent layer.** New `ActionKind`s `MEMORY_QUERY/SEARCH/EXPLAIN/FORGET/
+  CONFIRM/CORRECT/LEARN`; routing runs first (so "what do you know about me" is
+  memory, not local knowledge); service handlers execute explicit user commands
+  and refuse ambiguous forgets (nothing is deleted).
+- **Context.** `ContextSnapshot` gained bounded `relevant_memories`,
+  `memory_summary`, `memory_warnings`, `memory_timestamp`.
+- **Scheduler.** M5 optionally consumes the learned soft effort factor
+  (`TaskItem.effort_factor`); it never rewrites the stored estimate and never
+  overrides a hard event/deadline.
+- **MCP.** Read-only tools `memory_search`, `memory_get_relevant`,
+  `memory_list`, `memory_history`; readonly grows to **27** while `full` stays
+  exactly 51.
+- **Config.** New `[memory]` block with validation.
+
+**Baseline after M6:** `tests/run_acceptance_m6.py` (118 deterministic checks)
+added; `run_acceptance_mcp_readonly.py` (32), `run_acceptance_p72.py` (77),
+`run_acceptance_m3.py` (93), `run_acceptance_m4.py` (95) and
+`run_acceptance_m5.py` (75) pass with the readonly count updated to 27; all
+prior suites remain green.
