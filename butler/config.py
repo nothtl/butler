@@ -137,6 +137,10 @@ class Config:
     google_calendar_credentials: str = ""   # path to client_secret.json
     google_calendar_enabled: bool = False
     google_calendar_id: str = ""            # dedicated Butler calendar id; "" -> primary
+    # Comma-separated calendar ids whose events are imported as hard
+    # commitments (lessons, appointments). The dedicated Butler calendar is
+    # always read in addition to these. "primary" = the user's main calendar.
+    google_read_calendars: str = "primary"
     calendar_sync_schedule: str = "15m"     # cadence for the write-back projection
     # Default working window (24h clock, minutes from midnight). Sleep hours.
     sleep_start: int = 23 * 60 + 0          # 23:00
@@ -388,6 +392,13 @@ class Config:
                                   pl.get("google_calendar_id", "") or
                                   pl.get("gcal_id", "") or
                                   cfg.google_calendar_id)
+        _read_cals = (os.environ.get("BUTLER_GCAL_READ", "") or
+                      pl.get("google_read_calendars", "") or
+                      pl.get("read_calendars", "") or
+                      cfg.google_read_calendars)
+        if isinstance(_read_cals, (list, tuple)):
+            _read_cals = ",".join(str(x) for x in _read_cals)
+        cfg.google_read_calendars = str(_read_cals)
         cfg.calendar_sync_schedule = pl.get("calendar_sync_schedule",
                                             cfg.calendar_sync_schedule)
         cfg.sleep_start = int(pl.get("sleep_start", cfg.sleep_start))
@@ -614,6 +625,7 @@ class Config:
             "links_check_hours": self.links_check_hours,
             "google_calendar_enabled": self.google_calendar_enabled,
             "google_calendar_id": self.google_calendar_id,
+            "google_read_calendars": self.google_read_calendars,
             "calendar_sync_schedule": self.calendar_sync_schedule,
             "local_calendar_file": self.local_calendar_file,
             "sleep_start": self.sleep_start,

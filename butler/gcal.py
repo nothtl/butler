@@ -415,7 +415,20 @@ class GoogleCalendar:
                     .get("butler_managed", "")) == "1")
 
     # ------------------------------------------------------------- events
-    def list_events(self) -> list[dict[str, Any]]:
+    def read_calendar_ids(self) -> list[str]:
+        """Calendars to import as hard commitments (default: primary).
+
+        ``google_read_calendars`` may be a comma/semicolon string or a list.
+        The dedicated Butler calendar is added by the planner separately.
+        """
+        raw = getattr(self.cfg, "google_read_calendars", "") or ""
+        if isinstance(raw, (list, tuple, set)):
+            ids = [str(x).strip() for x in raw]
+        else:
+            ids = [x.strip() for x in str(raw).replace(";", ",").split(",")]
+        return [i for i in ids if i] or ["primary"]
+
+    def list_events(self, calendar_id: str | None = None) -> list[dict[str, Any]]:
         access = self.access()
         now = datetime.now(timezone.utc)
         params = {
@@ -426,7 +439,7 @@ class GoogleCalendar:
             "orderBy": "startTime",
             "showDeleted": "false",
         }
-        code, data = self.http.get(self._cal_url("/events"),
+        code, data = self.http.get(self._cal_url("/events", calendar_id),
                                    params=params,
                                    headers={"Authorization": f"Bearer {access}"})
         if code in (401, 403):

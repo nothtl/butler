@@ -126,7 +126,13 @@ class RaisingCalendar:
     def __init__(self, exc: GCalError):
         self._exc = exc
 
-    def list_events(self):
+    def read_calendar_ids(self) -> list[str]:
+        return ["primary"]
+
+    def calendar_id(self, calendar_id: str | None = None) -> str:
+        return ""
+
+    def list_events(self, calendar_id: str | None = None):
         raise self._exc
 
 

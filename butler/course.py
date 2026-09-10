@@ -725,7 +725,14 @@ class CourseIntelligence:
         deps = model.get("dependencies") or []
         if deps and not reqs:
             detail += "\n" + "\n".join("- depends: %s" % d for d in deps)
-        return {"title": str(model.get("title") or doc["title"]),
+        raw_title = str(model.get("title") or doc["title"] or "").strip()
+        raw_title = re.sub(r"\bhw\b", "Homework", raw_title, flags=re.I)
+        raw_title = re.sub(r"\bproj\b", "Project", raw_title, flags=re.I)
+        raw_title = re.sub(r"\bmidd?term\b", "Midterm", raw_title, flags=re.I)
+        title = raw_title
+        if code and raw_title and code.lower() not in raw_title.lower():
+            title = f"{code} {raw_title}"
+        return {"title": title,
                 "detail": detail, "deadline": deadline, "priority": priority,
                 "est_minutes": est_minutes, "tags": f"{code} assignment"}
 

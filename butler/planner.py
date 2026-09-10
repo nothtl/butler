@@ -136,7 +136,29 @@ class Planner:
         """
         if events is None:
             gc = gcal or GoogleCalendar(self.cfg)
-            events = gc.list_events()
+            read_ids = list(gc.read_calendar_ids())
+            target = gc.calendar_id()
+            if target and target not in read_ids:
+                read_ids.append(target)
+            collected: dict[str, dict[str, Any]] = {}
+            first_exc: GCalError | None = None
+            for cid in read_ids:
+                try:
+                    found = gc.list_events(cid)
+                except GCalError as exc:  # noqa: BLE001  (one bad feed != all bad)
+                    if first_exc is None:
+                        first_exc = exc
+                    log.warning("calendar %s read failed: %s", cid, exc)
+                    continue
+                for e in found:
+                    key = str(e.get("external_id") or "")
+                    if key:
+                        collected[key] = e
+            if not collected and first_exc is not None:
+                # Every feed failed -- preserve the original failure type
+                # (outage vs auth loss) so callers can react appropriately.
+                raise first_exc
+            events = list(collected.values())
         return self._merge_google(events)
 
     def _merge_google(self, events: list[dict[str, Any]]) -> dict[str, Any]:
@@ -420,7 +442,7 @@ class Planner:
         start_ts = int(datetime(day.year, day.month, day.day, 0, 0).timestamp())
         end_ts = start_ts + 86400
         rows = self.db.events_between(start_ts, end_ts)
-        out = []
+        raw = []
         for r in rows:
             s = datetime.fromtimestamp(int(r["start_ts"]))
             e = datetime.fromtimestamp(int(r["end_ts"]))
@@ -428,10 +450,50 @@ class Planner:
             end_min = e.hour * 60 + e.minute if e.date() == day.date() else 1440
             if end_min <= start_min:
                 continue
-            out.append(sch.Event(id=int(r["id"]), title=str(r["title"]),
+            raw.append(sch.Event(id=int(r["id"]), title=str(r["title"]),
                                  start_min=start_min, end_min=end_min,
                                  source=str(r["source"] or "local")))
-        return out
+        return self._dedupe_events(raw)
+
+    @staticmethod
+    def _dedupe_events(events: list[sch.Event]) -> list[sch.Event]:
+        """Collapse overlapping blocks so the day shows the fewest blocks.
+
+        The same lesson can arrive twice (personal calendar + course feed), so
+        when two blocks from *different* sources overlap by >=80% of the
+        shorter one we keep a single representative (personal ``google`` first,
+        then course, then local). Blocks from the *same* source that overlap at
+        all are unioned into one span. Genuine partial conflicts between
+        different calendars (two real meetings) stay visible.
+        """
+        rank = {"google": 0, "course": 1, "local": 2}
+
+        def _rank(e: sch.Event) -> int:
+            return rank.get(e.source.split(":")[0], 3)
+
+        ordered = sorted(events, key=lambda e: (e.start_min, _rank(e),
+                                                -(e.end_min - e.start_min)))
+        kept: list[sch.Event] = []
+        for e in ordered:
+            merged = False
+            for i, k in enumerate(kept):
+                overlap = min(e.end_min, k.end_min) - max(e.start_min, k.start_min)
+                if overlap <= 0:
+                    continue
+                shorter = min(e.end_min - e.start_min, k.end_min - k.start_min)
+                same_source = (e.source == k.source
+                               and e.source.startswith("course:"))
+                if same_source or (shorter > 0 and overlap >= 0.8 * shorter):
+                    kept[i] = sch.Event(
+                        id=k.id, title=k.title,
+                        start_min=min(k.start_min, e.start_min),
+                        end_min=max(k.end_min, e.end_min), source=k.source)
+                    merged = True
+                    break
+            if not merged:
+                kept.append(e)
+        kept.sort(key=lambda e: e.start_min)
+        return kept
 
     # ------------------------------------------------------------------ solve
     def _solve(self, day_ts: int, affinities: dict[int, int] | None = None) -> sch.PlanState:
