@@ -1556,6 +1556,11 @@ class Decider:
         """
         cfg = self.cfg
         lines: list[str] = []
+        # N1: the current Telegram topic is a relevance hint for the LLM.
+        topic_ctx = getattr(self.container, "_topic_context", "") \
+            if self.container is not None else ""
+        if topic_ctx:
+            lines.append(topic_ctx)
         try:
             from .gcal import GoogleCalendar, _connected
             connected = bool(getattr(cfg, "google_calendar_enabled", False)) or _connected(cfg)

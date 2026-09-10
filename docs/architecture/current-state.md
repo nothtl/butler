@@ -665,3 +665,37 @@ end to end and produced two minimal hardening fixes.
 - `tests/run_acceptance_product.py` — deterministic product benchmark.
 - `tests/run_acceptance_real_world.py` — integration scenarios + live probes
   with `PASS`/`FAIL`/`BLOCKED`/`SKIPPED` reporting and a final verdict.
+
+## 18. N1 as implemented (universal topics + shared context)
+
+A focused post-M8 improvement: a Telegram forum topic is now a durable
+**TopicProfile** — a context/view over existing domain data, not a routing
+destination and not a new datastore. Full design in
+`docs/architecture/topics-and-shared-context.md`.
+
+- **Module.** `butler/topics.py::TopicStore` (wired as `Container.topics`).
+- **Schema.** Evolves the existing `topic_settings` table in place (idempotent
+  `ALTER TABLE`: purpose, description, status, capabilities, template,
+  timestamps, pin fields) and adds the lightweight `topic_links` bridge. No
+  parallel table, no graph database, no ontology.
+- **Discovery.** New forum topic → `pending_setup` profile + setup prompt;
+  the user's reply becomes purpose/capabilities/links and the topic becomes
+  `active` with a pinned control panel.
+- **Capabilities.** `knowledge/tracking/memory/planning/scheduling/reminders/
+  proactive/web/file_organization` with states; suggested deterministically
+  from the description. Configuration only — no tracker engine (N2).
+- **Linking.** Deterministic course/project/food matching; ambiguous projects
+  ask instead of guessing; shared records are referenced by id, never copied.
+- **Context.** `AgentRequest.topic` → `ContextSnapshot.topic` + `topic_context`;
+  linked items are marked `topic_relevant` and sorted first — a relevance boost,
+  not a hard boundary.
+- **Memory.** Reuses M6 with a `topic:<name>` tag; global memory always
+  retrievable, topic memory added on top.
+- **Panel.** One pinned message per active topic, edited via a content hash,
+  replaced/re-pinned when missing, reconciled on startup without duplicates.
+- **UX.** `/topic`, `/topics`, plus Settings/Connections/Details/Storage views
+  and validated `topic:` callbacks; legacy routing kept only as a fallback and
+  the duplicate `/resume` registration removed.
+- **Tests.** `tests/run_acceptance_n1.py` (134 deterministic checks).
+
+**Baseline after N1:** all prior suites plus N1 pass (30 suites, 1611 checks).

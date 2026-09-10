@@ -29,6 +29,7 @@ from .web import WebKnowledge
 from .optimizer import ScheduleOptimizer
 from .memory import Memory
 from .proactive_engine import ProactiveEngine
+from .topics import TopicStore
 from .food import Chef, FoodInventory
 from .nas import FileManager
 from .house import HomeAssistant
@@ -87,6 +88,8 @@ class Container:
         self.optimizer = ScheduleOptimizer(self)
         # --- M6: long-term memory + learning (durable, provenance-aware) ---
         self.memory = Memory(self)
+        # --- N1: durable topic profiles (context/view over shared domain data) ---
+        self.topics = TopicStore(self)
         self.food = FoodInventory(self)
         self.chef = Chef(self)
         # NAS dirs must be inside the managed roots for the deterministic engine.

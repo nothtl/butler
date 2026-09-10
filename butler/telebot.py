@@ -104,13 +104,23 @@ class TelegramBot:
         self._url_seed = 0
         self._await_url: dict[int, str] = {}
 
+    async def _post_init(self, app: Any) -> None:
+        """Reconcile topic control panels before polling starts (idempotent)."""
+        try:
+            await self.reconcile_topics(app.bot)
+        except Exception as exc:  # noqa: BLE001 — never block startup
+            log.warning("topic reconciliation failed: %s", exc)
+
     def build(self) -> Application:
         if not self.container.cfg.telegram_token:
             raise RuntimeError("Telegram token not configured (BUTLER_TELEGRAM_TOKEN / config.toml)")
         self.app = Application.builder().token(self.container.cfg.telegram_token).build()
+        # N1: reconcile pinned topic panels once on startup (idempotent).
+        self.app.post_init = self._post_init
         self.app.add_handler(CommandHandler("start", self.cmd_help))
         self.app.add_handler(CommandHandler("help", self.cmd_help))
         self.app.add_handler(CommandHandler("topics", self.cmd_topics))
+        self.app.add_handler(CommandHandler("topic", self.cmd_topic))
         self.app.add_handler(CommandHandler("storage", self.cmd_storage))
         self.app.add_handler(CommandHandler("list", self.cmd_slash_wrap))
         self.app.add_handler(CommandHandler("find", self.cmd_slash_wrap))
@@ -139,7 +149,6 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("defer", self.cmd_slash_wrap))
         self.app.add_handler(CommandHandler("block", self.cmd_slash_wrap))
         self.app.add_handler(CommandHandler("cancel", self.cmd_slash_wrap))
-        self.app.add_handler(CommandHandler("resume", self.cmd_slash_wrap))
         self.app.add_handler(CommandHandler("cameup", self.cmd_slash_wrap))
         self.app.add_handler(CommandHandler("why", self.cmd_slash_wrap))
         self.app.add_handler(CommandHandler("undo", self.cmd_slash_wrap))
@@ -446,34 +455,234 @@ class TelegramBot:
             return
         await msg_reply(update.effective_message, "Usage: `/reward add <name> [treat|rest]` · `/reward <id>` · `/reward del <id>`")
 
+    # ------------------------------------------------------- N1: topics
+    def _topic_store(self) -> Any:
+        return getattr(self.container, "topics", None)
+
+    def _current_topic(self, update: Update) -> tuple[int, int]:
+        chat_id = update.effective_chat.id
+        thread_id = getattr(update.effective_message, "message_thread_id", 0) or 0
+        return int(chat_id), int(thread_id)
+
+    def _topic_keyboard(self, thread_id: int) -> Any:
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        t = int(thread_id or 0)
+        rows = [
+            [InlineKeyboardButton("⚙ Settings", callback_data=f"topic:settings:{t}"),
+             InlineKeyboardButton("🔗 Connections", callback_data=f"topic:connections:{t}"),
+             InlineKeyboardButton("📋 Details", callback_data=f"topic:details:{t}")],
+            [InlineKeyboardButton("📁 Storage", callback_data=f"topic:storage:{t}"),
+             InlineKeyboardButton("🔄 Refresh", callback_data=f"topic:refresh:{t}")],
+        ]
+        return InlineKeyboardMarkup(rows)
+
+    async def _publish_topic_panel(self, bot: Any, prof: Any,
+                                   *, force: bool = False) -> dict[str, Any]:
+        """Render + pin the control panel, editing in place when possible.
+
+        The database is the source of truth; the Telegram pin is a projection.
+        A content hash avoids unnecessary edits, and a missing/uneditable
+        message is replaced (and re-pinned) without creating duplicates.
+        """
+        store = self._topic_store()
+        text, chash = store.render_panel(prof)
+        if not force and prof.pin_content_hash == chash and prof.pin_message_id:
+            return {"ok": True, "skipped": True, "message_id": prof.pin_message_id}
+        chat_id, thread_id = prof.chat_id, prof.thread_id
+        msg_id = int(prof.pin_message_id or 0)
+        if msg_id:
+            try:
+                await bot.edit_message_text(text=text, chat_id=chat_id,
+                                            message_id=msg_id)
+            except Exception as exc:  # noqa: BLE001 — replaced below
+                log.info("topic panel edit failed (%s); replacing", exc)
+                msg_id = 0
+        if not msg_id:
+            sent = await bot.send_message(chat_id=chat_id, text=text,
+                                          message_thread_id=thread_id or None)
+            msg_id = int(getattr(sent, "message_id", 0) or 0)
+        if msg_id:
+            try:
+                await bot.pin_chat_message(chat_id=chat_id, message_id=msg_id,
+                                           disable_notification=True)
+            except Exception as exc:  # noqa: BLE001 — pin is best effort
+                log.info("topic pin failed: %s", exc)
+        store.update(prof, pin_message_id=msg_id,
+                     pin_content_hash=chash,
+                     pin_message_version=int(prof.pin_message_version or 0) + 1)
+        return {"ok": True, "message_id": msg_id, "hash": chash}
+
+    async def _configure_topic_from_text(self, update: Update, bot: Any,
+                                         prof: Any, text: str) -> Any:
+        """Turn a natural-language purpose into a configured, pinned topic."""
+        store = self._topic_store()
+        interp = store.interpret_purpose(text) \
+            if hasattr(store, "interpret_purpose") else None
+        # interpret_purpose lives at module level; use it directly.
+        from .topics import interpret_purpose
+        interp = interpret_purpose(text)
+        name = prof.name or interp["name_guess"] or "Topic"
+        links, ambiguous = store.resolve_links(name, interp["description"])
+        prof = store.update(prof, name=name, purpose=interp["purpose"],
+                            description=interp["description"],
+                            capabilities=interp["capabilities"], status="active")
+        for link in links:
+            store.add_link(prof, link["target_type"], link["target_id"],
+                           link["relation"], link["confidence"],
+                           link["provenance"])
+        prof = store.get(prof.chat_id, prof.thread_id)
+        await self._publish_topic_panel(bot, prof, force=True)
+        lines = [f"✅ Topic configured: {name}",
+                 f"Purpose: {interp['purpose']}",
+                 f"Capabilities: " + ", ".join(
+                     k for k, v in interp["capabilities"].items() if v == "enabled"),
+                 "The control panel is pinned above."]
+        if ambiguous:
+            cand = ambiguous[0]
+            names = ", ".join(c["name"] for c in cand["candidates"])
+            lines.append(f"⚠️ I found more than one {cand['target_type']} that "
+                         f"could match ({names}). Tell me which one to use.")
+        await update.effective_message.reply_text("\n".join(lines))
+        return prof
+
     async def cmd_topics(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._authorized(update):
             return
         try:
-            order = sorted(self.topics.values(), key=lambda t: -t["last_ts"])
-            if not order:
+            store = self._topic_store()
+            profiles = store.list() if store is not None else []
+            if not profiles:
                 await update.effective_message.reply_text(
-                    "No forum topics seen yet. Send a message in a topic.")
+                    "No topics configured yet. Send a message in a forum topic "
+                    "and tell me what it is for.")
                 return
-            lines = ["🗂 Topics I've seen:"]
-            for t in order[:25]:
-                title = t.get("title")
-                if title is None and t.get("chat_id") and t.get("thread_id"):
-                    try:
-                        info = await context.bot.get_forum_topic(
-                            t["chat_id"], t["thread_id"])
-                        title = info.name if info else None
-                    except Exception:
-                        title = None
-                t["title"] = title
-                name = title or f"topic #{t['thread_id']}"
-                lines.append(f"• {name} — {t['count']} msg(s) · last: {t['last_user']}")
+            lines = ["🗂 Topics:"]
+            for p in profiles[:25]:
+                icon = {"active": "🟢", "pending_setup": "🟡",
+                        "paused": "⏸", "archived": "📦"}.get(p.status, "•")
+                lines.append(f"{icon} {p.name or f'topic #{p.thread_id}'} — "
+                             f"{p.purpose or 'needs setup'}")
+            lines.append("\nUse /topic in a topic to open its control panel.")
             await update.effective_message.reply_text("\n".join(lines))
         except Exception as exc:
             log.warning("topics error: %s", exc)
             from .ux import friendly_error
             await update.effective_message.reply_text(
                 f"⚠️ {friendly_error(exc)}")
+
+    async def cmd_topic(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._authorized(update):
+            return
+        try:
+            chat_id, thread_id = self._current_topic(update)
+            if not thread_id:
+                await update.effective_message.reply_text(
+                    "Open a forum topic and send /topic there.")
+                return
+            store = self._topic_store()
+            prof, _ = store.ensure(chat_id, thread_id,
+                                   await self._resolve_topic_title(
+                                       context, chat_id, thread_id))
+            if prof.status == "pending_setup":
+                await update.effective_message.reply_text(
+                    self._setup_prompt(prof))
+                return
+            text, _ = store.render_panel(prof)
+            await update.effective_message.reply_text(
+                text, reply_markup=self._topic_keyboard(thread_id))
+        except Exception as exc:
+            log.warning("topic error: %s", exc)
+            from .ux import friendly_error
+            await update.effective_message.reply_text(f"⚠️ {friendly_error(exc)}")
+
+    def _setup_prompt(self, prof: Any) -> str:
+        name = prof.name or "this topic"
+        return (f"New topic detected: {name}.\n"
+                "What is this topic for?\n\n"
+                "Example: \"This is my CS188 course. Track homework, projects, "
+                "deadlines and important announcements, and help me schedule "
+                "the work.\"")
+
+    async def reconcile_topics(self, bot: Any) -> dict[str, Any]:
+        """Repair/refresh pinned panels on startup without duplicating them."""
+        store = self._topic_store()
+        if store is None:
+            return {"ok": False, "reason": "topics unavailable"}
+        repaired = updated = 0
+        for prof in store.list(status="active"):
+            if not prof.pin_message_id:
+                res = await self._publish_topic_panel(bot, prof, force=True)
+                repaired += 1 if res.get("message_id") else 0
+                continue
+            text, chash = store.render_panel(prof)
+            if prof.pin_content_hash != chash:
+                await self._publish_topic_panel(bot, prof, force=True)
+                updated += 1
+        return {"ok": True, "repaired": repaired, "updated": updated}
+
+    async def on_topic_cb(self, update: Update,
+                          context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        if not self._authorized(update):
+            return
+        data = query.data or ""
+        parts = data.split(":")
+        if len(parts) < 3:
+            await query.edit_message_text("⚠️ Unrecognised action.")
+            return
+        _, action, thread_s = parts[0], parts[1], parts[2]
+        try:
+            thread_id = int(thread_s)
+        except ValueError:
+            await query.edit_message_text("⚠️ Invalid topic.")
+            return
+        chat_id = query.message.chat.id
+        store = self._topic_store()
+        prof = store.get(chat_id, thread_id)
+        if prof is None:
+            await query.edit_message_text("This topic is not configured yet.")
+            return
+        if action == "settings":
+            await query.edit_message_text(
+                store.settings_text(prof),
+                reply_markup=self._topic_cap_keyboard(thread_id, prof))
+        elif action == "connections":
+            await query.edit_message_text(store.connections_text(prof))
+        elif action == "details":
+            await query.edit_message_text(store.details_text(prof))
+        elif action == "storage":
+            await query.edit_message_text(store.storage_text(prof))
+        elif action == "refresh":
+            await self._publish_topic_panel(context.bot, prof, force=True)
+            await query.edit_message_text(store.render_panel(prof)[0])
+        elif action == "cap":
+            # topic:cap:<thread>:<capability>:<state>
+            if len(parts) < 5:
+                await query.edit_message_text("⚠️ Invalid capability.")
+                return
+            cap, state = parts[3], parts[4]
+            prof = store.set_capability(prof, cap, state)
+            await self._publish_topic_panel(context.bot, prof, force=True)
+            await query.edit_message_text(
+                store.settings_text(prof),
+                reply_markup=self._topic_cap_keyboard(thread_id, prof))
+        else:
+            await query.edit_message_text("⚠️ Unrecognised action.")
+
+    def _topic_cap_keyboard(self, thread_id: int, prof: Any) -> Any:
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        from .topics import CAPABILITIES, CAP_LABELS, CAP_ICONS
+        rows = []
+        for cap in CAPABILITIES:
+            state = prof.cap(cap)
+            nxt = "disabled" if state == "enabled" else "enabled"
+            rows.append([InlineKeyboardButton(
+                f"{CAP_ICONS.get(state, '•')} {CAP_LABELS[cap]}",
+                callback_data=f"topic:cap:{int(thread_id)}:{cap}:{nxt}")])
+        rows.append([InlineKeyboardButton("🔄 Refresh panel",
+                     callback_data=f"topic:refresh:{int(thread_id)}")])
+        return InlineKeyboardMarkup(rows)
+
 
     # ------------------------------------------------------------ handlers
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -522,6 +731,27 @@ class TelegramBot:
                 rec = self.topics.get(f"{chat_id}:{thread_id}")
                 if rec:
                     rec["title"] = title
+        # --- N1: topic discovery / setup. A topic is a context/view, so the
+        # first message in a new forum topic asks what it is for; the reply is
+        # turned into a durable TopicProfile and a pinned control panel.
+        if thread_id:
+            store = self._topic_store()
+            if store is not None:
+                title = self._topic_title(chat_id, thread_id) or \
+                    await self._resolve_topic_title(context, chat_id, thread_id)
+                prof, created = store.ensure(chat_id, thread_id, title or "")
+                is_command = message.lstrip().startswith("/")
+                if not is_command and created:
+                    await update.effective_message.reply_text(
+                        self._setup_prompt(prof))
+                    return
+                if not is_command and prof.status == "pending_setup" \
+                        and message.strip():
+                    await self._configure_topic_from_text(
+                        update, context.bot, prof, message)
+                    return
+                if prof.status == "active":
+                    self.container._topic_context = store.context_text(prof)
         # If we're waiting for the user to supply a course website URL (via the
         # inline "✏️ Enter URL" button), capture a URL typed as free text.
         awaiting = self._await_url.get(chat_id)
@@ -540,9 +770,9 @@ class TelegramBot:
                     await update.effective_message.reply_text(
                         f"⚠️ {res.get('error', 'could not save that URL')}")
                 return
-        # Unmatched free text should be answered naturally, not with the help
-        # menu. If the current topic has a configured routing command, answer
-        # with that; otherwise fall back to natural chat.
+        # Unmatched free text is answered naturally from live state. The topic
+        # provides *context* (a relevance hint), not a hardcoded route. The old
+        # per-topic default-routing remains only as a legacy fallback.
         intent = self.container.decider.parse(message)
         if intent.kind == "help":
             from .decider import Intent as _I
@@ -555,9 +785,15 @@ class TelegramBot:
                 intent = _I(route, query=message, raw=message)
             else:
                 intent = _I("chat", query=message, raw=message)
-        await self._dispatch(update, message,
-                             user=update.effective_user.username or "telegram",
-                             intent=intent, via_agent=True)
+        try:
+            await self._dispatch(update, message,
+                                 user=update.effective_user.username or "telegram",
+                                 intent=intent, via_agent=True)
+        finally:
+            try:
+                self.container._topic_context = ""
+            except Exception:  # noqa: BLE001
+                pass
 
     # ------------------------------------------------------------ ingestion
     async def on_document(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1287,6 +1523,9 @@ class TelegramBot:
             return
         if data.startswith("pro:"):
             await self.on_proactive_cb(update, context)
+            return
+        if data.startswith("topic:"):
+            await self.on_topic_cb(update, context)
             return
         if data.startswith("tact:"):
             _pre, act, tid = data.split(":", 2)

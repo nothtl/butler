@@ -95,9 +95,15 @@ class ContextBuilder:
         presence = snap.get("presence") or {}
         routines = self._routines()
         current_plan = self._current_plan(request, planner, days)
-        memories, mem_summary, mem_warnings = self._memory(request, now)
+        topic, topic_context = self._topic(request, now)
+        memories, mem_summary, mem_warnings = self._memory(request, now, topic)
         if memories:
             sources.append("memory")
+        if topic:
+            sources.append("topic")
+            tasks = _topic_boost(tasks, topic_context, "task")
+            courses = _topic_boost(courses, topic_context, "course")
+            projects = _topic_boost(projects, topic_context, "project")
 
         return ContextSnapshot(
             now=now, timezone=tz_name, day_start=day_start, day_end=day_end,
@@ -110,10 +116,42 @@ class ContextBuilder:
             truncated=truncated, focus=request.target.name if request.target else "",
             relevant_memories=memories, memory_summary=mem_summary,
             memory_warnings=mem_warnings, memory_timestamp=now,
+            topic=topic, topic_context=topic_context,
         )
 
+    # ------------------------------------------------------------- topic
+    def _topic(self, request: AgentRequest, now: int
+               ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Load the current topic profile + linked data (relevance context).
+
+        A topic is a *boost*, never a hard boundary: the returned data is added
+        to the snapshot so relevant items sort first, but global queries still
+        see everything.
+        """
+        ref = dict(request.topic or {})
+        if not ref:
+            return {}, {}
+        topics = getattr(self.container, "topics", None)
+        if topics is None:
+            return ref, {}
+        try:
+            prof = None
+            if ref.get("chat_id") is not None:
+                prof = topics.get(int(ref.get("chat_id")),
+                                  int(ref.get("thread_id") or 0))
+            if prof is None:
+                return ref, {}
+            if prof.status != "active":
+                return prof.to_dict(), {}
+            return prof.to_dict(), topics.linked_data(prof)
+        except Exception:  # noqa: BLE001 — topic context must never break a reply
+            log.debug("topic context failed", exc_info=True)
+            return ref, {}
+
+
     # ------------------------------------------------------------- memory
-    def _memory(self, request: AgentRequest, now: int
+    def _memory(self, request: AgentRequest, now: int,
+                topic: dict[str, Any] | None = None
                 ) -> tuple[list[dict[str, Any]], str, list[str]]:
         """Bounded retrieval of relevant long-term memories for this request."""
         mem = getattr(self.container, "memory", None)
@@ -129,6 +167,19 @@ class ContextBuilder:
                        "types": [e.type.value for e in request.entities][:4]}
             limit = int(getattr(self.container.cfg, "memory_context_limit", 5))
             rows = mem.get_relevant(context, limit=limit, now=now)
+            # Topic-scoped memory is a *relevance boost*: global memory is always
+            # retrievable, and topic-tagged memory is added on top (never a
+            # hard boundary). Uses the same single M6 store.
+            if topic and topic.get("name"):
+                tag = f"topic:{str(topic['name']).lower()}"
+                scoped = mem.get_relevant({"query": tag, "tags": [tag]},
+                                          limit=limit, now=now)
+                seen = {r.get("id") for r in rows}
+                for r in scoped:
+                    if r.get("id") not in seen:
+                        rows.append(r)
+                        seen.add(r.get("id"))
+                rows = rows[:limit]
             warnings: list[str] = []
             if any(r.get("provenance") in ("routine_inferred", "llm_inferred")
                    for r in rows):
@@ -381,3 +432,35 @@ def _iso(ts: int) -> str:
 def _minute_of_day(ts: int) -> int:
     dt = datetime.fromtimestamp(int(ts))
     return dt.hour * 60 + dt.minute
+
+
+def _topic_boost(items: list[dict[str, Any]], topic_context: dict[str, Any],
+                 kind: str) -> list[dict[str, Any]]:
+    """Mark topic-linked items and sort them first (relevance, not a filter)."""
+    if not items or not topic_context:
+        return items
+    ids: set[int] = set()
+    names: set[str] = set()
+    if kind == "task":
+        for t in topic_context.get("tasks", []) or []:
+            ids.add(int(t.get("id") or 0))
+            names.add(str(t.get("title") or "").lower())
+    elif kind == "course":
+        for c in topic_context.get("courses", []) or []:
+            ids.add(int(c.get("id") or 0))
+            names.add(str(c.get("code") or "").lower())
+    elif kind == "project":
+        for p in topic_context.get("projects", []) or []:
+            ids.add(int(p.get("id") or 0))
+            names.add(str(p.get("name") or "").lower())
+    if not ids and not names:
+        return items
+    for it in items:
+        try:
+            iid = int(it.get("id") or 0)
+        except (TypeError, ValueError):
+            iid = 0
+        iname = str(it.get("name") or it.get("code") or it.get("title") or "").lower()
+        if (iid and iid in ids) or (iname and iname in names):
+            it["topic_relevant"] = True
+    return sorted(items, key=lambda it: 0 if it.get("topic_relevant") else 1)

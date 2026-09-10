@@ -70,7 +70,8 @@ class ExecutiveService:
 
     # --------------------------------------------------------------- public
     def ask(self, *, request: Any = None, text: str = "", user: str = "user",
-            include_context: bool = False, read_only: bool = False) -> AgentResult:
+            include_context: bool = False, read_only: bool = False,
+            topic: dict[str, Any] | None = None) -> AgentResult:
         try:
             if request is not None:
                 req = request if isinstance(request, AgentRequest) \
@@ -83,6 +84,8 @@ class ExecutiveService:
                 req.validate()
         except SemanticValidationError as exc:
             return AgentResult.invalid(str(exc))
+        if topic:
+            req.topic = dict(topic)
         return self.handle(req, user=user, include_context=include_context,
                            read_only=read_only)
 

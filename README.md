@@ -29,6 +29,9 @@ ambiguous requests.
   notifies you with evidence — never spamming.
 - **MCP** — a read-only executive surface for external agent runtimes (AI
   Butler), plus the historical `full` tool profile.
+- **Topics** — each Telegram forum topic is a durable context/view over the
+  shared domain data (courses, projects, tasks, food) with capabilities, a
+  pinned control panel and topic-scoped memory. `/topic` opens the panel.
 
 ## Architecture
 

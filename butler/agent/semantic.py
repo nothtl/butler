@@ -595,6 +595,9 @@ class ContextSnapshot:
     memory_summary: str = ""
     memory_warnings: list[str] = field(default_factory=list)
     memory_timestamp: int = 0
+    # --- N1: the current Telegram topic as relevance context (not a boundary) ---
+    topic: dict[str, Any] = field(default_factory=dict)
+    topic_context: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return _dump(self)
@@ -629,6 +632,9 @@ class AgentRequest:
     requires_confirmation: bool = False
     raw_text: str = ""
     source: str = "deterministic"
+    # N1: the current Telegram topic (chat_id/thread_id), used as relevance
+    # context by the executive service. Empty for non-topic requests.
+    topic: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return _dump(self)
@@ -685,6 +691,7 @@ class AgentRequest:
                     d.get("requires_confirmation", False)),
                 raw_text=str(d.get("raw_text", "") or ""),
                 source=str(d.get("source", "llm") or "llm"),
+                topic=dict(d.get("topic") or {}),
             )
         except SemanticValidationError:
             raise

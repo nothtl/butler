@@ -478,13 +478,41 @@ CREATE TABLE IF NOT EXISTS topic_settings(
     chat_id     INTEGER NOT NULL,
     thread_id   INTEGER NOT NULL DEFAULT 0,
     topic       TEXT DEFAULT '',           -- resolved topic title (cache)
-    routing     TEXT DEFAULT '',           -- default intent kind for free text
+    routing     TEXT DEFAULT '',           -- legacy default intent kind for free text
     push_on     INTEGER DEFAULT 0,         -- 1 => push to this topic
     push_time   TEXT DEFAULT '',           -- HH:MM local
     push_freq   TEXT DEFAULT 'daily',      -- daily | weekdays | weekly
     updated_ts  INTEGER DEFAULT 0,
+    -- N1: durable TopicProfile (topic = context/view over shared domain data)
+    purpose     TEXT DEFAULT '',
+    description TEXT DEFAULT '',
+    status      TEXT DEFAULT 'active',     -- pending_setup | active | paused | archived
+    capabilities TEXT DEFAULT '',          -- JSON {capability: state}
+    template    TEXT DEFAULT '',
+    last_seen_at INTEGER DEFAULT 0,
+    created_at  INTEGER DEFAULT 0,
+    pin_message_id INTEGER DEFAULT 0,
+    pin_message_version INTEGER DEFAULT 0,
+    pin_content_hash TEXT DEFAULT '',
     UNIQUE(chat_id, thread_id)
 );
+
+-- N1: lightweight references from a topic to existing domain data. This is a
+-- bridge, NOT a graph database: it only stores (topic, target_type, target_id)
+-- so two topics can share the same underlying record without copying it.
+CREATE TABLE IF NOT EXISTS topic_links(
+    id               INTEGER PRIMARY KEY,
+    topic_profile_id INTEGER NOT NULL,
+    target_type      TEXT NOT NULL,        -- course|project|task|food|meal_plan|...
+    target_id        INTEGER DEFAULT 0,
+    relation         TEXT DEFAULT 'about',
+    confidence       REAL DEFAULT 1.0,
+    provenance       TEXT DEFAULT '',
+    created_at       INTEGER DEFAULT 0,
+    updated_at       INTEGER DEFAULT 0,
+    UNIQUE(topic_profile_id, target_type, target_id, relation)
+);
+CREATE INDEX IF NOT EXISTS idx_topic_links_profile ON topic_links(topic_profile_id);
 
 -- Reward library (small treats / rest breaks the agent suggests on completion).
 CREATE TABLE IF NOT EXISTS rewards(
@@ -768,6 +796,20 @@ class DB:
                 ("project_id", "INTEGER DEFAULT 0"),
                 ("milestone_id", "INTEGER DEFAULT 0"),
                 ("remaining_minutes", "INTEGER DEFAULT 0"),
+            ],
+            # N1: evolve the existing topic store into a durable TopicProfile
+            # rather than creating a parallel table.
+            "topic_settings": [
+                ("purpose", "TEXT DEFAULT ''"),
+                ("description", "TEXT DEFAULT ''"),
+                ("status", "TEXT DEFAULT 'active'"),
+                ("capabilities", "TEXT DEFAULT ''"),
+                ("template", "TEXT DEFAULT ''"),
+                ("last_seen_at", "INTEGER DEFAULT 0"),
+                ("created_at", "INTEGER DEFAULT 0"),
+                ("pin_message_id", "INTEGER DEFAULT 0"),
+                ("pin_message_version", "INTEGER DEFAULT 0"),
+                ("pin_content_hash", "TEXT DEFAULT ''"),
             ],
         }
         for table, cols in pending.items():
