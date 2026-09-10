@@ -1,11 +1,15 @@
 {
   "$schema": "https://openclaw.ai/x/schema",
   "models": {
+    "mode": "merge",
     "providers": {
       "deepseek": {
-        "name": "DeepSeek",
         "baseUrl": "https://api.deepseek.com/v1",
-        "apiKey": "$BUTLER_LLM_KEY",
+        "apiKey": {
+          "source": "env",
+          "provider": "default",
+          "id": "DEEPSEEK_API_KEY"
+        },
         "api": "openai-completions",
         "timeoutSeconds": 300,
         "models": [
@@ -13,53 +17,50 @@
             "id": "deepseek-chat",
             "name": "DeepSeek Chat",
             "reasoning": false,
-            "input": ["text"],
+            "input": [
+              "text"
+            ],
             "contextWindow": 128000,
             "maxTokens": 8192
           }
         ]
       }
-    },
-    "deepseek/deepseek-chat": {
-      "name": "DeepSeek Chat",
-      "agentRuntime": { "id": "openclaw" }
     }
   },
   "agents": {
     "defaults": {
       "model": {
         "primary": "deepseek/deepseek-chat"
+      },
+      "models": {
+        "deepseek/deepseek-chat": {
+          "agentRuntime": {
+            "id": "openclaw"
+          }
+        }
+      },
+      "modelPolicy": {
+        "allow": [
+          "deepseek/deepseek-chat"
+        ]
       }
+    }
+  },
+  "memory": {
+    "search": {
+      "enabled": false
     }
   },
   "mcp": {
     "servers": {
       "butler": {
         "transport": "stdio",
-        "command": "python",
-        "args": ["-m", "butler.mcp_stdio"],
-        "cwd": "#BUTLER_REPO#",
-        "env": {
-          "BUTLER_LLM_KEY": "$BUTLER_LLM_KEY",
-          "BUTLER_TELEGRAM_TOKEN": "$BUTLER_TELEGRAM_TOKEN",
-          "BUTLER_HA_TOKEN": "$BUTLER_HA_TOKEN"
-        },
-        "tools": {
-          "allow": [
-            "status", "search", "find", "resume", "list", "ask", "teach",
-            "dupes", "backup", "courses", "course_documents", "course_check",
-            "pantry", "expiring", "recipe", "grocery", "recipe_search",
-            "recipes", "favorites", "recipe_history", "context", "presence",
-            "health", "day", "what_now", "why", "tasks", "brief", "review",
-            "routines_list", "scan_routines"
-          ],
-          "prompt": [
-            "organize", "task_add", "task_start", "task_done", "task_skip",
-            "task_defer", "task_block", "task_cancel", "came_up",
-            "reschedule", "undo", "add_course", "drop_course",
-            "routines_confirm", "routines_reject"
-          ]
-        }
+        "command": "/home/tingli/butler/.venv/bin/python",
+        "args": [
+          "-m",
+          "butler.mcp_stdio"
+        ],
+        "cwd": "/home/tingli/butler"
       }
     }
   }

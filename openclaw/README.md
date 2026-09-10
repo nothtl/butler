@@ -12,68 +12,115 @@ truth (`tools/*` re-read the DB on every call, so answers are always fresh).
  │                 context,goals}                │
  │        MCP server "butler" (stdio) ─────────┐ │
  └─────────────────────────────────────────────┼─┘
-    python -m butler.mcp_stdio  <=== 47 tools  ▼
+    .venv/bin/python -m butler.mcp_stdio  <=== 49 tools  ▼
                  Butler Python domain (planner, courses, food, ...)
 ```
 
-## Prerequisites (do these first)
+Status: **M0–M4/M6 done and verified on this machine.** M5 (migrating Telegram
+into OpenClaw) is intentionally last and not started.
 
-1. **Rotate the Telegram bot token.** Your current token was committed to chat
-   and must be considered leaked — treat it as compromised. In BotFather: revoke
-   and generate a new token. Set it via env only:
+## Prerequisites
+
+1. **Rotate the Telegram bot token.** The old token was leaked in chat — revoke it
+   in BotFather and set the new one via env only:
    `export BUTLER_TELEGRAM_TOKEN=<new_token>`.
-2. **DeepSeek key:** `export BUTLER_LLM_KEY=<key>` (as used by `~/.config/butler/config.toml`).
-3. **Home Assistant (optional):** `export BUTLER_HA_TOKEN=<token>` and
-   `[home_assistant] url <url>` in `config.toml`, to enable `presence`/location.
+2. **DeepSeek key** in the environment. This machine exports it from
+   `~/.bashrc` as `DEEPSEEK_API_KEY` (also present in
+   `~/.config/butler/config.toml` for the Python side). Never commit the value.
+3. **Home Assistant (optional):** `export BUTLER_HA_TOKEN=<token>` and a
+   `[home_assistant] url` in `config.toml` to enable `presence`/location.
 
-Never commit the values: they are referenced as `$ENV` in `openclaw.json`.
+## M0 — Stand up OpenClaw (DONE)
 
-## M0 — Stand up OpenClaw
-
-1. Install OpenClaw (Node 20+ is available here):
-   ```bash
-   npm i -g openclaw && openclaw doctor
-   ```
-2. Copy this config to your OpenClaw config path (workspace or
-   `~/.config/openclaw/openclaw.json`), replacing `#BUTLER_REPO#` with
-   `/home/tingli/butler`.
-3. Verify the model wires up and a turn runs with the built-in loop
-   (`agentRuntime.id: "openclaw"`), which avoids the Codex runtime.
-
-## M1 — Register + verify the MCP bridge
-
-OpenClaw spawns `python -m butler.mcp_stdio` as a child process (config above).
-Verify reachability and that all 47 tools list:
+OpenClaw 2026.9.3 requires **Node ≥24.16 <25 or ≥26.1**; the system Node (20.x)
+is too old. Node 24 LTS is installed user-local (no sudo):
 
 ```bash
-openclaw mcp doctor butler --probe
+V=v24.21.0; A=linux-arm64
+curl -fsSLO https://nodejs.org/dist/$V/node-$V-$A.tar.xz
+curl -fsSLO https://nodejs.org/dist/$V/SHASUMS256.txt
+grep "node-$V-$A.tar.xz" SHASUMS256.txt | sha256sum -c -
+tar -xf node-$V-$A.tar.xz -C ~/.local
+ln -sfn ~/.local/node-$V-$A ~/.local/node24
+```
+
+`~/.bashrc` and `~/.profile` prepend `~/.local/node24/bin` to `PATH`. Then:
+
+```bash
+npm i -g openclaw
+# npm 11 gates install scripts; allow them once:
+npm i -g openclaw --allow-scripts=openclaw,@google/genai,koffi,tree-sitter-bash,protobufjs
+```
+
+**Config** lives at `~/.openclaw/openclaw.json` (not `~/.config/openclaw`). The
+file in this directory is the secret-free template; copy it:
+
+```bash
+cp openclaw/openclaw.json ~/.openclaw/openclaw.json
+chmod 600 ~/.openclaw/openclaw.json
+```
+
+The API key is an **env reference** (`{source: env, provider: default,
+id: DEEPSEEK_API_KEY}`), so no plaintext secret is stored. Note the schema
+changed from earlier drafts: per-model runtime now lives at
+`agents.defaults.models["deepseek/deepseek-chat"].agentRuntime` (there is no
+top-level `models["deepseek/deepseek-chat"]`, no provider `name`, and no
+`mcp.servers.butler.tools` — use `toolFilter` for include/exclude).
+
+Verify:
+
+```bash
+openclaw config validate
+openclaw agent --local -m "Reply with exactly one word: pong"   # -> pong
+```
+
+## M1 — MCP bridge (DONE)
+
+OpenClaw spawns `/home/tingli/butler/.venv/bin/python -m butler.mcp_stdio` as a
+child process (see config). Verify all tools list:
+
+```bash
 openclaw mcp list
+openclaw mcp probe butler     # -> butler: 49 tools
+```
+
+A live tool call through the model also works:
+
+```bash
+openclaw agent --local -m "Call the butler MCP tool named status and summarize it."
 ```
 
 ## M3 — Guard the write tools
 
-Side-effecting tools are gated behind operator approval:
+MCP tools carry no safety annotations, so OpenClaw requires approval in
+prompting session postures. Per-server tool visibility is controlled with a
+`toolFilter` (`include`/`exclude`) under `mcp.servers.butler`; approval policy
+is managed with:
 
 ```bash
-openclaw mcp configure butler --approval prompt
+openclaw approvals --help
+openclaw mcp configure butler --help
 ```
-Tools in the `prompt` list in `openclaw.json` (`task_*`, `came_up`,
-`reschedule`, `undo`, `add_course`, `drop_course`, `routines_confirm`, ...)
-require the operator to approve. They are the same idempotent transitions the
-decider performs, so Butler's safety layer is unchanged.
 
-## M5 — Optional: migrate Telegram to OpenClaw
+Side-effecting Butler transitions stay idempotent and unchanged.
 
-Move the Telegram channel into OpenClaw (channel = Telegram) and retire
-`butler/telebot.py`. This is a large behavioral change — do it LAST, only after
-M0–M4 are green, because the callback-state machine and `_authorized` gating in
-`telebot.py` currently own the human-in-the-loop UX.
+## M5 — Optional: migrate Telegram to OpenClaw (NOT STARTED)
+
+Move the Telegram channel into OpenClaw and retire `butler/telebot.py`. Do this
+LAST, only after the gateway is installed, because the callback-state machine and
+`_authorized` gating in `telebot.py` currently own the human-in-the-loop UX.
+
+The gateway service is **not installed yet**; when ready:
+
+```bash
+openclaw doctor --fix --generate-gateway-token
+openclaw gateway install
+```
 
 ## Development
 
-- Run the MCP server directly (already works): 
+- Run the MCP server directly:
   `printf '<jsonrpc>' | .venv/bin/python -m butler.mcp_stdio`
 - Parity smoke test: `.venv/bin/python tests/run_acceptance_mcp.py`.
-- Re-point the acceptance suites to call the MCP tools (parity tests); the
-  scheduler/core suites (`tests/test_schedule.py`, `tests/run_acceptance.py`)
-  stay as-is and must keep passing.
+- Keep the scheduler/core suites green (`tests/test_schedule.py`,
+  `tests/run_acceptance.py`).
