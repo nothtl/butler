@@ -30,6 +30,7 @@ from .optimizer import ScheduleOptimizer
 from .memory import Memory
 from .proactive_engine import ProactiveEngine
 from .topics import TopicStore
+from .tracking import TrackerEngine
 from .food import Chef, FoodInventory
 from .nas import FileManager
 from .house import HomeAssistant
@@ -90,6 +91,8 @@ class Container:
         self.memory = Memory(self)
         # --- N1: durable topic profiles (context/view over shared domain data) ---
         self.topics = TopicStore(self)
+        # --- N2: universal tracking/trigger engine (one generic engine) ---
+        self.trackers = TrackerEngine(self)
         self.food = FoodInventory(self)
         self.chef = Chef(self)
         # NAS dirs must be inside the managed roots for the deterministic engine.

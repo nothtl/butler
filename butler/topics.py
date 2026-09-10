@@ -519,6 +519,9 @@ class TopicStore:
                 continue
             icon = CAP_ICONS.get(state, "•")
             lines.append(f"{icon} {CAP_LABELS[cap]}")
+        tracking = self.tracking_lines(prof)
+        if tracking:
+            lines += ["", "Tracking"] + tracking
         connected = self._connected_lines(prof, data)
         if connected:
             lines += ["", "Connected"] + connected
@@ -532,6 +535,25 @@ class TopicStore:
                   .strftime("%d %b · %H:%M")]
         text = "\n".join(lines)
         return text, hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
+
+    def tracking_lines(self, prof: TopicProfile) -> list[str]:
+        """N2: trackers whose destination is this topic (context, not ownership)."""
+        engine = getattr(self.container, "trackers", None)
+        if engine is None or not hasattr(engine, "by_destination"):
+            return []
+        out: list[str] = []
+        icons = {"active": "🟢", "paused": "⏸", "degraded": "🟡",
+                 "error": "🔴", "pending": "🟡", "disabled": "⚪",
+                 "archived": "📦"}
+        try:
+            rows = engine.by_destination(prof.chat_id, prof.thread_id)
+        except Exception:  # noqa: BLE001
+            return []
+        for t in rows:
+            if t.state in ("archived", "disabled"):
+                continue
+            out.append(f"{icons.get(t.state, '•')} {t.name}")
+        return out
 
     def _connected_lines(self, prof: TopicProfile, data: dict[str, Any]) -> list[str]:
         out: list[str] = []

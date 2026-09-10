@@ -148,6 +148,13 @@ class ActionKind(str, Enum):
     PROACTIVE_EXPLAIN = "proactive_explain"
     PROACTIVE_SNOOZE = "proactive_snooze"
     PROACTIVE_SUPPRESS = "proactive_suppress"
+    # --- N2 universal tracking / triggers ---
+    TRACKER_CREATE = "tracker_create"
+    TRACKER_LIST = "tracker_list"
+    TRACKER_QUERY = "tracker_query"
+    TRACKER_CONTROL = "tracker_control"
+    TRACKER_EVALUATE = "tracker_evaluate"
+    TRACKER_EXPLAIN = "tracker_explain"
     UNKNOWN = "unknown"
 
 

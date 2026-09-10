@@ -32,6 +32,10 @@ ambiguous requests.
 - **Topics** — each Telegram forum topic is a durable context/view over the
   shared domain data (courses, projects, tasks, food) with capabilities, a
   pinned control panel and topic-scoped memory. `/topic` opens the panel.
+- **Tracking** — one generic engine for "tell me when X changes" (course
+  deadlines, low stock, project risk, GitHub activity, flight changes, club
+  announcements) with deterministic conditions, cooldowns and dedup. `/track`
+  and `/trackers`. Trackers feed the existing proactive policy.
 
 ## Architecture
 

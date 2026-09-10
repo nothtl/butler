@@ -121,6 +121,8 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("help", self.cmd_help))
         self.app.add_handler(CommandHandler("topics", self.cmd_topics))
         self.app.add_handler(CommandHandler("topic", self.cmd_topic))
+        self.app.add_handler(CommandHandler("track", self.cmd_track))
+        self.app.add_handler(CommandHandler("trackers", self.cmd_trackers))
         self.app.add_handler(CommandHandler("storage", self.cmd_storage))
         self.app.add_handler(CommandHandler("list", self.cmd_slash_wrap))
         self.app.add_handler(CommandHandler("find", self.cmd_slash_wrap))
@@ -683,6 +685,102 @@ class TelegramBot:
                      callback_data=f"topic:refresh:{int(thread_id)}")])
         return InlineKeyboardMarkup(rows)
 
+    # ------------------------------------------------------- N2: trackers
+    def _tracker_ctx(self, update: Update) -> dict[str, Any]:
+        chat_id = update.effective_chat.id
+        thread_id = getattr(update.effective_message, "message_thread_id", 0) or 0
+        return {"chat_id": int(chat_id), "thread_id": int(thread_id)}
+
+    def _render_tracker_result(self, res: Any) -> str:
+        from .agent.semantic import ResultStatus
+        if res.status == ResultStatus.AMBIGUOUS:
+            q = (res.missing_information or res.warnings
+                 or ["What should I track?"])
+            return "I need a bit more detail:\n• " + "\n• ".join(str(x) for x in q)
+        if res.status == ResultStatus.NEEDS_CONFIRMATION:
+            return "I've prepared that change — confirm it to apply."
+        if res.status != ResultStatus.OK:
+            return "I couldn't set that up: " + (res.error
+                                                 or "; ".join(res.warnings)
+                                                 or "unknown error")
+        data = res.data or {}
+        if "tracker" in data and "summary" in data:
+            return "✅ Tracking created.\n" + str(data["summary"])
+        if "trackers" in data:
+            rows = data["trackers"]
+            if not rows:
+                return "You're not tracking anything yet."
+            icons = {"active": "🟢", "paused": "⏸", "degraded": "🟡",
+                     "error": "🔴", "pending": "🟡", "disabled": "⚪",
+                     "archived": "📦"}
+            lines = ["🔎 Trackers"]
+            for t in rows[:25]:
+                lines.append(f"{icons.get(t['state'], '•')} {t['name']} — "
+                             f"{t['source']}")
+            return "\n".join(lines)
+        if "evaluation" in data:
+            ev = data["evaluation"]
+            verdict = "WOULD FIRE" if ev.get("fired") else "would not fire"
+            return (f"Dry run: {verdict}.\nReason: {ev.get('reason', '')}\n"
+                    "(no notification was sent)")
+        if "explanation" in data:
+            ex = data["explanation"]
+            if isinstance(ex, dict) and ex.get("explanation"):
+                return str(ex["explanation"])
+            return str(ex)
+        if "tracker" in data and "action" in data:
+            return f"✅ Tracker {data['action']}."
+        return "Done."
+
+    async def _maybe_tracker_nl(self, update: Update, message: str) -> bool:
+        """Route natural-language tracker requests through the executive layer."""
+        try:
+            from .agent.interpret import DeterministicInterpreter
+            from .agent.semantic import ActionKind
+            it = DeterministicInterpreter(self.container)
+            req = it.interpret(message)
+            tracker_actions = {
+                ActionKind.TRACKER_CREATE, ActionKind.TRACKER_LIST,
+                ActionKind.TRACKER_QUERY, ActionKind.TRACKER_CONTROL,
+                ActionKind.TRACKER_EVALUATE, ActionKind.TRACKER_EXPLAIN,
+            }
+            if req.action not in tracker_actions:
+                return False
+            from .agent.service import ExecutiveService
+            svc = ExecutiveService(self.container)
+            res = svc.ask(text=message, topic=self._tracker_ctx(update))
+            await update.effective_message.reply_text(
+                self._render_tracker_result(res))
+            return True
+        except Exception as exc:  # noqa: BLE001
+            log.warning("tracker NL dispatch failed: %s", exc)
+            return False
+
+    async def cmd_track(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._authorized(update):
+            return
+        arg = (update.message.text or "").partition(" ")[2].strip()
+        if not arg:
+            await self.cmd_trackers(update, context)
+            return
+        await self._maybe_tracker_nl(update, f"track {arg}")
+
+    async def cmd_trackers(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._authorized(update):
+            return
+        try:
+            from .agent.service import ExecutiveService
+            svc = ExecutiveService(self.container)
+            res = svc.ask(text="show my trackers",
+                          topic=self._tracker_ctx(update))
+            await update.effective_message.reply_text(
+                self._render_tracker_result(res))
+        except Exception as exc:
+            log.warning("trackers error: %s", exc)
+            from .ux import friendly_error
+            await update.effective_message.reply_text(
+                f"⚠️ {friendly_error(exc)}")
+
 
     # ------------------------------------------------------------ handlers
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -773,6 +871,8 @@ class TelegramBot:
         # Unmatched free text is answered naturally from live state. The topic
         # provides *context* (a relevance hint), not a hardcoded route. The old
         # per-topic default-routing remains only as a legacy fallback.
+        if await self._maybe_tracker_nl(update, message):
+            return
         intent = self.container.decider.parse(message)
         if intent.kind == "help":
             from .decider import Intent as _I

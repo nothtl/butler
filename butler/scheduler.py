@@ -101,6 +101,9 @@ class Scheduler:
                  self._run_courses),
                 ("proactive", _cadence_seconds(self.cfg.proactive_schedule),
                  self._run_proactive),
+                ("trackers", _cadence_seconds(getattr(self.cfg, "tracker_schedule",
+                                                      "5m")),
+                 self._run_trackers),
                 ("gcal_sync", _cadence_seconds(self.cfg.calendar_sync_schedule),
                  self._run_gcal_sync),
                 ("briefing", _cadence_seconds(self.cfg.briefing_schedule),
@@ -140,6 +143,7 @@ class Scheduler:
             self.container.db.upsert_scheduler_state("digest", _cadence_seconds(self.cfg.digest_schedule))
             self.container.db.upsert_scheduler_state("courses", _cadence_seconds(self.cfg.course_monitor_interval))
             self.container.db.upsert_scheduler_state("proactive", _cadence_seconds(self.cfg.proactive_schedule))
+            self.container.db.upsert_scheduler_state("trackers", _cadence_seconds(getattr(self.cfg, "tracker_schedule", "5m")))
             self.container.db.upsert_scheduler_state("gcal_sync", _cadence_seconds(self.cfg.calendar_sync_schedule))
             self.container.db.upsert_scheduler_state("briefing", _cadence_seconds(self.cfg.briefing_schedule))
             self.container.db.upsert_scheduler_state("review", _cadence_seconds(self.cfg.review_schedule))
@@ -225,6 +229,19 @@ class Scheduler:
                          out.get("generated"), out.get("notified"))
             except Exception as exc:  # noqa: BLE001 — never break the cadence
                 log.warning("proactive engine failed: %s", exc)
+
+    def _run_trackers(self) -> None:
+        """N2: evaluate due trackers on the existing cadence (no new loop)."""
+        engine = getattr(self.container, "trackers", None)
+        if engine is None or not getattr(self.cfg, "tracker_enabled", True):
+            return
+        try:
+            out = engine.run_due(deliver=True)
+            if out.get("evaluated"):
+                log.info("trackers: evaluated=%s fired=%s",
+                         out.get("evaluated"), out.get("fired"))
+        except Exception as exc:  # noqa: BLE001 — never break the cadence
+            log.warning("tracker cycle failed: %s", exc)
 
     def _run_gcal_sync(self) -> None:
         """Push the local plan to Google Calendar (Phase 5.0 write projection).

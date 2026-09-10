@@ -302,7 +302,7 @@ pure solver, one safety/audit/idempotency layer.
 **AI Butler boundary (verified):** AI Butler is an MCP *client over stdio*; Pi
 Butler is the domain/scheduling authority. The integration seam is the MCP
 server, exposed as two disjoint profiles: `full` (historical 51 tools, OpenClaw)
-and `readonly` (30 side-effect-free executive tools for AI Butler; M3 added the
+and `readonly` (33 side-effect-free executive tools for AI Butler; M3 added the
 four project reads, M4 the four web/knowledge reads, M5 the four optimization
 reads, M6 the four memory reads). See
 `docs/architecture/ai-butler-integration.md` for the verified protocol, config,
@@ -699,3 +699,44 @@ destination and not a new datastore. Full design in
 - **Tests.** `tests/run_acceptance_n1.py` (134 deterministic checks).
 
 **Baseline after N1:** all prior suites plus N1 pass (30 suites, 1611 checks).
+
+## 19. N2 as implemented (universal tracking, triggers & rules)
+
+One generic engine for every "when X changes, do Y" request. Full design in
+`docs/architecture/tracking-and-rules.md`.
+
+- **Module.** `butler/tracking.py::TrackerEngine` (wired as
+  `Container.trackers`). Providers are injectable; the engine is deterministic.
+- **Model.** One compact `Tracker` row folds the conceptual Tracker+Trigger
+  split (`condition`/`action` are JSON). Events, ActionProposal and
+  EvaluationResult are typed.
+- **Providers.** `SourceProvider.snapshot()` with built-ins `food`,
+  `project_risk`, `task`, `calendar`, `course`, `web`, `github`, `file`, plus an
+  injectable `SnapshotProvider`. Local normalized state is preferred over
+  re-scraping; M4 is reused for web.
+- **Conditions.** `new_item`, `item_removed`, `field_changed`,
+  `deadline_changed`, `status_changed`, `risk_crossed_above`,
+  `threshold_below/above`, `no_activity`, `time_reached`, `state_changed`,
+  limited `and`/`or`. No LLM in evaluation.
+- **Actions.** `NOTIFY_TOPIC`, `CREATE_SUGGESTION`, `UPDATE_INTERNAL_STATE`,
+  `CREATE_REMINDER`, `PROPOSE_CALENDAR_ACTION`. Consequential actions are only
+  proposed (confirmation required); nothing external executes automatically.
+- **Idempotency/cooldown.** UNIQUE `tracker_events.event_key`; tracker
+  `cooldown_until`; failure backoff and `degraded`/`error` states; bounded
+  per-cycle evaluation.
+- **M7 integration.** `ProactiveEngine.ingest()` reuses the existing ranking and
+  notification policy; trackers never send Telegram directly.
+- **Cross-topic.** A tracker's `destination` routes the candidate; e.g. a Food
+  low-stock tracker proposes a grocery suggestion into the Groceries topic
+  through shared food records — no direct subsystem calls.
+- **Scheduler.** The existing `Scheduler` gains a `trackers` job
+  (`tracker_schedule`, default 5m); no new loop.
+- **N1 panel.** Topic panels show tracking lines for trackers whose destination
+  is the topic.
+- **Agent layer.** `TRACKER_CREATE/LIST/QUERY/CONTROL/EVALUATE/EXPLAIN`; `/track`
+  and `/trackers`; natural language routes through `ExecutiveService`.
+- **MCP.** Read-only `get_trackers`, `get_tracker`, `evaluate_tracker`; readonly
+  grows to **33** while `full` stays 51.
+- **Tests.** `tests/run_acceptance_n2.py` (167 deterministic checks).
+
+**Baseline after N2:** all prior suites plus N2 pass (31 suites, 1786 checks).

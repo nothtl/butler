@@ -124,6 +124,9 @@ class ProactiveCandidate:
     expires_at: int = 0
     state: str = PENDING
     explanation: str = ""
+    #: N2: optional per-candidate destination (chat_id/thread_id) so a tracker
+    #: can notify a specific Telegram topic through the existing M7 policy.
+    destination: dict[str, Any] = field(default_factory=dict)
     # ranking inputs (0..1)
     urgency: float = 0.0
     risk: float = 0.0
@@ -1173,20 +1176,65 @@ class ProactiveEngine:
         if channel != "telegram":
             log.info("proactive candidate %s: %s", c.key, text)
             return True
-        chat = self.cfg.notify_chat or self.cfg.digest_chat
+        dest = c.destination or {}
+        chat = int(dest.get("chat_id") or 0) or self.cfg.notify_chat \
+            or self.cfg.digest_chat
+        thread = int(dest.get("thread_id") or 0)
         try:
             import requests
             keyboard = {"inline_keyboard": [
                 [{"text": label, "callback_data": data} for label, data in row]
                 for row in self.buttons(c)]}
+            payload = {"chat_id": chat, "text": text,
+                       "reply_markup": keyboard}
+            if thread:
+                payload["message_thread_id"] = thread
             r = requests.post(
                 f"https://api.telegram.org/bot{self.cfg.telegram_token}/sendMessage",
-                json={"chat_id": chat, "text": text,
-                      "reply_markup": keyboard}, timeout=15)
+                json=payload, timeout=15)
             return bool(r.ok)
         except Exception as exc:  # noqa: BLE001
             log.warning("proactive send failed: %s", exc)
             return False
+
+    # --------------------------------------------------- N2: external ingest
+    def ingest(self, candidates: list[ProactiveCandidate], *,
+               now: int | None = None, deliver: bool = True
+               ) -> list[dict[str, Any]]:
+        """Accept externally generated candidates (e.g. from the tracker engine)
+        and run them through the SAME ranking/policy/notification path.
+
+        This is the single integration point that keeps tracking from becoming a
+        second notification engine.
+        """
+        now = int(now if now is not None else self._now())
+        if not candidates:
+            return []
+        ranked = self.rank_candidates(list(candidates), now=now)
+        allowed, suppressed = self.policy_filter(ranked, now=now)
+        for c in ranked:
+            self._persist_candidate(c, now)
+        for s in suppressed:
+            self._audit("proactive_suppressed", target=s["key"],
+                        detail={"reason": s["reason"], "category": s["category"],
+                                "origin": "tracker"})
+        out: list[dict[str, Any]] = []
+        if deliver:
+            for c in allowed:
+                msg = self.format_message(c)
+                channel = "telegram" if (self.cfg.telegram_token
+                                         and (self.cfg.notify_chat
+                                              or self.cfg.digest_chat
+                                              or c.destination)) else "log"
+                self._send(c, msg, channel, now)
+                self._record_notification(c, now, channel, msg)
+                self._audit("proactive_notified", target=c.key,
+                            detail={"category": c.category,
+                                    "priority": c.priority, "channel": channel,
+                                    "origin": "tracker"})
+                out.append({"key": c.key, "priority": c.priority,
+                            "message": msg})
+        return out
 
     # ==================================================================
     # 9. daily briefing

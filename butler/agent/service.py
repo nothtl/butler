@@ -282,6 +282,12 @@ class ExecutiveService:
             ActionKind.PROACTIVE_EXPLAIN: self._proactive_explain,
             ActionKind.PROACTIVE_SNOOZE: self._proactive_snooze,
             ActionKind.PROACTIVE_SUPPRESS: self._proactive_suppress,
+            ActionKind.TRACKER_CREATE: self._tracker_create,
+            ActionKind.TRACKER_LIST: self._tracker_list,
+            ActionKind.TRACKER_QUERY: self._tracker_query,
+            ActionKind.TRACKER_CONTROL: self._tracker_control,
+            ActionKind.TRACKER_EVALUATE: self._tracker_evaluate,
+            ActionKind.TRACKER_EXPLAIN: self._tracker_explain,
             ActionKind.WEB_SEARCH: self._web_search,
             ActionKind.WEB_RESEARCH: self._web_research,
             ActionKind.WEB_FETCH: self._web_fetch,
@@ -945,6 +951,181 @@ class ExecutiveService:
                     "scope": res["scope"]}],
             assumptions=["critical safety/deadline warnings are never muted"])
 
+    # --------------------------------------------------- tracker handlers
+    def _tracker_module(self) -> Any:
+        return getattr(self.container, "trackers", None)
+
+    def _tracker_topic_ctx(self, req: AgentRequest) -> dict[str, Any]:
+        ref = dict(req.topic or {})
+        ctx: dict[str, Any] = {}
+        if ref.get("chat_id") is not None:
+            ctx["chat_id"] = int(ref.get("chat_id") or 0)
+            ctx["thread_id"] = int(ref.get("thread_id") or 0)
+        topics = getattr(self.container, "topics", None)
+        if topics is not None and ctx.get("chat_id") is not None:
+            try:
+                prof = topics.get(ctx["chat_id"], ctx.get("thread_id", 0))
+                if prof is not None:
+                    ctx["topic_id"] = prof.id
+                    ctx.setdefault("topic_name", prof.name)
+            except Exception:  # noqa: BLE001
+                pass
+        return ctx
+
+    def _tracker_gated(self, req: AgentRequest) -> AgentResult:
+        return AgentResult(
+            status=ResultStatus.NEEDS_CONFIRMATION,
+            confirmation_required=True,
+            data={"proposed_action": req.action.value, "text": req.raw_text,
+                  "committed": False},
+            facts=[{"kind": "tracker_proposal", "action": req.action.value,
+                    "text": req.raw_text}],
+            candidate_actions=[{"action": req.action.value,
+                                "text": req.raw_text,
+                                "requires_confirmation": True}],
+            warnings=["this tracker change is prepared but not applied; "
+                      "confirmation is required"],
+            assumptions=["read-only executive surface: tracker mutations "
+                         "require explicit confirmation"])
+
+    def _tracker_create(self, req: AgentRequest, snap: Any) -> AgentResult:
+        eng = self._tracker_module()
+        if eng is None:
+            return AgentResult(status=ResultStatus.UNAVAILABLE,
+                               error="tracker engine unavailable")
+        if self._read_only:
+            return self._tracker_gated(req)
+        ctx = self._tracker_topic_ctx(req)
+        proposal = eng.parse_request(req.raw_text or "", context=ctx)
+        tracker = proposal["tracker"]
+        if proposal["questions"]:
+            return AgentResult(
+                status=ResultStatus.AMBIGUOUS,
+                data={"proposal": proposal},
+                warnings=list(proposal["questions"]),
+                missing_information=list(proposal["questions"]),
+                candidate_actions=[{"action": "tracker_create",
+                                    "proposal": proposal,
+                                    "requires_confirmation": False}])
+        dest = proposal.get("destination") or {}
+        t = eng.create(
+            name=tracker["name"], source=tracker["source"],
+            target_type=tracker["target_type"], target_id=tracker["target_id"],
+            target_ref=tracker["target_ref"], condition=tracker["condition"],
+            action=tracker["action"], cadence=tracker["cadence"],
+            scope=tracker["scope"], priority=tracker["priority"],
+            destination=dest, one_shot=tracker["one_shot"],
+            expires_at=tracker["expires_at"])
+        return AgentResult(
+            status=ResultStatus.OK,
+            data={"tracker": t.to_dict(), "summary": proposal["summary"]},
+            facts=[{"kind": "tracker_create", "tracker_id": t.id,
+                    "source": t.source, "target": t.target_ref,
+                    "condition": (t.condition or {}).get("type"),
+                    "destination": dest}],
+            assumptions=["trackers propose actions; they never execute "
+                         "consequential external effects"])
+
+    def _tracker_list(self, req: AgentRequest, snap: Any) -> AgentResult:
+        eng = self._tracker_module()
+        if eng is None:
+            return AgentResult(status=ResultStatus.UNAVAILABLE,
+                               error="tracker engine unavailable")
+        ctx = self._tracker_topic_ctx(req)
+        rows = (eng.by_destination(ctx["chat_id"], ctx.get("thread_id", 0))
+                if ctx.get("chat_id") is not None else eng.list(limit=100))
+        return AgentResult(
+            status=ResultStatus.OK,
+            data={"trackers": [t.to_dict() for t in rows], "count": len(rows)},
+            facts=[{"kind": "tracker_list", "count": len(rows),
+                    "active": sum(1 for t in rows if t.state == "active")}])
+
+    def _tracker_query(self, req: AgentRequest, snap: Any) -> AgentResult:
+        return self._tracker_list(req, snap)
+
+    def _tracker_find(self, req: AgentRequest) -> Any:
+        eng = self._tracker_module()
+        rows = eng.list(limit=200)
+        if req.target is not None and req.target.id:
+            try:
+                return eng.get(int(req.target.id))
+            except (TypeError, ValueError):
+                pass
+        q = _clean_tracker_query(req.raw_text)
+        if q:
+            for t in rows:
+                if q in (t.name or "").lower() or q in (t.target_ref or "").lower():
+                    return t
+            for t in rows:
+                toks = [x for x in q.split() if len(x) > 2]
+                if toks and any(x in (t.name or "").lower()
+                                or x in (t.target_ref or "").lower()
+                                for x in toks):
+                    return t
+        return None
+
+    def _tracker_control(self, req: AgentRequest, snap: Any) -> AgentResult:
+        if self._read_only:
+            return self._tracker_gated(req)
+        eng = self._tracker_module()
+        if eng is None:
+            return AgentResult(status=ResultStatus.UNAVAILABLE,
+                               error="tracker engine unavailable")
+        t = self._tracker_find(req)
+        if t is None:
+            return AgentResult(status=ResultStatus.UNAVAILABLE,
+                               warnings=["I couldn't find that tracker"])
+        low = (req.raw_text or "").lower()
+        if "resume" in low or "enable" in low:
+            action = "resume"
+        elif "disable" in low:
+            action = "disable"
+        elif "stop" in low or "forget" in low or "delete" in low:
+            action = "archive"
+        else:
+            action = "pause"
+        res = eng.control(t.id, action)
+        if not res.get("ok"):
+            return AgentResult(status=ResultStatus.UNAVAILABLE, data=res,
+                               warnings=[res.get("error", "control failed")])
+        return AgentResult(
+            status=ResultStatus.OK,
+            data={"tracker": res["tracker"], "action": action},
+            facts=[{"kind": "tracker_control", "tracker_id": t.id,
+                    "action": action}])
+
+    def _tracker_evaluate(self, req: AgentRequest, snap: Any) -> AgentResult:
+        eng = self._tracker_module()
+        if eng is None:
+            return AgentResult(status=ResultStatus.UNAVAILABLE,
+                               error="tracker engine unavailable")
+        t = self._tracker_find(req)
+        if t is None:
+            return AgentResult(status=ResultStatus.UNAVAILABLE,
+                               warnings=["I couldn't find that tracker"])
+        res = eng.evaluate(t, now=self.clock.now_ts(), dry_run=True)
+        return AgentResult(
+            status=ResultStatus.OK,
+            data={"evaluation": res.to_dict()},
+            facts=[{"kind": "tracker_evaluate", "tracker_id": t.id,
+                    "fired": res.fired, "reason": res.reason,
+                    "dry_run": True}])
+
+    def _tracker_explain(self, req: AgentRequest, snap: Any) -> AgentResult:
+        eng = self._tracker_module()
+        if eng is None:
+            return AgentResult(status=ResultStatus.UNAVAILABLE,
+                               error="tracker engine unavailable")
+        t = self._tracker_find(req)
+        if t is None:
+            return AgentResult(status=ResultStatus.UNAVAILABLE,
+                               warnings=["I don't have a tracker that explains that"])
+        why = eng.why(t.id)
+        return AgentResult(
+            status=ResultStatus.OK, data={"explanation": why},
+            facts=[{"kind": "tracker_explain", "tracker_id": t.id,
+                    "state": t.state}])
+
     # ---------------------------------------------------- optimizer handlers
     def _optimizer_module(self) -> Any:
         return getattr(self.container, "optimizer", None)
@@ -1490,6 +1671,35 @@ def _clean_proactive_query(text: str) -> str:
     q = (text or "").strip()
     low = q.lower()
     for prefix in _PROACTIVE_STRIP:
+        if low.startswith(prefix):
+            q = q[len(prefix):].strip(" ?.,:;!-")
+            break
+    return q or (text or "").strip()
+
+
+#: Longest-first tracker trigger phrases (for resolving a tracker by name).
+_TRACKER_STRIP = (
+    "show what you're tracking", "show what you are tracking",
+    "what am i tracking here", "what are you tracking here",
+    "why did you notify me", "why did you alert me", "why did you tell me",
+    "would this tracker fire", "would the tracker fire",
+    "evaluate the tracker", "evaluate tracker", "dry run tracker",
+    "test the tracker", "test this tracker",
+    "show my trackers", "list my trackers", "what are you tracking",
+    "my trackers", "list trackers", "show trackers",
+    "stop tracking", "pause tracking", "resume tracking", "disable tracking",
+    "pause the tracker", "resume the tracker", "stop the tracker",
+    "forget the tracker", "delete the tracker",
+    "tell me when", "notify me when", "warn me when", "warn me if",
+    "let me know when", "i want to know when", "i want to know if",
+    "alert me when", "alert me if", "track ", "watch ", "monitor ",
+)
+
+
+def _clean_tracker_query(text: str) -> str:
+    q = (text or "").strip()
+    low = q.lower()
+    for prefix in _TRACKER_STRIP:
         if low.startswith(prefix):
             q = q[len(prefix):].strip(" ?.,:;!-")
             break

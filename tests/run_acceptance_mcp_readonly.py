@@ -38,7 +38,9 @@ READONLY_TOOLS = {
     "evaluate_schedule", "find_best_slot", "memory_search",
     "memory_get_relevant", "memory_list", "memory_history",
     "get_proactive_candidates", "get_proactive_status",
-    "explain_proactive_candidate", "executive_ask",
+    "explain_proactive_candidate",
+    "get_trackers", "get_tracker", "evaluate_tracker",
+    "executive_ask",
 }
 
 

@@ -514,6 +514,70 @@ CREATE TABLE IF NOT EXISTS topic_links(
 );
 CREATE INDEX IF NOT EXISTS idx_topic_links_profile ON topic_links(topic_profile_id);
 
+-- ---------------------------------------------------------------------------
+-- N2: universal tracking / trigger engine. One compact Tracker row folds the
+-- conceptual Tracker+Trigger split (condition/action are JSON); meaningful
+-- events get a durable row with a UNIQUE deterministic key for idempotency.
+-- Low-level poll results are NOT stored — only meaningful events.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS trackers(
+    id              INTEGER PRIMARY KEY,
+    name            TEXT DEFAULT '',
+    target_type     TEXT DEFAULT '',        -- food_item|project|course|event|task|web_page|github_repo|file_dir|global
+    target_id       INTEGER DEFAULT 0,
+    target_ref      TEXT DEFAULT '',
+    source          TEXT DEFAULT '',        -- provider name
+    condition       TEXT DEFAULT '',        -- JSON {type, ...}
+    action          TEXT DEFAULT '',        -- JSON {type, ...}
+    cadence_seconds INTEGER DEFAULT 21600,
+    scope           TEXT DEFAULT 'object',  -- global | topic | object
+    priority        TEXT DEFAULT 'medium',
+    destination_chat_id   INTEGER DEFAULT 0,
+    destination_thread_id INTEGER DEFAULT 0,
+    destination_topic_id  INTEGER DEFAULT 0,
+    enabled         INTEGER DEFAULT 1,
+    state           TEXT DEFAULT 'pending', -- pending|active|paused|degraded|error|disabled|archived
+    last_checked_at INTEGER DEFAULT 0,
+    next_check_at   INTEGER DEFAULT 0,
+    last_state_hash TEXT DEFAULT '',
+    last_snapshot   TEXT DEFAULT '',
+    last_event      TEXT DEFAULT '',
+    last_event_at   INTEGER DEFAULT 0,
+    failure_count   INTEGER DEFAULT 0,
+    cooldown_until  INTEGER DEFAULT 0,
+    one_shot        INTEGER DEFAULT 0,
+    completed       INTEGER DEFAULT 0,
+    expires_at      INTEGER DEFAULT 0,
+    provenance      TEXT DEFAULT '',
+    created_at      INTEGER DEFAULT 0,
+    updated_at      INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_trackers_state ON trackers(state);
+CREATE INDEX IF NOT EXISTS idx_trackers_enabled ON trackers(enabled);
+CREATE INDEX IF NOT EXISTS idx_trackers_next ON trackers(next_check_at);
+CREATE INDEX IF NOT EXISTS idx_trackers_target ON trackers(target_type, target_id);
+CREATE INDEX IF NOT EXISTS idx_trackers_dest ON trackers(destination_topic_id);
+
+CREATE TABLE IF NOT EXISTS tracker_events(
+    id           INTEGER PRIMARY KEY,
+    tracker_id   INTEGER NOT NULL,
+    event_key    TEXT NOT NULL UNIQUE,       -- deterministic idempotency key
+    event_type   TEXT DEFAULT '',
+    target_type  TEXT DEFAULT '',
+    target_id    INTEGER DEFAULT 0,
+    summary      TEXT DEFAULT '',
+    evidence     TEXT DEFAULT '',            -- JSON
+    before_state TEXT DEFAULT '',
+    after_state  TEXT DEFAULT '',
+    action       TEXT DEFAULT '',            -- JSON action proposal
+    candidate_key TEXT DEFAULT '',
+    observed_at  INTEGER DEFAULT 0,
+    created_at   INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_tracker_events_tracker ON tracker_events(tracker_id);
+CREATE INDEX IF NOT EXISTS idx_tracker_events_type ON tracker_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_tracker_events_at ON tracker_events(observed_at);
+
 -- Reward library (small treats / rest breaks the agent suggests on completion).
 CREATE TABLE IF NOT EXISTS rewards(
     id          INTEGER PRIMARY KEY,

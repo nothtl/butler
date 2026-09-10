@@ -229,6 +229,12 @@ class Config:
     proactive_max_candidates: int = 50
     proactive_quiet_critical: bool = True    # critical may bypass quiet hours
     proactive_briefing_enabled: bool = True
+    # --- universal tracking / triggers (N2) ---
+    tracker_enabled: bool = True
+    tracker_schedule: str = "5m"           # cadence of the scheduler job
+    tracker_max_per_cycle: int = 50        # bound trackers evaluated per run
+    tracker_cooldown_minutes: int = 360    # per-tracker re-notify cooldown
+    tracker_max_failures: int = 3          # before a tracker goes ERROR
     # Per-category toggles (all on by default; users may disable individually).
     proactive_cat_deadline_risk: bool = True
     proactive_cat_free_time: bool = True
@@ -588,6 +594,16 @@ class Config:
                                                      cfg.proactive_quiet_critical))
         cfg.proactive_briefing_enabled = bool(pro7.get("briefing_enabled",
                                                        cfg.proactive_briefing_enabled))
+
+        trk = page.get("tracker", {})
+        cfg.tracker_enabled = bool(trk.get("enabled", cfg.tracker_enabled))
+        cfg.tracker_schedule = trk.get("schedule", cfg.tracker_schedule)
+        cfg.tracker_max_per_cycle = int(trk.get("max_per_cycle",
+                                                cfg.tracker_max_per_cycle))
+        cfg.tracker_cooldown_minutes = int(trk.get("cooldown_minutes",
+                                                   cfg.tracker_cooldown_minutes))
+        cfg.tracker_max_failures = int(trk.get("max_failures",
+                                               cfg.tracker_max_failures))
         for cat in ("deadline_risk", "free_time", "missed_task",
                     "schedule_conflict", "project_risk", "estimate", "routine",
                     "travel", "web_change", "food", "course"):
@@ -804,6 +820,10 @@ class Config:
             raise ValueError("proactive_min_confidence must be within [0, 1]")
         if self.proactive_max_candidates < 1:
             raise ValueError("proactive_max_candidates must be >= 1")
+        if self.tracker_max_per_cycle < 1:
+            raise ValueError("tracker_max_per_cycle must be >= 1")
+        if self.tracker_cooldown_minutes < 0 or self.tracker_max_failures < 1:
+            raise ValueError("tracker cooldown/max_failures are invalid")
         if self.proactive_min_free_window_minutes < 0 \
                 or self.proactive_prep_lead_minutes < 0 \
                 or self.proactive_candidate_expiry_minutes < 1:
@@ -906,6 +926,11 @@ class Config:
             "proactive_max_candidates": self.proactive_max_candidates,
             "proactive_quiet_critical": self.proactive_quiet_critical,
             "proactive_briefing_enabled": self.proactive_briefing_enabled,
+            "tracker_enabled": self.tracker_enabled,
+            "tracker_schedule": self.tracker_schedule,
+            "tracker_max_per_cycle": self.tracker_max_per_cycle,
+            "tracker_cooldown_minutes": self.tracker_cooldown_minutes,
+            "tracker_max_failures": self.tracker_max_failures,
             "nas_enabled": self.nas_enabled,
             "nas_dir": self.nas_dir,
             "nas_inbox_dir": self.nas_inbox_dir,

@@ -353,6 +353,22 @@ def build_mcp_registry(container: Any) -> ToolRegistry:
         lambda a: _explain_proactive_candidate(c, a),
         [P("key", "str", default=""), P("query", "str", default="")],
         action="proactive_explain", profile="readonly")
+    # --- N2: universal trackers (strictly read-only) ---
+    add("get_trackers", "List configured trackers with state and last/next "
+        "check. Read-only.",
+        lambda a: _get_trackers(c, a),
+        [P("state", "str", default=""), P("limit", "int", default=50)],
+        action="tracker_list", profile="readonly")
+    add("get_tracker", "One tracker by id or name, with its last event. "
+        "Read-only.",
+        lambda a: _get_tracker(c, a),
+        [P("tracker", "str", default="")], action="tracker_query",
+        profile="readonly")
+    add("evaluate_tracker", "Dry-run a tracker and report whether it would "
+        "fire (no notification, no write). Read-only.",
+        lambda a: _evaluate_tracker(c, a),
+        [P("tracker", "str", default="")], action="tracker_evaluate",
+        profile="readonly")
     add("executive_ask", "Typed executive query. Accepts a structured request "
         "object (the M2 semantic contract) or raw text; validates it, gathers "
         "request-scoped context and returns an AgentResult. Strictly read-only: "
@@ -788,6 +804,61 @@ def _explain_proactive_candidate(c: Any, a: dict[str, Any]) -> dict[str, Any]:
         if row.get("key") == key:
             return {"ok": True, "explanation": eng.explain_candidate(row)}
     return {"ok": False, "error": "no candidate matched"}
+
+
+def _tracker_engine(c: Any) -> Any:
+    return getattr(c, "trackers", None)
+
+
+def _get_trackers(c: Any, a: dict[str, Any]) -> dict[str, Any]:
+    eng = _tracker_engine(c)
+    if eng is None:
+        return {"ok": False, "error": "tracker engine unavailable"}
+    state = str(a.get("state", "") or "")
+    limit = int(a.get("limit", 50) or 50)
+    rows = eng.list(state=state, limit=limit)
+    return {"ok": True, "count": len(rows),
+            "trackers": [t.to_dict() for t in rows]}
+
+
+def _find_tracker(c: Any, ident: str) -> Any:
+    eng = _tracker_engine(c)
+    if eng is None:
+        return None
+    if ident.isdigit():
+        return eng.get(int(ident))
+    for row in eng.list(limit=200):
+        if ident.lower() in (row.name or "").lower() \
+                or ident.lower() in (row.target_ref or "").lower():
+            return row
+    return None
+
+
+def _get_tracker(c: Any, a: dict[str, Any]) -> dict[str, Any]:
+    eng = _tracker_engine(c)
+    if eng is None:
+        return {"ok": False, "error": "tracker engine unavailable"}
+    ident = str(a.get("tracker", "") or "").strip()
+    if not ident:
+        return {"ok": False, "error": "tracker id or name is required"}
+    t = _find_tracker(c, ident)
+    if t is None:
+        return {"ok": False, "error": f"tracker not found: {ident}"}
+    return {"ok": True, **eng.why(t.id)}
+
+
+def _evaluate_tracker(c: Any, a: dict[str, Any]) -> dict[str, Any]:
+    eng = _tracker_engine(c)
+    if eng is None:
+        return {"ok": False, "error": "tracker engine unavailable"}
+    ident = str(a.get("tracker", "") or "").strip()
+    if not ident:
+        return {"ok": False, "error": "tracker id or name is required"}
+    t = _find_tracker(c, ident)
+    if t is None:
+        return {"ok": False, "error": f"tracker not found: {ident}"}
+    res = eng.evaluate(t, dry_run=True)
+    return {"ok": True, "evaluation": res.to_dict()}
 
 
 def _executive_ask(c: Any, a: dict[str, Any]) -> dict[str, Any]:

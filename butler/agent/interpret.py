@@ -222,6 +222,37 @@ _PROACTIVE_QUERY = (
     "what are you reminding me about", "what proactive",
 )
 
+# --- N2 universal tracking / triggers ---------------------------------------
+_TRACKER_LIST = (
+    "show my trackers", "list my trackers", "what are you tracking",
+    "show what you're tracking", "show what you are tracking",
+    "my trackers", "list trackers", "show trackers",
+)
+_TRACKER_EXPLAIN = (
+    "why did you notify me", "why did you tell me", "why did you alert me",
+    "why did this tracker fire", "why did you flag this",
+)
+_TRACKER_CONTROL = (
+    "stop tracking", "pause tracking", "resume tracking", "disable tracking",
+    "pause the tracker", "resume the tracker", "stop the tracker",
+    "forget the tracker", "delete the tracker",
+)
+_TRACKER_EVALUATE = (
+    "would this tracker fire", "would the tracker fire", "evaluate tracker",
+    "evaluate the tracker", "dry run tracker", "test the tracker",
+    "test this tracker",
+)
+_TRACKER_CREATE = (
+    "track ", "tracking ", "watch ", "monitor ", "tell me when",
+    "notify me when", "warn me if", "warn me when", "let me know when",
+    "i want to know when", "i want to know if", "alert me when",
+    "alert me if",
+)
+_TRACKER_QUERY = (
+    "what am i tracking here", "what are you tracking here",
+    "what do you track here", "tracking here", "what is tracked here",
+)
+
 _TEMPORAL_MARKERS = (
     "tonight", "this evening", "this morning", "this afternoon", "tomorrow",
     "next week", "this week", "rest of the week", "today", "after dinner",
@@ -296,6 +327,9 @@ class DeterministicInterpreter:
         memory = self._memory_classify(low)
         if memory is not None:
             return memory
+        tracker = self._tracker_classify(low)
+        if tracker is not None:
+            return tracker
         proactive = self._proactive_classify(low)
         if proactive is not None:
             return proactive
@@ -349,6 +383,22 @@ class DeterministicInterpreter:
             return RequestIntent.QUERY, ActionKind.MEMORY_SEARCH, 0.7
         if _match(low, _MEMORY_QUERY):
             return RequestIntent.QUERY, ActionKind.MEMORY_QUERY, 0.7
+        return None
+
+    def _tracker_classify(self, low: str
+                          ) -> tuple[RequestIntent, ActionKind, float] | None:
+        if _match(low, _TRACKER_EXPLAIN):
+            return RequestIntent.QUERY, ActionKind.TRACKER_EXPLAIN, 0.7
+        if _match(low, _TRACKER_EVALUATE):
+            return RequestIntent.QUERY, ActionKind.TRACKER_EVALUATE, 0.7
+        if _match(low, _TRACKER_CONTROL):
+            return RequestIntent.MUTATE, ActionKind.TRACKER_CONTROL, 0.75
+        if _match(low, _TRACKER_LIST):
+            return RequestIntent.QUERY, ActionKind.TRACKER_LIST, 0.7
+        if _match(low, _TRACKER_QUERY):
+            return RequestIntent.QUERY, ActionKind.TRACKER_QUERY, 0.7
+        if _match(low, _TRACKER_CREATE):
+            return RequestIntent.MUTATE, ActionKind.TRACKER_CREATE, 0.7
         return None
 
     def _proactive_classify(self, low: str
