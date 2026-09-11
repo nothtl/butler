@@ -178,8 +178,65 @@ def schema_prompt() -> str:
         "condition, setting name/value, link relation)",
         "Output ONLY the JSON object. No prose, no markdown, no code fences. "
         "If unsure, use action=unknown and a low confidence.",
+        "",
+        "DISAMBIGUATION EXAMPLES (pick the specific action, never a generic one):",
+        '- "What\'s my CS188 HW4 status?" -> status (a QUERY, not create)',
+        '- "Add CS188 HW4." -> create_item (CREATE)',
+        '- "Change HW4 to Sunday." -> update_item (UPDATE, not create)',
+        '- "Did HW4 move?" -> status (QUERY)',
+        '- "Track HW4 deadline changes." -> tracker_create',
+        '- "What assignments are in CS188?" -> status (QUERY, not tracker_create)',
+        '- "Keep me updated when new CS188 homework appears." -> tracker_create',
+        '- "Don\'t schedule after 10 PM." -> settings_update, scope=global, '
+        'parameters={"setting":"work_end","value":"22:00"}',
+        '- "Stop scheduling in this topic." -> settings_update, '
+        'scope=current_topic, parameters={"capability":"scheduling",'
+        '"state":"disabled"}',
+        '- "Don\'t schedule this tonight." -> defer (a specific task, not a setting)',
+        '- "Turn off proactive messages here." -> settings_update, '
+        'scope=current_topic, parameters={"capability":"proactive",'
+        '"state":"disabled"}',
+        '- "Link this to CS188." -> link_items (LINK, not create)',
+        '- "Create a project for X." -> create_item',
+        "If an object already exists, prefer update_item/link_items over a "
+        "duplicate create_item. Use scope=current_topic for 'here/this topic' "
+        "and scope=global for 'globally/everywhere/system'.",
     ]
     return "\n".join(lines)
+
+
+# Context -> relevant action names. This is a *bounded hint* to reduce tool
+# confusion; the full enum above is still authoritative and every proposal is
+# validated server-side against the complete registry.
+_TOPIC_ACTIONS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    (("food", "meal", "pantry", "grocer", "cook", "recipe", "dinner"),
+     ("recommend", "create_item", "link_items", "tracker_create", "status",
+      "settings_update")),
+    (("course", "class", "homework", "assignment", "cs1", "cs2", "school",
+      "university"),
+     ("status", "create_item", "update_item", "tracker_create", "plan_day",
+      "find_best_slot", "web_research")),
+    (("project", "repo", "startup", "research", "thesis"),
+     ("project_status", "project_next", "create_item", "update_item",
+      "tracker_create", "plan_week")),
+    (("club", "team", "society", "basketball", "practice"),
+     ("tracker_create", "status", "create_item", "plan_week")),
+)
+
+
+def relevant_actions(topic: Any = None) -> list[str]:
+    """A bounded, topic-relevant action hint (never the whole universe)."""
+    text = ""
+    if isinstance(topic, dict):
+        text = " ".join(str(topic.get(k, "")) for k in
+                        ("topic_name", "purpose", "name")).lower()
+    else:
+        text = str(topic or "").lower()
+    for keys, acts in _TOPIC_ACTIONS:
+        if any(k in text for k in keys):
+            return list(acts)
+    return ["status", "recommend", "create_item", "link_items", "update_item",
+            "tracker_create", "plan_day", "settings_update", "memory_learn"]
 
 
 __all__ = [

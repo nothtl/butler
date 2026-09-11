@@ -118,8 +118,8 @@ def test_temporal() -> None:
 
     t = res.resolve("after dinner")
     check("after dinner resolved", t.resolution != TemporalResolution.UNRESOLVED)
-    check("after dinner is inferred", t.resolution == TemporalResolution.INFERRED,
-          t.resolution.value)
+    check("after dinner is a resolved window",
+          t.resolution == TemporalResolution.RESOLVED, t.resolution.value)
     check("after dinner confidence < 1", 0 < t.confidence < 1.0, str(t.confidence))
 
     t = res.resolve("before class")

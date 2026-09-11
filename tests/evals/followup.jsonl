@@ -1,0 +1,10 @@
+{"turns": ["Track CS188 homework.", "Only deadline changes."], "expected": "modify_or_resolve"}
+{"turns": ["Track CS188 homework.", "Actually include new assignments too."], "expected": "modify_or_resolve"}
+{"turns": ["Track CS188 homework.", "Just new items."], "expected": "modify_or_resolve"}
+{"turns": ["Add Project 2.", "The CS188 one."], "expected": "modify_or_resolve"}
+{"turns": ["Add Project 2.", "The CS168 one."], "expected": "modify_or_resolve"}
+{"turns": ["Add Project 2.", "The second one."], "expected": "modify_or_resolve"}
+{"turns": ["Track the assignments.", "The CS188 ones."], "expected": "modify_or_resolve"}
+{"turns": ["Enable web here.", "Actually turn it off."], "expected": "modify_or_resolve"}
+{"turns": ["Link this to CS188.", "No, link it to CS168."], "expected": "modify_or_resolve"}
+{"turns": ["Remember I prefer mornings.", "Actually I prefer evenings."], "expected": "modify_or_resolve"}

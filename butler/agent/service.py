@@ -30,6 +30,10 @@ from .semantic import (
     EntityType, Recommendation, RequestIntent, ResultStatus, ScopeKind,
     _TARGET_REQUIRED,
 )
+from .interactions import (
+    InteractionKind, InteractionStatus, InteractionStore, match_candidates,
+    ref_from_candidate,
+)
 from .temporal import Clock, TemporalResolver
 from ..ux import new_request_id
 
@@ -39,6 +43,18 @@ _REFERENCE_WORDS = (
     "that", "it", "this", "that one", "the other", "the other one",
     "the other assignment", "the same one", "that task", "that block",
     "this task", "this block",
+)
+
+# Bounded follow-up markers used to detect a modification of a pending proposal.
+_MODIFICATION_WORDS = (
+    "only", "just", "instead", "actually", "change it", "change that",
+    "make it", "no,", "no ", "rather", "exclude", "include", "also",
+)
+
+# P2.3 deterministic resolution precedence.
+RESOLUTION_PRECEDENCE = (
+    "clarification", "confirmation", "topic", "recent_entities",
+    "conversation", "global_lookup", "ask",
 )
 
 _WORD_NUMBERS = {
@@ -66,6 +82,9 @@ class ExecutiveService:
             from .interpret import resolve_interpreter
             self.interpreter = resolve_interpreter(container, now_ts=now_ts)
         self._fallback_session: Any = None
+        # P2: explicit, expiring pending-interaction state (clarification +
+        # confirmation). Never rely on model memory for follow-ups.
+        self.interactions = InteractionStore()
         # When True, memory-mutating actions return a proposal instead of
         # executing (used by the strictly read-only `executive_ask` MCP tool).
         self._read_only = False
@@ -120,10 +139,47 @@ class ExecutiveService:
         self._read_only = bool(read_only)
         self.request_id = new_request_id()
         session = self.session(user)
+        # P2.4: purge stale state; never apply an expired interaction.
+        expired = self.interactions.purge_expired(session)
+        expired_notice = bool(expired) and (
+            _is_reference(req.raw_text)
+            or len((req.raw_text or "").split()) <= 6
+            or req.action in (ActionKind.UNKNOWN, ActionKind.RESOLVE_REFERENCE))
+        # P2.1: resolve a follow-up against the pending candidates FIRST.
+        clar = self.interactions.active(session, InteractionKind.CLARIFICATION)
+        if clar is not None:
+            cand = match_candidates(req.raw_text, clar.candidates)
+            if cand is not None:
+                chosen = ref_from_candidate(cand)
+                if req.target is None:
+                    req.target = chosen
+                else:
+                    self._adopt(req.target, chosen)
+                self.interactions.close(session, clar,
+                                        InteractionStatus.COMPLETED)
+        # P2.2: a follow-up may modify the pending proposal instead of creating
+        # a new, unrelated request.
+        conf = self.interactions.active(session, InteractionKind.CONFIRMATION)
+        if conf is not None and self._is_modification(req):
+            merged = self._merge_pending(conf, req)
+            self.interactions.close(session, conf, InteractionStatus.CANCELLED)
+            res = AgentResult(
+                status=ResultStatus.NEEDS_CONFIRMATION,
+                answer=merged.get("summary", ""),
+                data=merged, confirmation_required=True,
+                assumptions=["updated the pending proposal"])
+            if include_context:
+                res.context = self.context.build_snapshot(req)
+            self._remember(session, req, res)
+            return res
         ambiguities = self._resolve(req, session)
         if ambiguities:
             req.ambiguity = ambiguities
             res = AgentResult.ambiguous(ambiguities)
+            self._open_clarification(session, req, ambiguities)
+            if expired_notice:
+                res.warnings = list(res.warnings) + [
+                    "That earlier choice has expired. Please choose again."]
             if include_context:
                 res.context = self.context.build_snapshot(req)
             self._remember(session, req, res)
@@ -142,8 +198,116 @@ class ExecutiveService:
             res.with_provenance("executive_service", req.action.value,
                                 deterministic=True,
                                 request_id=getattr(self, "request_id", ""))
+        # P2.2: remember a pending proposal so a follow-up can modify it.
+        data = res.data if isinstance(res.data, dict) else {}
+        proposal = dict(data.get("proposal") or {})
+        # Domain-level ambiguity (e.g. two "Project 2" found by the creation
+        # service) is also a clarification, with the proposal's candidates.
+        resol = proposal.get("resolution") or {}
+        questions = proposal.get("questions") or data.get("questions") or []
+        if (res.status == ResultStatus.AMBIGUOUS
+                or str(resol.get("status") or "") == "ambiguous"
+                or questions):
+            self.interactions.open(
+                session, kind=InteractionKind.CLARIFICATION,
+                original_text=req.raw_text, request=req.to_dict(),
+                candidates=self._enrich_candidates(
+                    list(resol.get("candidates") or [])),
+                ambiguity_type="entity")
+            if expired_notice:
+                res.warnings = list(res.warnings) + [
+                    "That earlier choice has expired. Please choose again."]
+            self._remember(session, req, res)
+            return res
+        pending = (res.status == ResultStatus.NEEDS_CONFIRMATION
+                   or bool(data.get("tracker")) or bool(proposal))
+        if pending and (data.get("summary") or proposal or data.get("tracker")
+                        or res.answer):
+            proposal.setdefault("summary", data.get("summary") or res.answer)
+            proposal.setdefault(
+                "name", req.target.name if req.target is not None else "")
+            proposal["parameters"] = dict(req.parameters or {})
+            proposal.setdefault("action", req.action.value)
+            if data.get("tracker"):
+                proposal.setdefault("tracker", data.get("tracker"))
+            self.interactions.open(
+                session, kind=InteractionKind.CONFIRMATION,
+                original_text=req.raw_text, request=req.to_dict(),
+                proposal=proposal)
+        if expired_notice:
+            res.warnings = list(res.warnings) + [
+                "That earlier choice has expired. Please choose again."]
         self._remember(session, req, res)
         return res
+
+    # ------------------------------------------------- pending interactions
+    @staticmethod
+    def _is_modification(req: AgentRequest) -> bool:
+        if req.action in (ActionKind.UPDATE, ActionKind.UPDATE_ITEM,
+                          ActionKind.SETTINGS_UPDATE):
+            return True
+        low = (req.raw_text or "").lower()
+        return any(w in low for w in _MODIFICATION_WORDS)
+
+    def _merge_pending(self, conf: Any, req: AgentRequest) -> dict[str, Any]:
+        proposal = dict(conf.proposal or {})
+        params = dict(proposal.get("parameters") or {})
+        params.update(req.parameters or {})
+        proposal["parameters"] = params
+        if req.temporal is not None and req.temporal.phrase:
+            proposal["temporal"] = req.temporal.to_dict()
+        proposal["modified_by"] = req.raw_text
+        proposal["summary"] = self._proposal_summary(proposal)
+        conf.proposal = proposal
+        return proposal
+
+    @staticmethod
+    def _proposal_summary(proposal: dict[str, Any]) -> str:
+        name = proposal.get("name") or "the request"
+        parts = [f"Okay — I'll update {name}."]
+        params = proposal.get("parameters") or {}
+        if params:
+            parts.append("Settings: " + ", ".join(
+                f"{k}={v}" for k, v in params.items()) + ".")
+        parts.append("Confirm?")
+        return " ".join(parts)
+
+    def _open_clarification(self, session: Any, req: AgentRequest,
+                            ambiguities: list[Ambiguity]) -> None:
+        candidates: list[dict[str, Any]] = []
+        for a in ambiguities:
+            candidates.extend(a.candidates)
+        self.interactions.open(
+            session, kind=InteractionKind.CLARIFICATION,
+            original_text=req.raw_text, request=req.to_dict(),
+            candidates=self._enrich_candidates(candidates),
+            ambiguity_type=ambiguities[0].kind.value if ambiguities else "")
+
+    def _enrich_candidates(self, candidates: list[dict[str, Any]]
+                           ) -> list[dict[str, Any]]:
+        """Add distinguishing qualifiers so a follow-up can pick one."""
+        out: list[dict[str, Any]] = []
+        for raw in candidates:
+            c = dict(raw)
+            qualifiers: list[str] = []
+            try:
+                if str(c.get("type")) == "project":
+                    pmod = getattr(self.container, "projects", None)
+                    db = getattr(self.container, "db", None)
+                    got = pmod.get_project(int(c.get("id") or 0)) \
+                        if pmod is not None else None
+                    cid = (got or {}).get("course_id") if got else None
+                    if cid and db is not None:
+                        row = db.course_by_id(int(cid))
+                        if row is not None:
+                            qualifiers.append(str(row["code"]))
+            except Exception:  # noqa: BLE001 — qualifiers are best effort
+                pass
+            if qualifiers:
+                c["qualifiers"] = qualifiers
+                c["label"] = f"{c.get('name', '')} ({' '.join(qualifiers)})"
+            out.append(c)
+        return out
 
     # -------------------------------------------------------------- session
     @property

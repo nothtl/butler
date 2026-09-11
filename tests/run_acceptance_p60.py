@@ -83,7 +83,15 @@ s = c.safety
 check(1, s.classify("search") == ActionClass.READ, "search -> READ")
 check(2, s.classify("add_task") == ActionClass.LOW_RISK_WRITE, "add_task -> LOW_RISK_WRITE")
 check(3, s.classify("organize") == ActionClass.CONSEQUENT_EXTERNAL, "organize -> EXTERNAL")
-check(4, s.classify("some_future_unknown") == ActionClass.CONSEQUENT_EXTERNAL, "unknown -> EXTERNAL (deny-by-default)")
+check(4, s.classify("some_future_unknown") == ActionClass.UNKNOWN, "unknown -> UNKNOWN (fail closed)")
+check(4.1, s.check("some_future_unknown", actor="u").allow is False,
+      "unregistered action denied")
+check(4.2, s.check("totally_unknown_action", actor="u", confirmed=True).allow is False,
+      "unregistered action denied even when 'confirmed'")
+check(4.3, s.check("telegram_send", actor="u", confirmed=False).allow is False,
+      "unconfirmed external send denied")
+check(4.4, s.check("shell", actor="u", confirmed=False).allow is False,
+      "unconfirmed privileged action denied")
 check(5, s.needs_confirmation("organize") is True, "organize requires confirmation")
 check(6, s.needs_confirmation("search") is False, "search needs no confirmation")
 

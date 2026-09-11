@@ -1,0 +1,69 @@
+{"input": "after lunch", "expected_resolvable": true}
+{"input": "before lunch", "expected_resolvable": true}
+{"input": "next Tuesday", "expected_resolvable": true}
+{"input": "this coming Monday", "expected_resolvable": true}
+{"input": "next weekend", "expected_resolvable": true}
+{"input": "this weekend", "expected_resolvable": true}
+{"input": "before dinner", "expected_resolvable": true}
+{"input": "after dinner", "expected_resolvable": true}
+{"input": "later tonight", "expected_resolvable": true}
+{"input": "tomorrow morning", "expected_resolvable": true}
+{"input": "tomorrow afternoon", "expected_resolvable": true}
+{"input": "tomorrow evening", "expected_resolvable": true}
+{"input": "tonight", "expected_resolvable": true}
+{"input": "this evening", "expected_resolvable": true}
+{"input": "in two hours", "expected_resolvable": true}
+{"input": "in 30 minutes", "expected_resolvable": true}
+{"input": "in 3 days", "expected_resolvable": true}
+{"input": "next week", "expected_resolvable": true}
+{"input": "this week", "expected_resolvable": true}
+{"input": "today", "expected_resolvable": true}
+{"input": "now", "expected_resolvable": true}
+{"input": "before my meeting", "expected_resolvable": true}
+{"input": "after my lecture", "expected_resolvable": true}
+{"input": "sometime after 5", "expected_resolvable": true}
+{"input": "at 17:30", "expected_resolvable": true}
+{"input": "5pm", "expected_resolvable": true}
+{"input": "next Monday", "expected_resolvable": true}
+{"input": "next Friday", "expected_resolvable": true}
+{"input": "next Sunday", "expected_resolvable": true}
+{"input": "this coming Friday", "expected_resolvable": true}
+{"input": "before 9am", "expected_resolvable": true}
+{"input": "after 8pm", "expected_resolvable": true}
+{"input": "in an hour", "expected_resolvable": true}
+{"input": "next hour", "expected_resolvable": true}
+{"input": "rest of today", "expected_resolvable": true}
+{"input": "rest of the week", "expected_resolvable": true}
+{"input": "after my class", "expected_resolvable": true}
+{"input": "before class", "expected_resolvable": true}
+{"input": "next month", "expected_resolvable": false}
+{"input": "some time soon", "expected_resolvable": false}
+{"input": "next Monday", "expected_resolvable": true}
+{"input": "this coming Monday", "expected_resolvable": true}
+{"input": "before my Monday meeting", "expected_resolvable": true}
+{"input": "next Tuesday", "expected_resolvable": true}
+{"input": "this coming Tuesday", "expected_resolvable": true}
+{"input": "before my Tuesday meeting", "expected_resolvable": true}
+{"input": "next Wednesday", "expected_resolvable": true}
+{"input": "this coming Wednesday", "expected_resolvable": true}
+{"input": "before my Wednesday meeting", "expected_resolvable": true}
+{"input": "next Thursday", "expected_resolvable": true}
+{"input": "this coming Thursday", "expected_resolvable": true}
+{"input": "before my Thursday meeting", "expected_resolvable": true}
+{"input": "next Friday", "expected_resolvable": true}
+{"input": "this coming Friday", "expected_resolvable": true}
+{"input": "before my Friday meeting", "expected_resolvable": true}
+{"input": "next Saturday", "expected_resolvable": true}
+{"input": "this coming Saturday", "expected_resolvable": true}
+{"input": "before my Saturday meeting", "expected_resolvable": true}
+{"input": "next Sunday", "expected_resolvable": true}
+{"input": "this coming Sunday", "expected_resolvable": true}
+{"input": "before my Sunday meeting", "expected_resolvable": true}
+{"input": "tomorrow morning", "expected_resolvable": true}
+{"input": "this morning", "expected_resolvable": true}
+{"input": "tomorrow afternoon", "expected_resolvable": true}
+{"input": "this afternoon", "expected_resolvable": true}
+{"input": "tomorrow evening", "expected_resolvable": true}
+{"input": "this evening", "expected_resolvable": true}
+{"input": "tomorrow night", "expected_resolvable": true}
+{"input": "this night", "expected_resolvable": false}

@@ -31,82 +31,17 @@ class ActionClass(str, Enum):
     READ = "read"
     LOW_RISK_WRITE = "low_risk_write"
     CONSEQUENT_EXTERNAL = "consequent_external"
+    UNKNOWN = "unknown"
 
 
-# A deterministic intent -> classification table. When an intent is unknown it
-# is treated as the *least* trusted class unless it demonstrably has no side
-# effect. Route updates live in one place so a new command is reviewed here
-# before it can act at all.
-_KNOWN_RISK: dict[str, str] = {
-    # --- read / inspect ---
-    "help": "read", "storage": "read", "status": "read", "list": "read",
-    "find": "read", "search": "read", "dupes": "read", "trash_list": "read",
-    "chat": "read",
-    "day": "read", "now": "read", "tasks": "read", "why": "read",
-    "context": "read", "timeline": "read", "briefing": "read", "review": "read",
-    "recipe": "read", "recipe_search": "read", "recipe_library": "read",
-    "favorites": "read", "recipe_history": "read", "grocery": "read",
-    "food_list": "read", "food_expiring": "read", "course_list": "read",
-    "course_docs": "read", "where_am_i": "read", "around_me": "read",
-    "backup": "read", "health": "read", "audit": "read", "undo_list": "read",
-    "recover": "read", "multimodal": "read", "skill_describe": "read",
-    "proactive": "read", "plan_tasks": "read", "plan_why": "read",
-    "schedule": "read", "schedule_why": "read",
-    "web_search": "read", "web_research": "read", "web_fetch": "read",
-    "knowledge_lookup": "read",
-    # M5: optimization is read-only; the reschedule proposal is a local write
-    # only once confirmed (and is reversible via the existing plan undo).
-    "optimize_day": "read", "optimize_week": "read",
-    "evaluate_schedule": "read", "find_best_slot": "read",
-    "reschedule_optimized": "low_risk_write",
-    # M6: memory reads are side-effect free; memory mutations are Butler-owned,
-    # reversible (forget/confirm/correct) and fully audited.
-    "memory_query": "read", "memory_search": "read", "memory_explain": "read",
-    "memory_learn": "low_risk_write", "memory_forget": "low_risk_write",
-    "memory_confirm": "low_risk_write", "memory_correct": "low_risk_write",
-    # M7: proactive reads are side-effect free; snooze/suppress are local,
-    # reversible and audited.
-    "proactive_query": "read", "proactive_list": "read",
-    "proactive_explain": "read",
-    "proactive_snooze": "low_risk_write", "proactive_suppress": "low_risk_write",
-    # --- low-risk write (Butler-owned, reversible) ---
-    "add_task": "low_risk_write", "task_update": "low_risk_write",
-    "plan_make": "low_risk_write", "plan_apply": "low_risk_write",
-    "task_lifecycle": "low_risk_write", "defer": "low_risk_write",
-    "block": "low_risk_write", "resume": "low_risk_write",
-    "skip": "low_risk_write", "cancel_task": "low_risk_write",
-    "mark_done": "low_risk_write", "note": "low_risk_write",
-    "food_add": "low_risk_write", "food_consume": "low_risk_write",
-    "meal_plan": "low_risk_write", "meal_cook": "low_risk_write",
-    "meal_another": "low_risk_write", "meal_add_missing": "low_risk_write",
-    "meal_not_tonight": "low_risk_write", "recipe_mark": "low_risk_write",
-    "route": "low_risk_write", "index": "low_risk_write",
-    "location_change": "low_risk_write", "move_block": "low_risk_write",
-    "teach": "low_risk_write", "routine_change": "low_risk_write",
-    "log": "low_risk_write", "sleep_event": "low_risk_write",
-    "schedule_change": "low_risk_write",
-    # M3: project data is Butler-owned and reversible.
-    "project_create": "low_risk_write", "project_update": "low_risk_write",
-    "project_link": "low_risk_write", "project_milestone": "low_risk_write",
-    "project_dependency": "low_risk_write",
-    # --- consequent external (deny-by-default) ---
-    "organize": "consequent_external", "create_workspace": "consequent_external",
-    "trash_duplicates": "consequent_external", "empty_trash": "consequent_external",
-    "mkdir": "consequent_external", "trash": "consequent_external",
-    "delete_file": "consequent_external", "move_file": "consequent_external",
-    "gcal_write": "consequent_external", "gcal_delete": "consequent_external",
-    "gcal_sync": "consequent_external", "telegram_send": "consequent_external",
-    "ha_call": "consequent_external", "nas_ingest": "consequent_external",
-    "course_monitor": "consequent_external", "link_download": "consequent_external",
-    "send_message": "consequent_external",
-}
-
-# External actions that ALWAYS require a human confirmation before executing.
-_CONFIRM_REQUIRED = {
-    "organize", "create_workspace", "trash_duplicates", "empty_trash",
-    "mkdir", "trash", "delete_file", "move_file", "gcal_delete",
-    "gcal_write", "course_delete",
-}
+# The authoritative action registry (butler/agent/actions.py) is the single
+# source of truth for risk class, side effects and confirmation. The policy
+# reads it directly. Unknown actions are NOT registered and therefore fail
+# closed: unknown -> DENY, unclassified risk -> DENY, unregistered -> DENY.
+from .agent.actions import (  # noqa: E402
+    RiskClass, get_action, registered_names,
+    requires_confirmation as _requires_confirmation,
+)
 
 # Actions Butler may perform to files it owns even in degraded mode.
 _DEGRADED_ALLOW_WRITE = {
@@ -121,16 +56,30 @@ _DEGRADED_ALLOW_WRITE = {
 
 
 def _risk_lookup(action: str) -> ActionClass:
-    raw = _KNOWN_RISK.get(action, "")
-    if raw == "read":
+    definition = get_action(action)
+    if definition is None:
+        return ActionClass.UNKNOWN
+    rc = definition.risk_class
+    if rc == RiskClass.READ_ONLY:
         return ActionClass.READ
-    if raw == "low_risk_write":
+    if rc in (RiskClass.LOCAL_MUTATION, RiskClass.SCHEDULE):
         return ActionClass.LOW_RISK_WRITE
-    if raw == "consequent_external":
-        return ActionClass.CONSEQUENT_EXTERNAL
-    # Unknown: the safe default is to treat it as *external* so the gate forces
-    # an explicit policy decision rather than silently running side effects.
     return ActionClass.CONSEQUENT_EXTERNAL
+
+
+# Compatibility views derived from the registry (never hand-maintained).
+_KNOWN_RISK: dict[str, str] = {}
+_CONFIRM_REQUIRED: set[str] = set()
+for _name in registered_names():
+    _cls = _risk_lookup(_name)
+    _KNOWN_RISK[_name] = {
+        ActionClass.READ: "read",
+        ActionClass.LOW_RISK_WRITE: "low_risk_write",
+        ActionClass.CONSEQUENT_EXTERNAL: "consequent_external",
+        ActionClass.UNKNOWN: "unknown",
+    }[_cls]
+    if _requires_confirmation(_name):
+        _CONFIRM_REQUIRED.add(_name)
 
 
 @dataclass
@@ -167,13 +116,29 @@ class SafetyPolicy:
         return _risk_lookup(action)
 
     def needs_confirmation(self, action: str) -> bool:
-        return action in _CONFIRM_REQUIRED
+        # Fail closed: an unregistered action always needs confirmation.
+        return _requires_confirmation(action)
 
     # ------------------------------------------------------------------
     def check(self, action: str, *, actor: str = "", run_id: str = "",
               target: str = "", confirmed: bool = False) -> Decision:
+        definition = get_action(action)
+        # FAIL CLOSED: unknown / unregistered / unclassified actions are denied.
+        if definition is None:
+            self._record(run_id, actor, action, ActionClass.UNKNOWN, target,
+                         "denied", "unregistered_action")
+            return Decision(False, action, ActionClass.UNKNOWN,
+                            reason=f"action {action!r} is not registered",
+                            needed="")
         cls = self.classify(action)
-        reason = ""
+
+        # Privileged actions are never executable, confirmed or not.
+        if definition.risk_class == RiskClass.PRIVILEGED:
+            self._record(run_id, actor, action, cls, target,
+                         "denied", "privileged_action")
+            return Decision(False, action, cls,
+                            reason="privileged actions are never allowed",
+                            needed="")
 
         # Rate limit: refuses to run too many consequent-external actions in a
         # short window (a runaway/retry storm). Only applies to the destructive
@@ -193,20 +158,22 @@ class SafetyPolicy:
                 return Decision(False, action, cls,
                                 reason="circuit breaker open", needed="recover")
 
-        # Deny-by-default for external actions unless the caller proves
-        # ownership/confirmation. Low-risk writes and reads always proceed.
-        if cls == ActionClass.CONSEQUENT_EXTERNAL:
-            if not confirmed and self.needs_confirmation(action):
-                self._record(run_id, actor, action, cls, target,
-                             "denied", "confirmation_required")
-                return Decision(False, action, cls,
-                                reason="confirmation required",
-                                needed=("user confirmation to run '"
-                                        + action + "'"))
+        # External/destructive/privileged actions require confirmation. This is
+        # driven by the registry, so a new external action is confirmation-first
+        # by construction rather than by being added to a second list.
+        if definition.requires_confirmation and not confirmed:
+            self._record(run_id, actor, action, cls, target,
+                         "denied", "confirmation_required")
+            return Decision(False, action, cls,
+                            reason="confirmation required",
+                            needed=("user confirmation to run '"
+                                    + action + "'"))
+
+        # Registered read-only actions may proceed without confirmation.
+        if cls == ActionClass.READ:
             self._record(run_id, actor, action, cls, target, "allowed",
-                         "policy_allowed")
-            return Decision(True, action, cls,
-                            reason="external action confirmed as safe")
+                         "read_only")
+            return Decision(True, action, cls, reason="read-only")
 
         # Degraded mode: block writes that reach outside but allow local ones.
         if self.cfg is not None and getattr(self.cfg, "degraded_mode", False):

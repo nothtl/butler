@@ -1,0 +1,50 @@
+{"input": "Create a topic for CS188.", "expected_action": "settings_update", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "This topic is for my basketball club.", "expected_action": "settings_update", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Make a topic for my UAV research.", "expected_action": "settings_update", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "This is where I keep track of groceries.", "expected_action": "settings_update", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Create a place for my Stock Bot project.", "expected_action": "create_item", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Track CS188 homework.", "expected_action": "tracker_create", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Keep an eye on my CS188 assignments.", "expected_action": "tracker_create", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Tell me whenever a new project appears.", "expected_action": "tracker_create", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Watch the basketball club for important announcements.", "expected_action": "tracker_create", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Track my Stock Bot GitHub.", "expected_action": "tracker_create", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Let me know if HW4's deadline changes.", "expected_action": "tracker_create", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Tell me when chicken drops below two portions.", "expected_action": "tracker_create", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Add CS188 Project 2.", "expected_action": "create_item", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Add milk to groceries.", "expected_action": "create_item", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Add chicken to my pantry.", "expected_action": "create_item", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Create a task to finish the report.", "expected_action": "create_item", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Add this document to CS188.", "expected_action": "create_item", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Save this with my UAV research.", "expected_action": "create_item", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Create a project for my final-year research.", "expected_action": "create_item", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Link this to CS188.", "expected_action": "link_items", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Connect groceries to my food inventory.", "expected_action": "link_items", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Put this under Project 2.", "expected_action": "link_items", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Associate this document with my basketball club.", "expected_action": "link_items", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Use my pantry for this grocery topic.", "expected_action": "link_items", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Enable web here.", "expected_action": "settings_update", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Turn web search on for this topic.", "expected_action": "settings_update", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Stop scheduling in this topic.", "expected_action": "settings_update", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Don't schedule anything after 10 PM.", "expected_action": "settings_update", "expected_scope": "global", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Disable proactive alerts here.", "expected_action": "settings_update", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Ask me before changing my calendar.", "expected_action": "settings_update", "expected_scope": "global", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "I need two hours for CS188 now.", "expected_action": "find_best_slot", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": false}
+{"input": "Find me something useful to do for the next 90 minutes.", "expected_action": "recommend", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": false}
+{"input": "Schedule two hours for Project 2 tomorrow.", "expected_action": "plan_day", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "What should I work on tonight?", "expected_action": "recommend", "expected_scope": "tonight", "expected_ambiguity": false, "expected_confirmation": false}
+{"input": "Replan my week.", "expected_action": "plan_week", "expected_scope": "this_week", "expected_ambiguity": false, "expected_confirmation": false}
+{"input": "Move my study session to tomorrow afternoon.", "expected_action": "reschedule", "expected_scope": "tomorrow", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Remember that I prefer two-hour coding sessions.", "expected_action": "memory_learn", "expected_scope": "global", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Forget my old study-time preference.", "expected_action": "memory_forget", "expected_scope": "global", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "What do you remember about CS188?", "expected_action": "memory_query", "expected_scope": "global", "expected_ambiguity": false, "expected_confirmation": false}
+{"input": "Remember that I don't like scheduling after 10 PM.", "expected_action": "memory_learn", "expected_scope": "global", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Track my project.", "expected_action": "tracker_create", "expected_scope": "current_topic", "expected_ambiguity": true, "expected_confirmation": true}
+{"input": "Add Project 2.", "expected_action": "create_item", "expected_scope": "current_topic", "expected_ambiguity": true, "expected_confirmation": true}
+{"input": "Track the assignments.", "expected_action": "tracker_create", "expected_scope": "current_topic", "expected_ambiguity": true, "expected_confirmation": true}
+{"input": "Link this to the other one.", "expected_action": "link_items", "expected_scope": "current_topic", "expected_ambiguity": true, "expected_confirmation": true}
+{"input": "Do that tomorrow.", "expected_action": "unknown", "expected_scope": "tomorrow", "expected_ambiguity": true, "expected_confirmation": true}
+{"input": "Keep tabs on new coursework for CS188.", "expected_action": "tracker_create", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Let me know if anything important changes in my club.", "expected_action": "tracker_create", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "Use what I have at home when deciding dinner.", "expected_action": "recommend", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": false}
+{"input": "Keep watch on the repo but don't bother me about every commit.", "expected_action": "tracker_create", "expected_scope": "current_topic", "expected_ambiguity": false, "expected_confirmation": true}
+{"input": "I have some time right now; what would be the most useful thing to tackle?", "expected_action": "recommend", "expected_scope": "now", "expected_ambiguity": false, "expected_confirmation": false}

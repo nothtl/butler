@@ -849,13 +849,17 @@ class LLMInterpreter:
 
     # ------------------------------------------------------------- prompt
     def _system(self, context: Any, topic: Any) -> str:
-        from .schema import schema_prompt
+        from .schema import relevant_actions, schema_prompt
         parts = [self.SYSTEM, schema_prompt()]
         if topic:
             bounded = {k: topic.get(k) for k in ("topic_name", "purpose",
                                                  "thread_id", "chat_id")
                        if k in topic}
             parts.append("CURRENT TOPIC: " + json.dumps(bounded, default=str))
+            hint = relevant_actions(topic)
+            if hint:
+                parts.append("RELEVANT ACTIONS HERE (hint, not a limit): "
+                             + ", ".join(hint))
         if context is not None:
             try:
                 dump = context.to_dict() if hasattr(context, "to_dict") \
