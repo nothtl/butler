@@ -218,7 +218,7 @@ def test_topics() -> None:
     check("B7 the panel is stored", prof.pin_message_id > 0)
     text, h = c.topics.render_panel(prof)
     check("B8 the panel is human-readable", "CS188" in text and "{" not in text)
-    check("B9 the panel shows capabilities", "Butler" in text)
+    check("B9 the panel shows an operating dashboard", "Purpose" in text and "WHAT I'M DOING" in text)
     check("B10 the panel has a content hash", bool(h))
 
 

@@ -515,60 +515,145 @@ class TopicStore:
 
     # ------------------------------------------------------------- rendering
     def render_panel(self, prof: TopicProfile) -> tuple[str, str]:
+        """Q6: an operating dashboard over real state, not a capability list."""
         data = self.linked_data(prof)
-        lines = [f"📚 {prof.name or 'Topic'}",
-                 "━━━━━━━━━━━━━━━━", "Purpose",
-                 prof.purpose or prof.description or "(not set)"]
-        if prof.description and prof.purpose \
-                and prof.description.strip() != prof.purpose.strip():
-            lines += ["", prof.description.strip()[:300]]
-        lines += ["", "Butler"]
-        for cap in CAPABILITIES:
-            state = prof.cap(cap)
-            if state == "not_applicable":
-                continue
-            icon = CAP_ICONS.get(state, "•")
-            lines.append(f"{icon} {CAP_LABELS[cap]}")
-        note = self.provider_note(prof)
-        if note:
-            lines.append(f"⚠️ {note}")
-        tracking = self.tracking_lines(prof)
-        if tracking:
-            lines += ["", "Tracking"] + tracking
+        icon = self._topic_icon(prof)
+        lines = [f"{icon} {prof.name or 'Topic'}", "━━━━━━━━━━━━━━━━",
+                 "Purpose", prof.purpose or prof.description or "(not set)"]
+        lines += ["", "WHAT I'M DOING", ""]
+        lines += self._doing_lines(prof, data)
         connected = self._connected_lines(prof, data)
         if data.get("dangling"):
             connected.append(
                 f"• {data['dangling']} connection(s) no longer available")
         if connected:
-            lines += ["", "Connected"] + connected
-        current = self._current_lines(data)
-        if current:
-            lines += ["", "Current"] + current
-        if data.get("storage"):
-            lines += ["", "Storage", f"📁 {data['storage']}"]
+            lines += ["", "CONNECTED", ""] + connected
+        inactive = [CAP_LABELS[c] for c in CAPABILITIES
+                    if prof.cap(c) == "disabled"]
+        if inactive:
+            lines += ["", "NOT ACTIVE", ""] + [f"❌ {x}" for x in inactive]
+        note = self.provider_note(prof)
+        if note:
+            lines += ["", f"⚠️ {note}"]
         lines += ["", "Last updated",
                   datetime.fromtimestamp(prof.updated_at or _now())
                   .strftime("%d %b · %H:%M")]
         text = "\n".join(lines)
         return text, hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
 
-    def tracking_lines(self, prof: TopicProfile) -> list[str]:
-        """N2: trackers whose destination is this topic (context, not ownership)."""
+    @staticmethod
+    def _topic_icon(prof: TopicProfile) -> str:
+        name = (prof.name or "").lower()
+        for keys, icon in ((("food", "meal", "pantry", "cook"), "🍳"),
+                           (("grocer", "shop"), "🛒"),
+                           (("cs", "course", "class", "university"), "📚"),
+                           (("project", "repo"), "🗂"),
+                           (("club", "team"), "🏀"),
+                           (("travel",), "✈️"),
+                           (("research",), "🔬")):
+            if any(k in name for k in keys):
+                return icon
+        return "🗂"
+
+    def _doing_lines(self, prof: TopicProfile,
+                     data: dict[str, Any]) -> list[str]:
+        out: list[str] = []
+        # Knowledge — what Butler actually knows here
+        if prof.enabled("knowledge"):
+            known: list[str] = []
+            for c in data.get("courses", []):
+                known.append(f"• {c['code']} (course)")
+            if data.get("food"):
+                known.append(f"• Food inventory ({data['food']['items']} item(s))")
+            for ref in data.get("references", []):
+                known.append(f"• {ref['target_type']}")
+            out.append("Knowledge")
+            out += known or ["• (nothing linked yet)"]
+            out.append("")
+        # Tracking — real tracker definitions
+        trackers = self._trackers(prof)
+        if trackers:
+            out.append("Tracking")
+            for t in trackers:
+                out.append(self._tracker_summary(t))
+            out.append("")
+        elif prof.enabled("tracking"):
+            out.append("Tracking")
+            out.append("• nothing yet — say \"track …\"")
+            out.append("")
+        # Planning / Scheduling / Web / Proactive
+        for cap, label in (("planning", "Planning"), ("scheduling", "Scheduling"),
+                           ("web", "Web"), ("proactive", "Proactive")):
+            if prof.cap(cap) == "enabled":
+                out.append(label)
+                out.append("🟢 Enabled")
+                out.append("")
+        # Memory / Reminders / Files
+        for cap, label in (("memory", "Memory"), ("reminders", "Reminders"),
+                           ("file_organization", "Files")):
+            if prof.cap(cap) == "enabled":
+                out.append(label)
+                out.append("🟢 Enabled")
+                out.append("")
+        if not out:
+            out = ["(nothing configured yet)"]
+        return out
+
+    def _trackers(self, prof: TopicProfile) -> list[Any]:
         engine = getattr(self.container, "trackers", None)
         if engine is None or not hasattr(engine, "by_destination"):
             return []
-        out: list[str] = []
-        icons = {"active": "🟢", "paused": "⏸", "degraded": "🟡",
-                 "error": "🔴", "pending": "🟡", "disabled": "⚪",
-                 "archived": "📦"}
         try:
-            rows = engine.by_destination(prof.chat_id, prof.thread_id)
+            return [t for t in engine.by_destination(prof.chat_id, prof.thread_id)
+                    if t.state not in ("archived", "disabled")]
         except Exception:  # noqa: BLE001
             return []
-        for t in rows:
-            if t.state in ("archived", "disabled"):
-                continue
-            out.append(f"{icons.get(t.state, '•')} {t.name}")
+
+    @staticmethod
+    def _cadence_label(seconds: int) -> str:
+        s = int(seconds or 0)
+        if s <= 0:
+            return "manual"
+        if s < 3600:
+            return f"every {max(1, s // 60)}m"
+        if s < 86400:
+            return f"every {max(1, s // 3600)}h"
+        return f"every {max(1, s // 86400)}d"
+
+    def _tracker_summary(self, t: Any) -> str:
+        icons = {"active": "🟢", "paused": "⏸", "degraded": "🟡",
+                 "error": "🔴", "pending": "🟡"}
+        cond = (t.condition or {}).get("type", "any change")
+        return (f"{icons.get(t.state, '•')} {t.name}\n"
+                f"  {t.source or 'local'} · {cond} · "
+                f"{self._cadence_label(t.cadence_seconds)}")
+
+    def tracker_details(self, prof: TopicProfile) -> str:
+        """Q6: the [🔎 Tracking] view from actual tracker definitions."""
+        trackers = self._trackers(prof)
+        lines = ["🔎 Tracking", ""]
+        if not trackers:
+            lines.append("Nothing tracked here yet.")
+            lines.append("Say \"track …\" to start.")
+            return "\n".join(lines)
+        for t in trackers:
+            ev = (t.condition or {}).get("type", "any change")
+            lines += [t.name, f"🟢 {t.state}", f"Source: {t.source or 'local'}",
+                      f"Frequency: {self._cadence_label(t.cadence_seconds)}",
+                      "Events:", f"• {ev}",
+                      f"Notify: {getattr(t, 'priority', 'medium')} priority",
+                      f"Destination: {prof.name or 'this topic'}", ""]
+        return "\n".join(lines).rstrip()
+
+    def tracking_lines(self, prof: TopicProfile) -> list[str]:
+        """Short tracking lines for the panel."""
+        icons = {"active": "🟢", "paused": "⏸", "degraded": "🟡",
+                 "error": "🔴", "pending": "🟡"}
+        out = []
+        for t in self._trackers(prof):
+            cond = (t.condition or {}).get("type", "any change")
+            out.append(f"{icons.get(t.state, '•')} {t.name} · "
+                       f"{self._cadence_label(t.cadence_seconds)} · {cond}")
         return out
 
     def _connected_lines(self, prof: TopicProfile, data: dict[str, Any]) -> list[str]:

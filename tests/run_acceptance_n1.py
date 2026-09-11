@@ -419,7 +419,7 @@ def test_pin() -> None:
     check("E1 the panel renders", bool(text) and len(chash) == 16)
     check("E2 the panel names the topic", "CS188" in text)
     check("E3 the panel shows the purpose", "Course management" in text)
-    check("E4 the panel shows capabilities", "Butler" in text and "✅" in text)
+    check("E4 the panel shows an operating dashboard", "Purpose" in text and "WHAT I'M DOING" in text)
     check("E5 the panel is not raw JSON", "{" not in text and "target_type" not in text)
     fb = FakeBot()
     asyncio.run(bot._publish_topic_panel(fb, st.get(100, 5), force=True))

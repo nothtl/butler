@@ -10,6 +10,7 @@ from confirmation (approval of an understood action).
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -303,3 +304,56 @@ def explain(clar: ClarificationRequest) -> str:
     if clar.options:
         return "I need one more detail before I can do that."
     return "I need a little more information."
+
+
+# ---------------------------------------------------------------------------
+# slot-text compatibility (Q6): a meta question must not fill a purpose slot
+# ---------------------------------------------------------------------------
+
+_PURPOSE_META = {
+    "help", "what can you do", "what can you do?", "what is this",
+    "what is this?", "what can this topic do", "what can this topic do?",
+    "how does this work", "how does this work?", "what is this for",
+    "what is this for?",
+}
+
+
+def classify_slot_text(chat: Any, text: str, *,
+                       slot: str = "purpose") -> str:
+    """Return ``"purpose" | "meta" | "vague"`` for text aimed at a slot.
+
+    Primary path is semantic (the configured model). A tiny deterministic
+    fallback (commands / obvious questions / obvious vagueness) is used only
+    when no model is available. Not a natural-language regex router.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return "vague"
+    if chat is not None and getattr(chat, "_llm_ready", lambda: False)():
+        system = (
+            "Classify a user's message sent while Butler is asking what a new "
+            "Telegram topic is for. Reply ONLY JSON: "
+            '{"kind":"purpose|meta|vague"}. '
+            "purpose = it describes what the topic is for (e.g. a course, a "
+            "project, a club, meal planning). "
+            "meta = a general question about Butler's abilities, help, or how "
+            "this works (e.g. 'what can you do?'). "
+            "vague = too generic to be a purpose (e.g. 'stuff', 'everything').")
+        try:
+            out = chat.complete(system, raw, json_mode=True)
+            if out:
+                kind = json.loads(out).get("kind")
+                if kind in ("purpose", "meta", "vague"):
+                    return kind
+        except Exception:  # noqa: BLE001 — fall through to the small fallback
+            pass
+    low = raw.lower().rstrip("?!. ")
+    if raw.startswith("/") or low in _PURPOSE_META:
+        return "meta"
+    first = low.split()[0] if low.split() else ""
+    if raw.endswith("?") or first in ("what", "how", "why", "can", "who"):
+        return "meta"
+    if len(low.split()) < 2 or low in ("stuff", "everything", "things",
+                                       "anything", "whatever", "idk"):
+        return "vague"
+    return "purpose"

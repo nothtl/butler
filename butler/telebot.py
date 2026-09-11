@@ -699,6 +699,25 @@ class TelegramBot:
                 "deadlines and important announcements, and help me schedule "
                 "the work.\"")
 
+    def _topic_capabilities_answer(self, prof: Any) -> str:
+        name = (getattr(prof, "name", "") or "").lower()
+        if any(k in name for k in ("food", "meal", "grocer", "pantry", "cook")):
+            items = ["meal planning", "pantry-aware recommendations", "recipes",
+                     "grocery coordination", "web research"]
+        elif any(k in name for k in ("cs", "course", "class", "university",
+                                     "school")):
+            items = ["assignments", "deadline tracking", "course research",
+                     "scheduling study time"]
+        elif any(k in name for k in ("project", "repo", "startup")):
+            items = ["project status", "risk tracking", "task planning",
+                     "scheduling"]
+        elif any(k in name for k in ("club", "team", "society")):
+            items = ["announcement tracking", "event planning", "shared notes"]
+        else:
+            items = ["tracking things that change", "scheduling and planning",
+                     "remembering preferences", "web research", "notes"]
+        return "I can help with:\n" + "\n".join(f"• {x}" for x in items)
+
     async def reconcile_topics(self, bot: Any) -> dict[str, Any]:
         """Repair/refresh pinned panels on startup without duplicating them."""
         store = self._topic_store()
@@ -1203,6 +1222,24 @@ class TelegramBot:
         await self._publish_topic_panel(bot, prof, force=True)
         return True
 
+    @staticmethod
+    def _capability_reason(cap: str, state: str, prof: Any, message: str) -> str:
+        name = getattr(prof, "name", "") or "this topic"
+        if state != "enabled":
+            return f"You asked me to turn off {cap} for {name}."
+        return {
+            "web": f"You asked me to use current online information for {name}.",
+            "tracking": f"You asked me to monitor {name} for changes.",
+            "proactive": ("So I can notify you when meaningful changes occur "
+                          "without you asking."),
+            "scheduling": f"You asked me to help schedule work for {name}.",
+            "planning": f"You asked me to help plan work for {name}.",
+            "memory": f"You asked me to remember preferences for {name}.",
+            "reminders": f"You asked me to remind you about {name}.",
+            "knowledge": f"You asked me to keep information for {name}.",
+            "file_organization": f"You asked me to organize files for {name}.",
+        }.get(cap, f"You asked me to enable {cap} for {name}.")
+
     async def _maybe_settings_nl(self, update: Update, message: str,
                                  context: Any = None) -> bool:
         try:
@@ -1272,9 +1309,10 @@ class TelegramBot:
                 self._pending_cap_map()[key] = {"cap": cap, "state": state}
                 from .topics import CAP_LABELS
                 verb = "Enable" if state == "enabled" else "Disable"
+                reason = self._capability_reason(cap, state, prof, message)
                 await update.effective_message.reply_text(
                     f"{verb} {CAP_LABELS.get(cap, cap)} for "
-                    f"{prof.name or 'this topic'}?",
+                    f"{prof.name or 'this topic'}?\n\nReason:\n{reason}",
                     reply_markup=self._cap_proposal_keyboard(thread_id, cap, state))
                 return True
             if req.action != ActionKind.SETTINGS_UPDATE:
@@ -1516,6 +1554,19 @@ class TelegramBot:
                     return
                 if not is_command and prof.status == "pending_setup" \
                         and message.strip():
+                    from .agent.clarification import classify_slot_text
+                    kind = classify_slot_text(self.container.chat, message)
+                    if kind == "meta":
+                        await update.effective_message.reply_text(
+                            self._topic_capabilities_answer(prof))
+                        await update.effective_message.reply_text(
+                            self._setup_prompt(prof))
+                        return
+                    if kind == "vague":
+                        await update.effective_message.reply_text(
+                            "Could you describe what this topic is for? For "
+                            "example: \"This is my CS188 course.\"")
+                        return
                     await self._configure_topic_from_text(
                         update, context.bot, prof, message)
                     return
