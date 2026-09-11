@@ -202,6 +202,20 @@ def schema_prompt() -> str:
         "If an object already exists, prefer update_item/link_items over a "
         "duplicate create_item. Use scope=current_topic for 'here/this topic' "
         "and scope=global for 'globally/everywhere/system'.",
+        "",
+        "SCOPE / POLICY / CONDITIONAL:",
+        '- "Enable web." -> settings_update, scope=unknown (ASK this topic vs global)',
+        '- "Enable web here." -> settings_update, scope=current_topic',
+        '- "Enable web globally." -> settings_update, scope=global',
+        '- "Don\'t schedule this after 10 PM." -> defer (one-off task constraint)',
+        '- "Don\'t schedule anything after 10 PM." -> settings_update, '
+        'scope=global, parameters={"setting":"work_end","value":"22:00"}',
+        '- "When chicken is below 2, tell me." -> tracker_create '
+        '(a rule, not a query)',
+        '- "Only notify me if the deadline changes." -> tracker_create, '
+        'parameters={"event_types":["deadline_changed"]}',
+        '- "Ask me before changing my calendar." -> settings_update, '
+        'parameters={"setting":"calendar_confirm","value":"on"}',
     ]
     return "\n".join(lines)
 

@@ -929,8 +929,9 @@ class LLMInterpreter:
     def _coerce_entity_types(payload: Any) -> Any:
         """Map an out-of-enum entity type to 'unknown' (name is preserved and
         the server resolves identity), instead of rejecting the whole request."""
-        from .semantic import EntityType
+        from .semantic import EntityType, ScopeKind
         valid = {e.value for e in EntityType}
+        valid_scope = {s.value for s in ScopeKind}
 
         def fix(ref: Any) -> None:
             if isinstance(ref, dict) and ref.get("type") not in valid:
@@ -940,6 +941,9 @@ class LLMInterpreter:
             fix(payload.get("target"))
             for e in payload.get("entities") or []:
                 fix(e)
+            sc = payload.get("scope")
+            if isinstance(sc, dict) and sc.get("kind") not in valid_scope:
+                sc["kind"] = "unknown"
         return payload
 
     @staticmethod

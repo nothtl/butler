@@ -125,3 +125,28 @@ single-turn metric penalizes.
 
 Tier 0 (offline): 39 suites, 3631 checks, 0 failures, **0 tokens**.
 Full-corpus numbers remain in the Q2 artifact; the full live tier is opt-in.
+
+## Q4 semantic behavior + multi-turn
+
+Failure-driven fixes (no new architecture):
+- target clarifications are opened only for **server-detected ambiguity or real
+  candidates** (a model-emitted ambiguity with no candidates is ignored);
+- stale entity mentions are cleared once a target is chosen, so multi-slot
+  clarification advances instead of re-asking;
+- out-of-enum `scope.kind` values are coerced to `unknown` (name/scope preserved)
+  instead of rejecting the whole request;
+- added scope/policy/conditional few-shot examples;
+- the behavioral scorer only scores intent when an action is expected.
+
+| Metric | Q2 baseline | Q4 regression tier |
+|---|---|---|
+| behavioral | 82% | **95.5%** |
+| task success | — | 96.6% |
+| intent | 80% | 97.7% |
+| clarification | 99% | 100% |
+| temporal | 93% | 100% |
+| follow-up | 85% | 83.3% (n=6, wide CI) |
+
+Regression tier: 59 cases, 65 calls, ~55k tokens, $0.02, 78 s; safety gates 0.
+Remaining: the hard "Track the assignments."/"The CS188 ones." chain and
+"Use my pantry for this grocery topic." (now regression `r-9`).

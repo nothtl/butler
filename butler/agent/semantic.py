@@ -455,6 +455,8 @@ class Ambiguity:
     mention: str = ""
     candidates: list[dict[str, Any]] = field(default_factory=list)
     reason: str = ""
+    # "server" when the resolver detected it; "" when the model proposed it.
+    source: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return _dump(self)
@@ -470,6 +472,7 @@ class Ambiguity:
             candidates=[dict(x) for x in (d.get("candidates") or [])
                         if isinstance(x, dict)],
             reason=str(d.get("reason", "") or ""),
+            source=str(d.get("source", "") or ""),
         )
 
 

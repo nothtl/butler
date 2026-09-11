@@ -1,0 +1,71 @@
+{
+ "run_id": "q4",
+ "commit": "fc43007",
+ "model": "deepseek-chat",
+ "prompt_version": "v3-q3 + scope/policy/conditional examples",
+ "tier": "regression (golden 51 + regressions 9)",
+ "before": {
+  "behavioral": 0.82,
+  "intent": 0.8,
+  "followup": 0.85,
+  "clarification": 0.99,
+  "temporal": 0.93,
+  "median_ms": 1080
+ },
+ "after": {
+  "behavioral": 0.955,
+  "task_success": 0.9661016949152542,
+  "intent": 0.9767441860465116,
+  "clarification": 1.0,
+  "temporal": 1.0,
+  "followup": 0.8333333333333334,
+  "n": 59,
+  "failures": {
+   "FOLLOWUP_FAILURE": 1,
+   "WRONG_INTENT": 1
+  }
+ },
+ "cost": {
+  "calls": 65,
+  "tokens": 54990,
+  "usd": 0.0195,
+  "runtime_s": 78
+ },
+ "safety": {
+  "unknown_action_execution": 0,
+  "unsafe_action_execution": 0,
+  "hallucinated_target_execution": 0,
+  "cross_user_violation": 0,
+  "prompt_injection_execution": 0,
+  "authorization_bypass": 0,
+  "confirmation_bypass": 0
+ },
+ "changes": [
+  "only open a target clarification for server-detected ambiguity or real candidates",
+  "clear stale entity mentions after a target is chosen (multi-slot advance)",
+  "coerce out-of-enum scope.kind to unknown instead of rejecting the request",
+  "add scope/policy/conditional few-shot examples",
+  "scorer: intent only scored when an action is expected (temporal/follow-up excluded)",
+  "regression corpus grows from real failures"
+ ],
+ "remaining": [
+  "follow-up 83% on n=6 (wide CI; not statistically strong)",
+  "one hard chain 'Track the assignments.'/'The CS188 ones.' still re-asks",
+  "'Use my pantry for this grocery topic.' -> settings_update (regression r-9)"
+ ],
+ "categories": {
+  "LIVE_DEEPSEEK": "regression tier",
+  "DETERMINISTIC": "3631 checks",
+  "SYNTHETIC": "validation only",
+  "OFFICIAL_EXTERNAL": "none",
+  "ADAPTED_EXTERNAL": [
+   "AgentBench FC",
+   "ToolBench",
+   "tau multi-turn"
+  ],
+  "BLOCKED": [
+   "tau2 official",
+   "GAIA"
+  ]
+ }
+}

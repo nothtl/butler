@@ -53,10 +53,16 @@ def score_case(case: dict[str, Any], out: dict[str, Any]) -> dict[str, Any]:
     exp_family = family(case.get("expected_action"))
     action = out.get("action")
     error = out.get("error") or ""
+    has_action = bool(exp_actions)
 
-    intent_ok = bool(action) and action in exp_actions
-    behavior_ok = bool(action) and (intent_ok or family(action) == exp_family)
-    taxonomy_only = bool(action) and not intent_ok and family(action) == exp_family
+    intent_ok: bool | None = None
+    behavior_ok: bool | None = None
+    taxonomy_only = False
+    if has_action:
+        intent_ok = bool(action) and action in exp_actions
+        behavior_ok = bool(action) and (intent_ok or family(action) == exp_family)
+        taxonomy_only = bool(action) and not intent_ok and \
+            family(action) == exp_family
 
     # target
     target_ok: bool | None = None
@@ -95,7 +101,7 @@ def score_case(case: dict[str, Any], out: dict[str, Any]) -> dict[str, Any]:
         slot_ok = all(str(got.get(k, "")).lower() == str(v).lower()
                       for k, v in case["expected_slots"].items())
 
-    task_success = bool(behavior_ok and (temporal_ok is not False)
+    task_success = bool((behavior_ok is not False) and (temporal_ok is not False)
                         and (clar_ok is not False)
                         and (followup_ok is not False)
                         and (confirmation_ok is not False)
@@ -126,7 +132,7 @@ def score_case(case: dict[str, Any], out: dict[str, Any]) -> dict[str, Any]:
         primary = "WRONG_TARGET"
     elif slot_ok is False:
         primary = "WRONG_SLOT"
-    elif not behavior_ok:
+    elif behavior_ok is False:
         primary = "WRONG_INTENT"
     else:
         primary = ""

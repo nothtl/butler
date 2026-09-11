@@ -221,6 +221,9 @@ class ExecutiveService:
         base.raw_text = req.raw_text
         slot = creq.slot_name if (creq is not None and creq.slot_name) else "target"
         apply_slot(base, slot, value)
+        if slot == "target":
+            base.entities = []
+            base.ambiguity = []
         return self._dispatch_or_clarify(
             base, session, include_context=include_context,
             expired_notice=expired_notice)
@@ -230,15 +233,22 @@ class ExecutiveService:
                              expired_notice: bool = False) -> AgentResult:
         ambiguities = self._resolve(req, session)
         if ambiguities:
-            req.ambiguity = ambiguities
             candidates = []
             for a in ambiguities:
                 candidates.extend(a.candidates)
-            creq = self._open_target_clarification(session, req, candidates)
-            res = AgentResult.ambiguous(ambiguities)
-            res.data = {"clarification": creq.to_dict()}
-            return self._finish_result(res, req, session, include_context,
-                                       expired_notice)
+            # Only ask "which one?" when we have concrete, server-resolved
+            # candidates. A model-emitted ambiguity without candidates is not a
+            # real ambiguity, but a server-detected reference ("this"/"that")
+            # still needs an answer.
+            needs_answer = bool(candidates) or any(
+                a.source == "server" for a in ambiguities)
+            if needs_answer:
+                req.ambiguity = ambiguities
+                creq = self._open_target_clarification(session, req, candidates)
+                res = AgentResult.ambiguous(ambiguities)
+                res.data = {"clarification": creq.to_dict()}
+                return self._finish_result(res, req, session, include_context,
+                                           expired_notice)
         # Q1/P1.1: missing required slots (semantic path). The deterministic
         # fallback keeps its own bounded handling.
         if req.source == "llm":
@@ -469,12 +479,12 @@ class ExecutiveService:
             elif _is_reference(target.name):
                 ambiguities.append(Ambiguity(
                     kind=AmbiguityKind.ENTITY, field_name="target",
-                    mention=target.name,
+                    mention=target.name, source="server",
                     reason="I'm not sure what you're referring to yet"))
             else:
                 ambiguities.append(Ambiguity(
                     kind=AmbiguityKind.ENTITY, field_name="target",
-                    mention=target.name,
+                    mention=target.name, source="server",
                     reason=f"I couldn't find anything matching {target.name!r}"))
         elif target is None and req.action in _TARGET_REQUIRED:
             ambiguities.append(Ambiguity(
@@ -492,7 +502,7 @@ class ExecutiveService:
     def _ambiguous(self, mention: str, found: list[EntityRef]) -> Ambiguity:
         return Ambiguity(
             kind=AmbiguityKind.ENTITY, field_name="target", mention=mention,
-            candidates=[e.to_dict() for e in found],
+            source="server", candidates=[e.to_dict() for e in found],
             reason=f"which one — {', '.join(e.name for e in found[:4])}?")
 
     def _resolve_target(self, target: EntityRef, session: Any) -> list[EntityRef]:

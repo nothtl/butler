@@ -237,7 +237,8 @@ class LiveRunner:
                     consumed = (before is None and after is None) or (
                         before is not None and (after is None
                                                 or after.id != before.id))
-                    out.append({"followup_resolved": consumed, "slots": {},
+                    out.append({"followup_resolved": consumed,
+                                "turns": case.get("turns"), "slots": {},
                                 "error": ""})
                 else:
                     req = llm.interpret(case["input"], topic={})
