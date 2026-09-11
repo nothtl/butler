@@ -200,6 +200,8 @@ _MEMORY_CORRECT = (
 _PROACTIVE_SUPPRESS = (
     "stop reminding me", "stop warning me", "don't remind me",
     "do not remind me", "stop telling me about", "stop notifying me",
+    "never notify me", "don't notify me", "do not notify me",
+    "never tell me about", "don't tell me about", "do not tell me about",
 )
 _PROACTIVE_SNOOZE = (
     "remind me later", "remind me in", "snooze", "remind me tomorrow",
@@ -236,6 +238,9 @@ _TRACKER_CONTROL = (
     "stop tracking", "pause tracking", "resume tracking", "disable tracking",
     "pause the tracker", "resume the tracker", "stop the tracker",
     "forget the tracker", "delete the tracker",
+    "don't track", "do not track", "never track",
+    "don't watch", "do not watch", "stop watching",
+    "don't monitor", "do not monitor", "stop monitoring",
 )
 _TRACKER_EVALUATE = (
     "would this tracker fire", "would the tracker fire", "evaluate tracker",
@@ -311,7 +316,7 @@ class SemanticInterpreter(Protocol):
     """Anything that can turn text into a typed request (or ``None``)."""
 
     def interpret(self, text: str, *, context: Any = None,
-                  user: str = "user") -> Any: ...
+                  user: str = "user", topic: Any = None) -> Any: ...
 
 
 def _match(text: str, table: tuple[str, ...]) -> bool:
@@ -335,7 +340,7 @@ class DeterministicInterpreter:
 
     # ------------------------------------------------------------- public
     def interpret(self, text: str, *, context: Any = None,
-                  user: str = "user") -> AgentRequest:
+                  user: str = "user", topic: Any = None) -> AgentRequest:
         raw = (text or "").strip()
         low = raw.lower()
         intent, action, confidence = self._classify(low, context)
@@ -782,62 +787,189 @@ class LLMInterpreter:
     object matching the request schema. Anything else raises
     :class:`SemanticValidationError`, which the service turns into an
     ``invalid`` result rather than guessing.
+
+    Two call paths are supported:
+
+    * ``client`` — an object exposing ``complete(system, user, json_mode=True)``
+      (the production DeepSeek path; requests strict JSON mode).
+    * ``llm`` — a legacy ``(system, user) -> str`` callable (kept for the
+      existing tests and custom runtimes).
+
+    Model-supplied entity ids are always discarded: the server re-resolves
+    names against live state. Confidence is advisory and never bypasses
+    validation or safety.
     """
 
     SYSTEM = (
-        "You convert a user's message into a single JSON object for a personal "
-        "assistant. Output ONLY JSON, no prose. Schema keys: intent "
-        "(advise|plan|evaluate|query|mutate|chat|unknown), action (recommend|"
-        "plan_day|plan_week|feasibility|urgency|status|move|reschedule|defer|"
-        "create_task|complete_task|update|project_status|project_workload|"
-        "project_risk|project_dependencies|project_next|create_project|"
-        "web_search|web_research|web_fetch|knowledge_lookup|optimize_day|"
-        "optimize_week|evaluate_schedule|reschedule_optimized|find_best_slot|"
-        "memory_query|memory_search|memory_explain|memory_forget|"
-        "memory_confirm|memory_correct|memory_learn|"
-        "proactive_query|proactive_list|proactive_explain|proactive_snooze|"
-        "proactive_suppress|unknown), "
-        "target, entities, scope, "
-        "constraints, preferences, temporal, confidence, raw_text. Never mark "
-        "an inferred preference as a hard constraint. If unsure, use unknown "
-        "and low confidence rather than inventing values."
+        "You are the semantic interpreter for a personal assistant. Convert "
+        "the user's message into a single structured request. Never invent "
+        "entity ids; give names only, the server resolves them. Never mark an "
+        "inferred preference as a hard constraint. Do not perform actions, do "
+        "not answer the user, do not add commentary."
     )
 
-    def __init__(self, llm: Any):
+    def __init__(self, llm: Any = None, *, client: Any = None,
+                 max_retries: int = 1):
         self.llm = llm
+        self.client = client
+        self.max_retries = max(0, int(max_retries))
+
+    def available(self) -> bool:
+        return self.client is not None or self.llm is not None
 
     def interpret(self, text: str, *, context: Any = None,
-                  user: str = "user") -> Any:
+                  user: str = "user", topic: Any = None) -> Any:
         raw = (text or "").strip()
-        payload = self._call(raw)
+        system = self._system(context, topic)
+        payload: Any = None
+        last_error = ""
+        for attempt in range(1 + self.max_retries):
+            prompt_text = raw if attempt == 0 else self._repair(raw, last_error)
+            out = self._call(system, prompt_text)
+            if out is None:
+                raise SemanticValidationError("llm: empty response")
+            try:
+                payload = self._parse(out)
+                break
+            except SemanticValidationError as exc:
+                last_error = str(exc)
+                payload = None
         if payload is None:
-            return None
+            raise SemanticValidationError(
+                last_error or "llm: malformed structured output")
         if not isinstance(payload, dict):
             raise SemanticValidationError("llm: response was not a JSON object")
         payload.setdefault("raw_text", raw)
         payload.setdefault("source", "llm")
         req = AgentRequest.from_dict(payload, strict=True)
+        self._sanitize(req)
         if context is not None and req.conversation is None:
             req.conversation = context
         return req
 
-    def _call(self, text: str) -> Any:
-        prompt = (self.SYSTEM, text)
+    # ------------------------------------------------------------- prompt
+    def _system(self, context: Any, topic: Any) -> str:
+        from .schema import schema_prompt
+        parts = [self.SYSTEM, schema_prompt()]
+        if topic:
+            bounded = {k: topic.get(k) for k in ("topic_name", "purpose",
+                                                 "thread_id", "chat_id")
+                       if k in topic}
+            parts.append("CURRENT TOPIC: " + json.dumps(bounded, default=str))
+        if context is not None:
+            try:
+                dump = context.to_dict() if hasattr(context, "to_dict") \
+                    else dict(context)
+                parts.append("RECENT CONTEXT: "
+                             + json.dumps(dump, default=str)[:1500])
+            except Exception:  # noqa: BLE001 — context is best-effort
+                pass
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _repair(raw: str, error: str) -> str:
+        return (f"Your previous output was rejected: {error}. Re-emit ONE "
+                f"valid JSON object for this user message: {raw}")
+
+    def _call(self, system: str, user: str) -> str | None:
         try:
-            out = self.llm(prompt) if callable(self.llm) else \
-                self.llm._llm(prompt)
+            if self.client is not None:
+                return self.client.complete(system, user, json_mode=True)
+            if callable(self.llm):
+                return self.llm((system, user))
+            return self.llm._llm((system, user))
         except Exception as exc:  # noqa: BLE001
             raise SemanticValidationError(f"llm: call failed ({exc})") from exc
-        if not out:
-            return None
-        start, end = out.find("{"), out.rfind("}")
-        if start < 0 or end < start:
-            raise SemanticValidationError("llm: no JSON object in response")
+
+    @staticmethod
+    def _parse(out: str) -> Any:
+        text = (out or "").strip()
+        # Tolerate a single fenced code block (defensive, not prose mining).
+        if text.startswith("```"):
+            text = text.strip("`").strip()
+            if text[:4].lower() == "json":
+                text = text[4:].strip()
         try:
-            return json.loads(out[start:end + 1])
+            return json.loads(text)
         except (TypeError, ValueError) as exc:
             raise SemanticValidationError(
                 f"llm: malformed JSON ({exc})") from exc
+
+    @staticmethod
+    def _sanitize(req: AgentRequest) -> None:
+        """Discard model-supplied identity; keep names for server resolution."""
+        refs = list(req.entities)
+        if req.target is not None:
+            refs.append(req.target)
+        for ref in refs:
+            ref.id = ""
+            ref.resolved = False
+            ref.source = ref.source or "llm"
+
+
+class HybridInterpreter:
+    """Semantic-first interpreter with a narrow deterministic fast path.
+
+    * When a model is configured, free-form requests go to the model; only
+      requests the deterministic interpreter already understands with high
+      confidence skip it (exact/obvious structured syntax).
+    * When the model is unavailable or its output is rejected, the
+      deterministic interpreter is the fallback. It is never a first-match-wins
+      router for the primary path.
+    """
+
+    FAST_CONFIDENCE = 0.9
+
+    def __init__(self, deterministic: Any, llm: LLMInterpreter | None = None):
+        self.deterministic = deterministic
+        self.llm = llm
+        self.last_source = "deterministic"
+
+    def available(self) -> bool:
+        return bool(self.llm is not None and self.llm.available())
+
+    def interpret(self, text: str, *, context: Any = None,
+                  user: str = "user", topic: Any = None) -> Any:
+        det = self.deterministic.interpret(text, context=context, user=user)
+        if not self.available():
+            self.last_source = "deterministic"
+            return det
+        if det.action != ActionKind.UNKNOWN \
+                and det.intent != RequestIntent.CHAT \
+                and det.confidence >= self.FAST_CONFIDENCE:
+            self.last_source = "deterministic"
+            return det
+        try:
+            req = self.llm.interpret(text, context=context, user=user,
+                                     topic=topic)
+            if req is not None:
+                self.last_source = "llm"
+                return req
+        except SemanticValidationError as exc:
+            log.warning("semantic interpreter rejected output: %s", exc)
+        except Exception as exc:  # noqa: BLE001 — never let the model crash ask
+            log.warning("semantic interpreter failed: %s", exc)
+        self.last_source = "deterministic-fallback"
+        return det
+
+
+#: Actions that represent a concrete domain request (used by front-ends to
+#: decide whether a turn should be dispatched or answered conversationally).
+DOMAIN_ACTIONS = frozenset(a for a in ActionKind
+                           if a not in (ActionKind.UNKNOWN,))
+
+
+def resolve_interpreter(container: Any,
+                        now_ts: int | None = None) -> HybridInterpreter:
+    """Build the production interpreter: DeepSeek primary, deterministic fallback."""
+    det = DeterministicInterpreter(container, now_ts=now_ts)
+    cfg = getattr(container, "cfg", None)
+    chat = getattr(container, "chat", None)
+    ready = bool(chat is not None and cfg is not None
+                 and getattr(cfg, "llm_api_key", "")
+                 and getattr(cfg, "llm_base_url", ""))
+    llm = LLMInterpreter(client=chat) if ready else None
+    return HybridInterpreter(det, llm=llm)
 
 
 def default_interpreter(container: Any) -> DeterministicInterpreter:

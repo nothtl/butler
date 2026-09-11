@@ -60,8 +60,11 @@ class ExecutiveService:
             sleep_end=int(getattr(self.cfg, "sleep_end", 7 * 60) or 0),
         )
         self.context = ContextBuilder(container)
-        self.interpreter = interpreter or DeterministicInterpreter(
-            container, now_ts=now_ts)
+        if interpreter is not None:
+            self.interpreter = interpreter
+        else:
+            from .interpret import resolve_interpreter
+            self.interpreter = resolve_interpreter(container, now_ts=now_ts)
         self._fallback_session: Any = None
         # When True, memory-mutating actions return a proposal instead of
         # executing (used by the strictly read-only `executive_ask` MCP tool).
@@ -78,7 +81,7 @@ class ExecutiveService:
                     else AgentRequest.from_dict(request)
                 req.validate()
             else:
-                req = self.interpreter.interpret(text, user=user)
+                req = self._interpret(text, user=user, topic=topic)
                 if req is None:
                     return AgentResult.invalid("could not interpret request")
                 req.validate()
@@ -88,6 +91,25 @@ class ExecutiveService:
             req.topic = dict(topic)
         return self.handle(req, user=user, include_context=include_context,
                            read_only=read_only)
+
+    def _interpret(self, text: str, *, user: str = "user",
+                   topic: dict[str, Any] | None = None) -> AgentRequest | None:
+        """Interpret text, passing topic/context when the interpreter supports it."""
+        import time as _time
+        started = _time.perf_counter()
+        try:
+            req = self.interpreter.interpret(text, user=user, topic=topic)
+        except TypeError:
+            # Custom interpreter with the older signature.
+            req = self.interpreter.interpret(text, user=user)
+        latency_ms = int((_time.perf_counter() - started) * 1000)
+        source = getattr(self.interpreter, "last_source", None) or \
+            (req.source if req is not None else "unknown")
+        if req is not None:
+            log.info(
+                "semantic source=%s action=%s confidence=%.2f latency_ms=%d",
+                source, req.action.value, req.confidence, latency_ms)
+        return req
 
     def handle(self, req: AgentRequest, *, user: str = "user",
                include_context: bool = False, read_only: bool = False) -> AgentResult:

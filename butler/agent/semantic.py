@@ -649,6 +649,10 @@ class AgentRequest:
     requires_confirmation: bool = False
     raw_text: str = ""
     source: str = "deterministic"
+    # Free-form, action-specific slots proposed by the interpreter (e.g. a
+    # tracker condition, a setting name/value, a link relation). Always
+    # validated by the deterministic domain layer before use.
+    parameters: dict[str, Any] = field(default_factory=dict)
     # N1: the current Telegram topic (chat_id/thread_id), used as relevance
     # context by the executive service. Empty for non-topic requests.
     topic: dict[str, Any] = field(default_factory=dict)
@@ -708,6 +712,7 @@ class AgentRequest:
                     d.get("requires_confirmation", False)),
                 raw_text=str(d.get("raw_text", "") or ""),
                 source=str(d.get("source", "llm") or "llm"),
+                parameters=dict(d.get("parameters") or {}),
                 topic=dict(d.get("topic") or {}),
             )
         except SemanticValidationError:

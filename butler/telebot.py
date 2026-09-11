@@ -971,10 +971,10 @@ class TelegramBot:
     async def _maybe_tracker_nl(self, update: Update, message: str) -> bool:
         """Route natural-language tracker requests through the executive layer."""
         try:
-            from .agent.interpret import DeterministicInterpreter
+            from .agent.interpret import resolve_interpreter
             from .agent.semantic import ActionKind
-            it = DeterministicInterpreter(self.container)
-            req = it.interpret(message)
+            it = resolve_interpreter(self.container)
+            req = it.interpret(message, topic=self._tracker_ctx(update))
             tracker_actions = {
                 ActionKind.TRACKER_CREATE, ActionKind.TRACKER_LIST,
                 ActionKind.TRACKER_QUERY, ActionKind.TRACKER_CONTROL,
@@ -984,7 +984,7 @@ class TelegramBot:
                 return False
             from .agent.service import ExecutiveService
             svc = ExecutiveService(self.container)
-            res = svc.ask(text=message, topic=self._tracker_ctx(update))
+            res = svc.ask(request=req, topic=self._tracker_ctx(update))
             await update.effective_message.reply_text(
                 self._render_tracker_result(res))
             return True
@@ -1057,10 +1057,10 @@ class TelegramBot:
 
     async def _maybe_creation_nl(self, update: Update, message: str) -> bool:
         try:
-            from .agent.interpret import DeterministicInterpreter
+            from .agent.interpret import resolve_interpreter
             from .agent.semantic import ActionKind
-            it = DeterministicInterpreter(self.container)
-            req = it.interpret(message)
+            it = resolve_interpreter(self.container)
+            req = it.interpret(message, topic=self._tracker_ctx(update))
             creation_actions = {
                 ActionKind.CREATE_ITEM, ActionKind.LINK_ITEMS,
                 ActionKind.UPDATE_ITEM, ActionKind.ORGANIZE_ITEMS,
@@ -1070,7 +1070,7 @@ class TelegramBot:
                 return False
             from .agent.service import ExecutiveService
             svc = ExecutiveService(self.container)
-            res = svc.ask(text=message, topic=self._tracker_ctx(update))
+            res = svc.ask(request=req, topic=self._tracker_ctx(update))
             chat_id = update.effective_chat.id
             data = res.data if isinstance(res.data, dict) else {}
             if data.get("proposal") and (res.status.value in
@@ -1113,10 +1113,10 @@ class TelegramBot:
     # --------------------------------------------------- N4 NL routing
     async def _maybe_memory_nl(self, update: Update, message: str) -> bool:
         try:
-            from .agent.interpret import DeterministicInterpreter
+            from .agent.interpret import resolve_interpreter
             from .agent.semantic import ActionKind
-            it = DeterministicInterpreter(self.container)
-            req = it.interpret(message)
+            it = resolve_interpreter(self.container)
+            req = it.interpret(message, topic=self._tracker_ctx(update))
             memory_actions = {
                 ActionKind.MEMORY_QUERY, ActionKind.MEMORY_SEARCH,
                 ActionKind.MEMORY_EXPLAIN, ActionKind.MEMORY_LEARN,
@@ -1127,7 +1127,7 @@ class TelegramBot:
                 return False
             from .agent.service import ExecutiveService
             svc = ExecutiveService(self.container)
-            res = svc.ask(text=message, topic=self._tracker_ctx(update))
+            res = svc.ask(request=req, topic=self._tracker_ctx(update))
             await update.effective_message.reply_text(self._render_memory_result(res))
             return True
         except Exception as exc:  # noqa: BLE001
@@ -1200,7 +1200,7 @@ class TelegramBot:
     async def _maybe_settings_nl(self, update: Update, message: str,
                                  context: Any = None) -> bool:
         try:
-            from .agent.interpret import DeterministicInterpreter
+            from .agent.interpret import resolve_interpreter
             from .agent.semantic import ActionKind
             low = (message or "").lower()
             chat_id = update.effective_chat.id
@@ -1216,9 +1216,16 @@ class TelegramBot:
                     "✅ Control panel refreshed." if ok
                     else "There's no topic panel here yet.")
                 return True
-            it = DeterministicInterpreter(self.container)
-            req = it.interpret(message)
+            it = resolve_interpreter(self.container)
+            req = it.interpret(message, topic=self._tracker_ctx(update))
             change = self._capability_change(low)
+            params = dict(getattr(req, "parameters", {}) or {})
+            if not change and params.get("capability"):
+                from .topics import CAPABILITIES, CAP_STATES
+                cap = str(params.get("capability"))
+                state = str(params.get("state") or "enabled")
+                if cap in CAPABILITIES and state in CAP_STATES:
+                    change = (cap, state)
             if req.action not in (ActionKind.SETTINGS_UPDATE,
                                   ActionKind.SETTINGS_VIEW) \
                     and not (req.action == ActionKind.UNKNOWN and change):
@@ -1226,15 +1233,19 @@ class TelegramBot:
             if req.action == ActionKind.SETTINGS_VIEW:
                 from .agent.service import ExecutiveService
                 res = ExecutiveService(self.container).ask(
-                    text=message, topic=self._tracker_ctx(update))
+                    request=req, topic=self._tracker_ctx(update))
                 data = res.data if isinstance(res.data, dict) else {}
                 await update.effective_message.reply_text(
                     data.get("text") or self.container.settings.render())
                 return True
             # SETTINGS_UPDATE: scope-aware (topic-first, global only when clear).
-            global_intent = bool(re.search(
-                r"\b(global|globally|system|system-wide|everywhere|all topics|"
-                r"account|for butler)\b", low))
+            scope_hint = str(params.get("scope") or "").lower()
+            global_intent = scope_hint in ("global", "system", "account") or bool(
+                re.search(
+                    r"\b(global|globally|system|system-wide|everywhere|all topics|"
+                    r"account|for butler)\b", low))
+            if scope_hint in ("topic", "current_topic", "here"):
+                global_intent = False
             if thread_id and change and not global_intent:
                 store = self._topic_store()
                 prof = store.get(chat_id, thread_id) if store else None
@@ -1263,7 +1274,7 @@ class TelegramBot:
             # global settings
             from .agent.service import ExecutiveService
             res = ExecutiveService(self.container).ask(
-                text=message, topic=self._tracker_ctx(update))
+                request=req, topic=self._tracker_ctx(update))
             data = res.data if isinstance(res.data, dict) else {}
             if res.status.value == "needs_confirmation":
                 await update.effective_message.reply_text(

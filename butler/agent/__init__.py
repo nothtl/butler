@@ -19,8 +19,9 @@ from .errors import (AgentError, AmbiguousRequest, LLMUnavailable,
                      PermissionDenied, SemanticValidationError, ToolNotFound,
                      ToolValidationError, UnknownIntent)
 from .intent import IntentParser
-from .interpret import (DeterministicInterpreter, LLMInterpreter,
-                        SemanticInterpreter, default_interpreter)
+from .interpret import (DOMAIN_ACTIONS, DeterministicInterpreter,
+                        HybridInterpreter, LLMInterpreter, SemanticInterpreter,
+                        default_interpreter, resolve_interpreter)
 from .models import (AgentReply, ContextBundle, Intent, ToolCall, ToolResult)
 from .registry import Param, Tool, ToolRegistry
 from .runtime import AgentRuntime, build_runtime
@@ -49,10 +50,12 @@ __all__ = [
     "ContextBundle",
     "ContextSnapshot",
     "DeterministicInterpreter",
+    "DOMAIN_ACTIONS",
     "EntityRef",
     "EntityType",
     "ExecutiveService",
     "Hardness",
+    "HybridInterpreter",
     "Intent",
     "IntentParser",
     "LLMInterpreter",
@@ -81,4 +84,5 @@ __all__ = [
     "build_default_registry",
     "build_runtime",
     "default_interpreter",
+    "resolve_interpreter",
 ]

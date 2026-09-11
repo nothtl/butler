@@ -237,28 +237,39 @@ class Chat:
         return bool(self.cfg.llm_api_key and self.cfg.llm_base_url)
 
     def _llm(self, prompt: tuple[str, str]) -> str | None:
+        return self.complete(prompt[0], prompt[1])
+
+    def complete(self, system: str, user: str, *,
+                 json_mode: bool = False, temperature: float = 0.3,
+                 timeout: int = 60) -> str | None:
+        """Call the configured OpenAI-compatible endpoint.
+
+        ``json_mode=True`` asks the provider for a strict JSON object
+        (``response_format={"type": "json_object"}``), which is the strongest
+        structured-output guarantee DeepSeek's OpenAI-compatible endpoint
+        currently offers. Returns ``None`` when no endpoint is configured.
+        """
         import requests
-        system, user = prompt
-        # ``base_url`` is required to call the LLM (openai-compatible or any
-        # provider). Falling back to a hard-coded OpenAI endpoint would silently
-        # assume a vendor, so the caller must configure it explicitly.
         base = (self.cfg.llm_base_url or "").rstrip("/")
-        if not base:
+        if not base or not self.cfg.llm_api_key:
             return None
         url = base + "/chat/completions"
+        body: dict[str, Any] = {
+            "model": self.cfg.llm_model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": temperature,
+        }
+        if json_mode:
+            body["response_format"] = {"type": "json_object"}
         try:
             resp = requests.post(
                 url,
                 headers={"Authorization": f"Bearer {self.cfg.llm_api_key}"},
-                json={
-                    "model": self.cfg.llm_model,
-                    "messages": [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                    "temperature": 0.3,
-                },
-                timeout=60,
+                json=body,
+                timeout=timeout,
             )
             resp.raise_for_status()
             text = resp.json()["choices"][0]["message"]["content"]
