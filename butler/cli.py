@@ -258,9 +258,8 @@ def dispatch(container: Container, ns: argparse.Namespace) -> int:
             srv.stop()
         return 0
     if cmd == "bot":
-        import logging as _logging
-        _logging.basicConfig(level=_logging.INFO,
-                             format="%(asctime)s %(name)s %(levelname)s %(message)s")
+        from .logging import configure_bot_logging
+        configure_bot_logging()
         from .app import ButlerApp
         return ButlerApp(container).run_bot()
     if cmd == "mcp":
@@ -461,10 +460,14 @@ def dispatch(container: Container, ns: argparse.Namespace) -> int:
                                 "text": "usage: butler calendar connect|sync|create [name]|list|use <id>|current"}, ns)
     if cmd == "daemon":
         # run course monitor + scheduler together in the foreground
+        from .logging import configure_bot_logging
+        configure_bot_logging()
         from .app import ButlerApp
         return ButlerApp(container).run_daemon()
     if cmd == "start":
         # alias for daemon (production foreground service)
+        from .logging import configure_bot_logging
+        configure_bot_logging()
         from .app import ButlerApp
         return ButlerApp(container).run_daemon()
     return 1
