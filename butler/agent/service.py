@@ -34,10 +34,18 @@ from .interactions import (
     InteractionKind, InteractionStatus, InteractionStore, match_candidates,
     ref_from_candidate,
 )
+from .clarification import (
+    ClarificationRequest, apply_slot, build_clarification, explain,
+    missing_slots, parse_answer,
+)
+from .actions import slot_spec
 from .temporal import Clock, TemporalResolver
 from ..ux import new_request_id
 
 log = logging.getLogger("butler.agent.service")
+
+from .actions import SlotSpec as _SlotSpec  # noqa: E402
+_TARGET_SLOT_SPEC = _SlotSpec("target", "target", True, "Which one do you mean?", dynamic="candidates")
 
 _REFERENCE_WORDS = (
     "that", "it", "this", "that one", "the other", "the other one",
@@ -145,18 +153,14 @@ class ExecutiveService:
             _is_reference(req.raw_text)
             or len((req.raw_text or "").split()) <= 6
             or req.action in (ActionKind.UNKNOWN, ActionKind.RESOLVE_REFERENCE))
-        # P2.1: resolve a follow-up against the pending candidates FIRST.
+        # Q1/P2.1: answer an active clarification first, using structured state.
         clar = self.interactions.active(session, InteractionKind.CLARIFICATION)
         if clar is not None:
-            cand = match_candidates(req.raw_text, clar.candidates)
-            if cand is not None:
-                chosen = ref_from_candidate(cand)
-                if req.target is None:
-                    req.target = chosen
-                else:
-                    self._adopt(req.target, chosen)
-                self.interactions.close(session, clar,
-                                        InteractionStatus.COMPLETED)
+            handled = self._answer_clarification(
+                session, clar, req, include_context=include_context,
+                expired_notice=expired_notice)
+            if handled is not None:
+                return handled
         # P2.2: a follow-up may modify the pending proposal instead of creating
         # a new, unrelated request.
         conf = self.interactions.active(session, InteractionKind.CONFIRMATION)
@@ -168,22 +172,79 @@ class ExecutiveService:
                 answer=merged.get("summary", ""),
                 data=merged, confirmation_required=True,
                 assumptions=["updated the pending proposal"])
-            if include_context:
-                res.context = self.context.build_snapshot(req)
-            self._remember(session, req, res)
-            return res
+            return self._finish_result(res, req, session, include_context,
+                                       expired_notice)
+        return self._dispatch_or_clarify(
+            req, session, include_context=include_context,
+            expired_notice=expired_notice)
+
+    # --------------------------------------------------- clarification flow
+    def _answer_clarification(self, session: Any, clar: Any, req: AgentRequest,
+                              *, include_context: bool,
+                              expired_notice: bool) -> AgentResult | None:
+        cdict = (clar.proposal or {}).get("clarification")
+        creq = ClarificationRequest.from_dict(cdict) if cdict else None
+        parsed = None
+        if creq is not None and creq.slot_name:
+            parsed = parse_answer(req.raw_text, creq)
+        if parsed is None and (creq is None or not creq.slot_name):
+            cand = match_candidates(req.raw_text, clar.candidates)
+            if cand is not None:
+                parsed = (cand, "")
+        if parsed is None:
+            # A new, clearly-recognised request supersedes a stale clarification.
+            if req.action not in (ActionKind.UNKNOWN,) \
+                    and req.confidence >= 0.5:
+                self.interactions.close(session, clar,
+                                        InteractionStatus.CANCELLED)
+                return None
+            # Not understood: keep the interaction and re-ask (no state lost).
+            if creq is not None and creq.options:
+                res = AgentResult(
+                    status=ResultStatus.AMBIGUOUS,
+                    data={"clarification": creq.to_dict()},
+                    warnings=["That doesn't match the available choices. "
+                              "Pick one below or type your own."])
+                return self._finish_result(res, req, session, include_context,
+                                           expired_notice)
+            return None
+        value, option_id = parsed
+        self.interactions.close(session, clar, InteractionStatus.COMPLETED)
+        if option_id == "__cancel":
+            res = AgentResult(status=ResultStatus.OK,
+                              answer="Cancelled — nothing was changed.")
+            return self._finish_result(res, req, session, include_context,
+                                       expired_notice)
+        base = AgentRequest.from_dict(clar.request) if clar.request else req
+        base.raw_text = req.raw_text
+        slot = creq.slot_name if (creq is not None and creq.slot_name) else "target"
+        apply_slot(base, slot, value)
+        return self._dispatch_or_clarify(
+            base, session, include_context=include_context,
+            expired_notice=expired_notice)
+
+    def _dispatch_or_clarify(self, req: AgentRequest, session: Any, *,
+                             include_context: bool = False,
+                             expired_notice: bool = False) -> AgentResult:
         ambiguities = self._resolve(req, session)
         if ambiguities:
             req.ambiguity = ambiguities
+            candidates = []
+            for a in ambiguities:
+                candidates.extend(a.candidates)
+            creq = self._open_target_clarification(session, req, candidates)
             res = AgentResult.ambiguous(ambiguities)
-            self._open_clarification(session, req, ambiguities)
-            if expired_notice:
-                res.warnings = list(res.warnings) + [
-                    "That earlier choice has expired. Please choose again."]
-            if include_context:
-                res.context = self.context.build_snapshot(req)
-            self._remember(session, req, res)
-            return res
+            res.data = {"clarification": creq.to_dict()}
+            return self._finish_result(res, req, session, include_context,
+                                       expired_notice)
+        # Q1/P1.1: missing required slots (semantic path). The deterministic
+        # fallback keeps its own bounded handling.
+        if req.source == "llm":
+            missing = missing_slots(req)
+            if missing:
+                res = self._open_slot_clarification(session, req, missing[0])
+                return self._finish_result(res, req, session, include_context,
+                                           expired_notice)
         snapshot = self.context.build_snapshot(req)
         try:
             res = self._dispatch(req, snapshot)
@@ -198,27 +259,22 @@ class ExecutiveService:
             res.with_provenance("executive_service", req.action.value,
                                 deterministic=True,
                                 request_id=getattr(self, "request_id", ""))
-        # P2.2: remember a pending proposal so a follow-up can modify it.
         data = res.data if isinstance(res.data, dict) else {}
         proposal = dict(data.get("proposal") or {})
-        # Domain-level ambiguity (e.g. two "Project 2" found by the creation
-        # service) is also a clarification, with the proposal's candidates.
         resol = proposal.get("resolution") or {}
-        questions = proposal.get("questions") or data.get("questions") or []
-        if (res.status == ResultStatus.AMBIGUOUS
-                or str(resol.get("status") or "") == "ambiguous"
-                or questions):
-            self.interactions.open(
-                session, kind=InteractionKind.CLARIFICATION,
-                original_text=req.raw_text, request=req.to_dict(),
-                candidates=self._enrich_candidates(
-                    list(resol.get("candidates") or [])),
-                ambiguity_type="entity")
-            if expired_notice:
-                res.warnings = list(res.warnings) + [
-                    "That earlier choice has expired. Please choose again."]
-            self._remember(session, req, res)
-            return res
+        # Only a genuine *target ambiguity* becomes a clarification. Proposal
+        # "questions" (missing details) stay part of the confirmation proposal.
+        has_target_ambiguity = (
+            (res.status == ResultStatus.AMBIGUOUS
+             and bool(resol.get("candidates")))
+            or str(resol.get("status") or "") == "ambiguous")
+        if has_target_ambiguity:
+            creq = self._open_target_clarification(
+                session, req, list(resol.get("candidates") or []))
+            res.data = {"clarification": creq.to_dict()}
+            res.missing_information = [creq.slot_name]
+            return self._finish_result(res, req, session, include_context,
+                                       expired_notice)
         pending = (res.status == ResultStatus.NEEDS_CONFIRMATION
                    or bool(data.get("tracker")) or bool(proposal))
         if pending and (data.get("summary") or proposal or data.get("tracker")
@@ -234,9 +290,73 @@ class ExecutiveService:
                 session, kind=InteractionKind.CONFIRMATION,
                 original_text=req.raw_text, request=req.to_dict(),
                 proposal=proposal)
+        return self._finish_result(res, req, session, include_context,
+                                   expired_notice)
+
+    def _open_target_clarification(self, session: Any, req: AgentRequest,
+                                   candidates: list[dict[str, Any]]
+                                   ) -> ClarificationRequest:
+        spec = slot_spec(req.action.value, "target") or             _TARGET_SLOT_SPEC
+        enriched = self._enrich_candidates(candidates)
+        reason = (f"I found {len(enriched)} matches and need to know which "
+                  f"one you mean." if len(enriched) > 1 else "")
+        return self._store_clarification(session, req, spec, enriched, reason)
+
+    def _open_slot_clarification(self, session: Any, req: AgentRequest,
+                                 spec: Any) -> AgentResult:
+        candidates: list[dict[str, Any]] = []
+        if getattr(spec, "dynamic", "") == "candidates":
+            candidates = self._enrich_candidates(
+                [e.to_dict() for e in self._live_entities()][:6])
+        creq = self._store_clarification(session, req, spec, candidates, "")
+        return AgentResult(
+            status=ResultStatus.AMBIGUOUS,
+            data={"clarification": creq.to_dict()},
+            missing_information=[spec.name], warnings=[explain(creq)])
+
+    def _store_clarification(self, session: Any, req: AgentRequest, spec: Any,
+                             candidates: list[dict[str, Any]],
+                             reason: str) -> ClarificationRequest:
+        creq = build_clarification("", spec, candidates=candidates,
+                                   topic_scope=req.topic, reason=reason)
+        it = self.interactions.open(
+            session, kind=InteractionKind.CLARIFICATION,
+            original_text=req.raw_text, request=req.to_dict(),
+            candidates=candidates, expected_slot=spec.name,
+            ambiguity_type=("entity" if spec.kind == "target" else spec.kind),
+            proposal={"clarification": creq.to_dict()})
+        creq.interaction_id = it.id
+        it.proposal["clarification"] = creq.to_dict()
+        return creq
+
+    def resume_with_slot(self, interaction_id: str, slot: str, value: Any, *,
+                         user: str = "user") -> AgentResult:
+        """Apply a button answer directly (no re-interpretation), then resume."""
+        session = self.session(user)
+        clar = None
+        for it in self.interactions._all(session):
+            if it.id == interaction_id and it.is_open() \
+                    and it.kind == InteractionKind.CLARIFICATION:
+                clar = it
+                break
+        if clar is None:
+            return AgentResult(status=ResultStatus.INVALID,
+                               error="That choice has expired. Please choose again.")
+        if clar.expected_slot and slot and clar.expected_slot != slot:
+            return AgentResult(status=ResultStatus.INVALID,
+                               error="That doesn't match the available choices.")
+        base = AgentRequest.from_dict(clar.request) if clar.request else             AgentRequest()
+        apply_slot(base, slot or clar.expected_slot, value)
+        self.interactions.close(session, clar, InteractionStatus.COMPLETED)
+        return self._dispatch_or_clarify(base, session)
+
+    def _finish_result(self, res: AgentResult, req: AgentRequest, session: Any,
+                       include_context: bool, expired_notice: bool) -> AgentResult:
         if expired_notice:
             res.warnings = list(res.warnings) + [
                 "That earlier choice has expired. Please choose again."]
+        if include_context and res.context is None:
+            res.context = self.context.build_snapshot(req)
         self._remember(session, req, res)
         return res
 

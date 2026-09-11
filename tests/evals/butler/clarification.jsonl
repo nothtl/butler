@@ -1,0 +1,200 @@
+{"category": "clarification", "input": "Track my project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Track my project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Track my project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Track my project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Track my project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Track my project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Track my project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Track my project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Track my project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Track my project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Track my project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Track my project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Track my project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Track my project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Track my project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Track my project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Track my project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Track my project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Track my project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Track my project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Add Project 2.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Add Project 2.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Add Project 2.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Add Project 2.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Add Project 2.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Add Project 2.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Add Project 2.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Add Project 2.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Add Project 2.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Add Project 2.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Add Project 2.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Add Project 2.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Add Project 2.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Add Project 2.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Add Project 2.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Add Project 2.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Add Project 2.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Add Project 2.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Add Project 2.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Add Project 2.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Enable web.", "expected_slot": "scope", "expected_clarification": true}
+{"category": "clarification", "input": "Enable web.", "expected_slot": "scope", "expected_clarification": true}
+{"category": "clarification", "input": "Enable web.", "expected_slot": "scope", "expected_clarification": true}
+{"category": "clarification", "input": "Enable web.", "expected_slot": "scope", "expected_clarification": true}
+{"category": "clarification", "input": "Enable web.", "expected_slot": "scope", "expected_clarification": true}
+{"category": "clarification", "input": "Enable web.", "expected_slot": "scope", "expected_clarification": true}
+{"category": "clarification", "input": "Enable web.", "expected_slot": "scope", "expected_clarification": true}
+{"category": "clarification", "input": "Enable web.", "expected_slot": "scope", "expected_clarification": true}
+{"category": "clarification", "input": "Enable web.", "expected_slot": "scope", "expected_clarification": true}
+{"category": "clarification", "input": "Enable web.", "expected_slot": "scope", "expected_clarification": true}
+{"category": "clarification", "input": "Enable web.", "expected_slot": "scope", "expected_clarification": true}
+{"category": "clarification", "input": "Enable web.", "expected_slot": "scope", "expected_clarification": true}
+{"category": "clarification", "input": "Enable web.", "expected_slot": "scope", "expected_clarification": true}
+{"category": "clarification", "input": "Enable web.", "expected_slot": "scope", "expected_clarification": true}
+{"category": "clarification", "input": "Enable web.", "expected_slot": "scope", "expected_clarification": true}
+{"category": "clarification", "input": "Enable web.", "expected_slot": "scope", "expected_clarification": true}
+{"category": "clarification", "input": "Enable web.", "expected_slot": "scope", "expected_clarification": true}
+{"category": "clarification", "input": "Enable web.", "expected_slot": "scope", "expected_clarification": true}
+{"category": "clarification", "input": "Enable web.", "expected_slot": "scope", "expected_clarification": true}
+{"category": "clarification", "input": "Enable web.", "expected_slot": "scope", "expected_clarification": true}
+{"category": "clarification", "input": "Schedule this later.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Schedule this later.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Schedule this later.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Schedule this later.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Schedule this later.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Schedule this later.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Schedule this later.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Schedule this later.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Schedule this later.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Schedule this later.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Schedule this later.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Schedule this later.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Schedule this later.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Schedule this later.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Schedule this later.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Schedule this later.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Schedule this later.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Schedule this later.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Schedule this later.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Schedule this later.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Give me some time for CS188.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Give me some time for CS188.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Give me some time for CS188.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Give me some time for CS188.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Give me some time for CS188.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Give me some time for CS188.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Give me some time for CS188.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Give me some time for CS188.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Give me some time for CS188.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Give me some time for CS188.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Give me some time for CS188.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Give me some time for CS188.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Give me some time for CS188.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Give me some time for CS188.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Give me some time for CS188.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Give me some time for CS188.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Give me some time for CS188.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Give me some time for CS188.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Give me some time for CS188.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Give me some time for CS188.", "expected_slot": "duration", "expected_clarification": true}
+{"category": "clarification", "input": "Track CS188.", "expected_slot": "event_types", "expected_clarification": true}
+{"category": "clarification", "input": "Track CS188.", "expected_slot": "event_types", "expected_clarification": true}
+{"category": "clarification", "input": "Track CS188.", "expected_slot": "event_types", "expected_clarification": true}
+{"category": "clarification", "input": "Track CS188.", "expected_slot": "event_types", "expected_clarification": true}
+{"category": "clarification", "input": "Track CS188.", "expected_slot": "event_types", "expected_clarification": true}
+{"category": "clarification", "input": "Track CS188.", "expected_slot": "event_types", "expected_clarification": true}
+{"category": "clarification", "input": "Track CS188.", "expected_slot": "event_types", "expected_clarification": true}
+{"category": "clarification", "input": "Track CS188.", "expected_slot": "event_types", "expected_clarification": true}
+{"category": "clarification", "input": "Track CS188.", "expected_slot": "event_types", "expected_clarification": true}
+{"category": "clarification", "input": "Track CS188.", "expected_slot": "event_types", "expected_clarification": true}
+{"category": "clarification", "input": "Track CS188.", "expected_slot": "event_types", "expected_clarification": true}
+{"category": "clarification", "input": "Track CS188.", "expected_slot": "event_types", "expected_clarification": true}
+{"category": "clarification", "input": "Track CS188.", "expected_slot": "event_types", "expected_clarification": true}
+{"category": "clarification", "input": "Track CS188.", "expected_slot": "event_types", "expected_clarification": true}
+{"category": "clarification", "input": "Track CS188.", "expected_slot": "event_types", "expected_clarification": true}
+{"category": "clarification", "input": "Track CS188.", "expected_slot": "event_types", "expected_clarification": true}
+{"category": "clarification", "input": "Track CS188.", "expected_slot": "event_types", "expected_clarification": true}
+{"category": "clarification", "input": "Track CS188.", "expected_slot": "event_types", "expected_clarification": true}
+{"category": "clarification", "input": "Track CS188.", "expected_slot": "event_types", "expected_clarification": true}
+{"category": "clarification", "input": "Track CS188.", "expected_slot": "event_types", "expected_clarification": true}
+{"category": "clarification", "input": "Tell me when something changes.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Tell me when something changes.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Tell me when something changes.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Tell me when something changes.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Tell me when something changes.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Tell me when something changes.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Tell me when something changes.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Tell me when something changes.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Tell me when something changes.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Tell me when something changes.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Tell me when something changes.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Tell me when something changes.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Tell me when something changes.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Tell me when something changes.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Tell me when something changes.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Tell me when something changes.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Tell me when something changes.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Tell me when something changes.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Tell me when something changes.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Tell me when something changes.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Link this to the project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Link this to the project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Link this to the project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Link this to the project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Link this to the project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Link this to the project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Link this to the project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Link this to the project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Link this to the project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Link this to the project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Link this to the project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Link this to the project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Link this to the project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Link this to the project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Link this to the project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Link this to the project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Link this to the project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Link this to the project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Link this to the project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Link this to the project.", "expected_slot": "target", "expected_clarification": true}
+{"category": "clarification", "input": "Create a task.", "expected_slot": "title", "expected_clarification": true}
+{"category": "clarification", "input": "Create a task.", "expected_slot": "title", "expected_clarification": true}
+{"category": "clarification", "input": "Create a task.", "expected_slot": "title", "expected_clarification": true}
+{"category": "clarification", "input": "Create a task.", "expected_slot": "title", "expected_clarification": true}
+{"category": "clarification", "input": "Create a task.", "expected_slot": "title", "expected_clarification": true}
+{"category": "clarification", "input": "Create a task.", "expected_slot": "title", "expected_clarification": true}
+{"category": "clarification", "input": "Create a task.", "expected_slot": "title", "expected_clarification": true}
+{"category": "clarification", "input": "Create a task.", "expected_slot": "title", "expected_clarification": true}
+{"category": "clarification", "input": "Create a task.", "expected_slot": "title", "expected_clarification": true}
+{"category": "clarification", "input": "Create a task.", "expected_slot": "title", "expected_clarification": true}
+{"category": "clarification", "input": "Create a task.", "expected_slot": "title", "expected_clarification": true}
+{"category": "clarification", "input": "Create a task.", "expected_slot": "title", "expected_clarification": true}
+{"category": "clarification", "input": "Create a task.", "expected_slot": "title", "expected_clarification": true}
+{"category": "clarification", "input": "Create a task.", "expected_slot": "title", "expected_clarification": true}
+{"category": "clarification", "input": "Create a task.", "expected_slot": "title", "expected_clarification": true}
+{"category": "clarification", "input": "Create a task.", "expected_slot": "title", "expected_clarification": true}
+{"category": "clarification", "input": "Create a task.", "expected_slot": "title", "expected_clarification": true}
+{"category": "clarification", "input": "Create a task.", "expected_slot": "title", "expected_clarification": true}
+{"category": "clarification", "input": "Create a task.", "expected_slot": "title", "expected_clarification": true}
+{"category": "clarification", "input": "Create a task.", "expected_slot": "title", "expected_clarification": true}
+{"category": "clarification", "input": "Remember this.", "expected_slot": "content", "expected_clarification": true}
+{"category": "clarification", "input": "Remember this.", "expected_slot": "content", "expected_clarification": true}
+{"category": "clarification", "input": "Remember this.", "expected_slot": "content", "expected_clarification": true}
+{"category": "clarification", "input": "Remember this.", "expected_slot": "content", "expected_clarification": true}
+{"category": "clarification", "input": "Remember this.", "expected_slot": "content", "expected_clarification": true}
+{"category": "clarification", "input": "Remember this.", "expected_slot": "content", "expected_clarification": true}
+{"category": "clarification", "input": "Remember this.", "expected_slot": "content", "expected_clarification": true}
+{"category": "clarification", "input": "Remember this.", "expected_slot": "content", "expected_clarification": true}
+{"category": "clarification", "input": "Remember this.", "expected_slot": "content", "expected_clarification": true}
+{"category": "clarification", "input": "Remember this.", "expected_slot": "content", "expected_clarification": true}
+{"category": "clarification", "input": "Remember this.", "expected_slot": "content", "expected_clarification": true}
+{"category": "clarification", "input": "Remember this.", "expected_slot": "content", "expected_clarification": true}
+{"category": "clarification", "input": "Remember this.", "expected_slot": "content", "expected_clarification": true}
+{"category": "clarification", "input": "Remember this.", "expected_slot": "content", "expected_clarification": true}
+{"category": "clarification", "input": "Remember this.", "expected_slot": "content", "expected_clarification": true}
+{"category": "clarification", "input": "Remember this.", "expected_slot": "content", "expected_clarification": true}
+{"category": "clarification", "input": "Remember this.", "expected_slot": "content", "expected_clarification": true}
+{"category": "clarification", "input": "Remember this.", "expected_slot": "content", "expected_clarification": true}
+{"category": "clarification", "input": "Remember this.", "expected_slot": "content", "expected_clarification": true}
+{"category": "clarification", "input": "Remember this.", "expected_slot": "content", "expected_clarification": true}

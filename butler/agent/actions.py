@@ -259,3 +259,132 @@ def all_actions() -> list[ActionDefinition]:
 
 def registered_names() -> list[str]:
     return sorted(ACTIONS)
+
+
+# ---------------------------------------------------------------------------
+# Q1: action slot schemas
+#
+# Each executable action declares the slots it needs. This is the authoritative
+# source used by the clarification engine: required slots must be present (or
+# safely defaultable) before execution; optional slots improve the result.
+# `kind` is one of choice|target|value|time|scope|confirmation. `dynamic`
+# marks slots whose options come from live state (candidates) or topic scope.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SlotSpec:
+    name: str
+    kind: str = "value"
+    required: bool = False
+    question: str = ""
+    options: tuple[str, ...] = ()
+    default: Any = None
+    free_text: bool = True
+    dynamic: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name, "kind": self.kind, "required": self.required,
+            "question": self.question, "options": list(self.options),
+            "default": self.default, "free_text": self.free_text,
+            "dynamic": self.dynamic,
+        }
+
+
+SLOT_SCHEMAS: dict[str, tuple[SlotSpec, ...]] = {
+    "tracker_create": (
+        SlotSpec("target", "target", True,
+                 "What should I track?",
+                 dynamic="candidates"),
+        SlotSpec("event_types", "choice", True,
+                 "What should I watch for?",
+                 ("Assignments", "Deadlines", "Projects", "Announcements",
+                  "Everything important")),
+        SlotSpec("cadence", "choice", False, "How often should I check?",
+                 ("Hourly", "Daily", "Weekly"), default="daily"),
+        SlotSpec("destination", "choice", False, "Where should I notify you?",
+                 ("This topic", "Main chat"), default="current_topic"),
+        SlotSpec("notification_policy", "choice", False,
+                 "How should I notify you?",
+                 ("Immediately", "Important only", "Daily summary",
+                  "Don't notify"), default="important_only"),
+    ),
+    "create_item": (
+        SlotSpec("title", "value", True, "What should I add?"),
+        SlotSpec("target_type", "choice", False, "What kind of item?",
+                 ("Task", "Project", "Course", "Food", "Grocery", "Note")),
+        SlotSpec("deadline", "time", False, "When is it due?"),
+        SlotSpec("project", "target", False, "Which project?",
+                 dynamic="candidates"),
+    ),
+    "link_items": (
+        SlotSpec("target", "target", True, "What should I link it to?",
+                 dynamic="candidates"),
+    ),
+    "settings_update": (
+        SlotSpec("capability", "choice", True, "Which setting?",
+                 ("Web", "Scheduling", "Tracking", "Proactive", "Memory",
+                  "Reminders", "Files")),
+        SlotSpec("state", "choice", True, "Turn it on or off?",
+                 ("On", "Off"), default="on"),
+        SlotSpec("scope", "scope", True, "Just here, or everywhere?",
+                 ("This topic", "Global")),
+    ),
+    "find_best_slot": (
+        SlotSpec("duration", "choice", True, "How long do you need?",
+                 ("30 min", "1 hour", "2 hours", "Custom")),
+        SlotSpec("target", "target", False, "For what?",
+                 dynamic="candidates"),
+        SlotSpec("time_window", "time", False, "When?",
+                 ("Now", "Today", "Tomorrow", "This evening", "Custom")),
+    ),
+    "plan_day": (
+        SlotSpec("time_window", "time", False, "Which day?",
+                 ("Today", "Tomorrow")),
+    ),
+    "plan_week": (
+        SlotSpec("time_window", "time", False, "Which week?",
+                 ("This week", "Next week")),
+    ),
+    "memory_learn": (
+        SlotSpec("content", "value", True, "What should I remember?"),
+    ),
+    "reschedule": (
+        SlotSpec("target", "target", True, "What should I move?",
+                 dynamic="candidates"),
+        SlotSpec("time_window", "time", False, "When should it move to?",
+                 ("Today", "Tomorrow", "This evening", "Custom")),
+    ),
+    "defer": (
+        SlotSpec("target", "target", False, "What should I defer?",
+                 dynamic="candidates"),
+        SlotSpec("time_window", "time", False, "Until when?",
+                 ("Later today", "Tomorrow", "This evening", "Custom")),
+    ),
+    "move": (
+        SlotSpec("target", "target", True, "What should I move?",
+                 dynamic="candidates"),
+        SlotSpec("time_window", "time", False, "When?",
+                 ("Today", "Tomorrow", "This evening", "Custom")),
+    ),
+}
+
+
+def slots_for(action: str) -> tuple[SlotSpec, ...]:
+    return SLOT_SCHEMAS.get(str(action or ""), ())
+
+
+def required_slots(action: str) -> tuple[SlotSpec, ...]:
+    return tuple(s for s in slots_for(action) if s.required)
+
+
+def optional_slots(action: str) -> tuple[SlotSpec, ...]:
+    return tuple(s for s in slots_for(action) if not s.required)
+
+
+def slot_spec(action: str, name: str) -> SlotSpec | None:
+    for s in slots_for(action):
+        if s.name == name:
+            return s
+    return None

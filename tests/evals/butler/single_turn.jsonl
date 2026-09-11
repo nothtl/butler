@@ -1,0 +1,520 @@
+{"category": "single_turn", "input": "track CS188 homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track CS168 homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track Stock Bot homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track basketball club homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track UAV research homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track Project 2 homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track the report homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track groceries homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track pantry homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track my project homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track CS170 homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track CS61A homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track travel plan homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track reading list homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track gym schedule homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track CS188 assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track CS168 assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track Stock Bot assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track basketball club assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track UAV research assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track Project 2 assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track the report assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track groceries assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track pantry assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track my project assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track CS170 assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track CS61A assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track travel plan assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track reading list assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "track gym schedule assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "keep an eye on CS188", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "keep an eye on CS168", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "keep an eye on Stock Bot", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "keep an eye on basketball club", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "keep an eye on UAV research", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "keep an eye on Project 2", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "keep an eye on the report", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "keep an eye on groceries", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "keep an eye on pantry", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "keep an eye on my project", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "keep an eye on CS170", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "keep an eye on CS61A", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "keep an eye on travel plan", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "keep an eye on reading list", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "keep an eye on gym schedule", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "watch CS188 for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "watch CS168 for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "watch Stock Bot for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "watch basketball club for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "watch UAV research for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "watch Project 2 for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "watch the report for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "watch groceries for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "watch pantry for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "watch my project for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "watch CS170 for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "watch CS61A for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "watch travel plan for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "watch reading list for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "watch gym schedule for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "add CS188 to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "add CS168 to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "add Stock Bot to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "add basketball club to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "add UAV research to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "add Project 2 to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "add the report to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "add groceries to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "add pantry to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "add my project to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "add CS170 to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "add CS61A to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "add travel plan to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "add reading list to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "add gym schedule to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "add milk to groceries", "expected_action": "create_item"}
+{"category": "single_turn", "input": "create a task to CS188", "expected_action": "create_item"}
+{"category": "single_turn", "input": "create a task to CS168", "expected_action": "create_item"}
+{"category": "single_turn", "input": "create a task to Stock Bot", "expected_action": "create_item"}
+{"category": "single_turn", "input": "create a task to basketball club", "expected_action": "create_item"}
+{"category": "single_turn", "input": "create a task to UAV research", "expected_action": "create_item"}
+{"category": "single_turn", "input": "create a task to Project 2", "expected_action": "create_item"}
+{"category": "single_turn", "input": "create a task to the report", "expected_action": "create_item"}
+{"category": "single_turn", "input": "create a task to groceries", "expected_action": "create_item"}
+{"category": "single_turn", "input": "create a task to pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "create a task to my project", "expected_action": "create_item"}
+{"category": "single_turn", "input": "create a task to CS170", "expected_action": "create_item"}
+{"category": "single_turn", "input": "create a task to CS61A", "expected_action": "create_item"}
+{"category": "single_turn", "input": "create a task to travel plan", "expected_action": "create_item"}
+{"category": "single_turn", "input": "create a task to reading list", "expected_action": "create_item"}
+{"category": "single_turn", "input": "create a task to gym schedule", "expected_action": "create_item"}
+{"category": "single_turn", "input": "link this to CS188", "expected_action": "link_items"}
+{"category": "single_turn", "input": "link this to CS168", "expected_action": "link_items"}
+{"category": "single_turn", "input": "link this to Stock Bot", "expected_action": "link_items"}
+{"category": "single_turn", "input": "link this to basketball club", "expected_action": "link_items"}
+{"category": "single_turn", "input": "link this to UAV research", "expected_action": "link_items"}
+{"category": "single_turn", "input": "link this to Project 2", "expected_action": "link_items"}
+{"category": "single_turn", "input": "link this to the report", "expected_action": "link_items"}
+{"category": "single_turn", "input": "link this to groceries", "expected_action": "link_items"}
+{"category": "single_turn", "input": "link this to pantry", "expected_action": "link_items"}
+{"category": "single_turn", "input": "link this to my project", "expected_action": "link_items"}
+{"category": "single_turn", "input": "link this to CS170", "expected_action": "link_items"}
+{"category": "single_turn", "input": "link this to CS61A", "expected_action": "link_items"}
+{"category": "single_turn", "input": "link this to travel plan", "expected_action": "link_items"}
+{"category": "single_turn", "input": "link this to reading list", "expected_action": "link_items"}
+{"category": "single_turn", "input": "link this to gym schedule", "expected_action": "link_items"}
+{"category": "single_turn", "input": "connect groceries to food", "expected_action": "link_items"}
+{"category": "single_turn", "input": "remember that I prefer CS188", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "remember that I prefer CS168", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "remember that I prefer Stock Bot", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "remember that I prefer basketball club", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "remember that I prefer UAV research", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "remember that I prefer Project 2", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "remember that I prefer the report", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "remember that I prefer groceries", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "remember that I prefer pantry", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "remember that I prefer my project", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "remember that I prefer CS170", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "remember that I prefer CS61A", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "remember that I prefer travel plan", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "remember that I prefer reading list", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "remember that I prefer gym schedule", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "forget my CS188 preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "forget my CS168 preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "forget my Stock Bot preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "forget my basketball club preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "forget my UAV research preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "forget my Project 2 preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "forget my the report preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "forget my groceries preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "forget my pantry preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "forget my my project preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "forget my CS170 preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "forget my CS61A preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "forget my travel plan preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "forget my reading list preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "forget my gym schedule preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "what do you remember about CS188", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "what do you remember about CS168", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "what do you remember about Stock Bot", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "what do you remember about basketball club", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "what do you remember about UAV research", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "what do you remember about Project 2", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "what do you remember about the report", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "what do you remember about groceries", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "what do you remember about pantry", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "what do you remember about my project", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "what do you remember about CS170", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "what do you remember about CS61A", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "what do you remember about travel plan", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "what do you remember about reading list", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "what do you remember about gym schedule", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "plan my day", "expected_action": "plan_day"}
+{"category": "single_turn", "input": "plan my week", "expected_action": "plan_week"}
+{"category": "single_turn", "input": "what should I work on", "expected_action": "recommend"}
+{"category": "single_turn", "input": "what is most urgent", "expected_action": "urgency"}
+{"category": "single_turn", "input": "show my tasks", "expected_action": "status"}
+{"category": "single_turn", "input": "show my trackers", "expected_action": "tracker_list"}
+{"category": "single_turn", "input": "enable web here", "expected_action": "settings_update"}
+{"category": "single_turn", "input": "disable scheduling here", "expected_action": "settings_update"}
+{"category": "single_turn", "input": "find me two hours for CS188", "expected_action": "find_best_slot"}
+{"category": "single_turn", "input": "find me two hours for CS168", "expected_action": "find_best_slot"}
+{"category": "single_turn", "input": "find me two hours for Stock Bot", "expected_action": "find_best_slot"}
+{"category": "single_turn", "input": "find me two hours for basketball club", "expected_action": "find_best_slot"}
+{"category": "single_turn", "input": "find me two hours for UAV research", "expected_action": "find_best_slot"}
+{"category": "single_turn", "input": "find me two hours for Project 2", "expected_action": "find_best_slot"}
+{"category": "single_turn", "input": "find me two hours for the report", "expected_action": "find_best_slot"}
+{"category": "single_turn", "input": "find me two hours for groceries", "expected_action": "find_best_slot"}
+{"category": "single_turn", "input": "find me two hours for pantry", "expected_action": "find_best_slot"}
+{"category": "single_turn", "input": "find me two hours for my project", "expected_action": "find_best_slot"}
+{"category": "single_turn", "input": "find me two hours for CS170", "expected_action": "find_best_slot"}
+{"category": "single_turn", "input": "find me two hours for CS61A", "expected_action": "find_best_slot"}
+{"category": "single_turn", "input": "find me two hours for travel plan", "expected_action": "find_best_slot"}
+{"category": "single_turn", "input": "find me two hours for reading list", "expected_action": "find_best_slot"}
+{"category": "single_turn", "input": "find me two hours for gym schedule", "expected_action": "find_best_slot"}
+{"category": "single_turn", "input": "organize my downloads", "expected_action": "organize_items"}
+{"category": "single_turn", "input": "search the web for CS188", "expected_action": "web_search"}
+{"category": "single_turn", "input": "search the web for CS168", "expected_action": "web_search"}
+{"category": "single_turn", "input": "search the web for Stock Bot", "expected_action": "web_search"}
+{"category": "single_turn", "input": "search the web for basketball club", "expected_action": "web_search"}
+{"category": "single_turn", "input": "search the web for UAV research", "expected_action": "web_search"}
+{"category": "single_turn", "input": "search the web for Project 2", "expected_action": "web_search"}
+{"category": "single_turn", "input": "search the web for the report", "expected_action": "web_search"}
+{"category": "single_turn", "input": "search the web for groceries", "expected_action": "web_search"}
+{"category": "single_turn", "input": "search the web for pantry", "expected_action": "web_search"}
+{"category": "single_turn", "input": "search the web for my project", "expected_action": "web_search"}
+{"category": "single_turn", "input": "search the web for CS170", "expected_action": "web_search"}
+{"category": "single_turn", "input": "search the web for CS61A", "expected_action": "web_search"}
+{"category": "single_turn", "input": "search the web for travel plan", "expected_action": "web_search"}
+{"category": "single_turn", "input": "search the web for reading list", "expected_action": "web_search"}
+{"category": "single_turn", "input": "search the web for gym schedule", "expected_action": "web_search"}
+{"category": "single_turn", "input": "what's in my pantry", "expected_action": "knowledge_lookup"}
+{"category": "single_turn", "input": "remember I prefer two-hour blocks", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "why did you notify me", "expected_action": "tracker_explain"}
+{"category": "single_turn", "input": "please track CS188 homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track CS188 homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track CS168 homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track CS168 homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track Stock Bot homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track Stock Bot homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track basketball club homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track basketball club homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track UAV research homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track UAV research homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track Project 2 homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track Project 2 homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track the report homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track the report homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track groceries homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track groceries homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track pantry homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track pantry homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track my project homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track my project homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track CS170 homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track CS170 homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track CS61A homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track CS61A homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track travel plan homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track travel plan homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track reading list homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track reading list homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track gym schedule homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track gym schedule homework", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track CS188 assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track CS188 assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track CS168 assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track CS168 assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track Stock Bot assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track Stock Bot assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track basketball club assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track basketball club assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track UAV research assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track UAV research assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track Project 2 assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track Project 2 assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track the report assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track the report assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track groceries assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track groceries assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track pantry assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track pantry assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track my project assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track my project assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track CS170 assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track CS170 assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track CS61A assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track CS61A assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track travel plan assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track travel plan assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track reading list assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track reading list assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please track gym schedule assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you track gym schedule assignments", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please keep an eye on CS188", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you keep an eye on CS188", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please keep an eye on CS168", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you keep an eye on CS168", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please keep an eye on Stock Bot", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you keep an eye on Stock Bot", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please keep an eye on basketball club", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you keep an eye on basketball club", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please keep an eye on UAV research", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you keep an eye on UAV research", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please keep an eye on Project 2", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you keep an eye on Project 2", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please keep an eye on the report", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you keep an eye on the report", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please keep an eye on groceries", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you keep an eye on groceries", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please keep an eye on pantry", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you keep an eye on pantry", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please keep an eye on my project", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you keep an eye on my project", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please keep an eye on CS170", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you keep an eye on CS170", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please keep an eye on CS61A", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you keep an eye on CS61A", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please keep an eye on travel plan", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you keep an eye on travel plan", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please keep an eye on reading list", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you keep an eye on reading list", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please keep an eye on gym schedule", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you keep an eye on gym schedule", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please watch CS188 for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you watch CS188 for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please watch CS168 for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you watch CS168 for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please watch Stock Bot for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you watch Stock Bot for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please watch basketball club for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you watch basketball club for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please watch UAV research for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you watch UAV research for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please watch Project 2 for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you watch Project 2 for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please watch the report for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you watch the report for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please watch groceries for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you watch groceries for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please watch pantry for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you watch pantry for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please watch my project for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you watch my project for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please watch CS170 for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you watch CS170 for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please watch CS61A for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you watch CS61A for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please watch travel plan for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you watch travel plan for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please watch reading list for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you watch reading list for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please watch gym schedule for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "could you watch gym schedule for announcements", "expected_action": "tracker_create"}
+{"category": "single_turn", "input": "please add CS188 to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you add CS188 to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please add CS168 to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you add CS168 to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please add Stock Bot to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you add Stock Bot to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please add basketball club to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you add basketball club to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please add UAV research to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you add UAV research to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please add Project 2 to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you add Project 2 to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please add the report to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you add the report to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please add groceries to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you add groceries to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please add pantry to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you add pantry to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please add my project to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you add my project to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please add CS170 to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you add CS170 to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please add CS61A to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you add CS61A to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please add travel plan to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you add travel plan to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please add reading list to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you add reading list to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please add gym schedule to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you add gym schedule to my pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please add milk to groceries", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you add milk to groceries", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please create a task to CS188", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you create a task to CS188", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please create a task to CS168", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you create a task to CS168", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please create a task to Stock Bot", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you create a task to Stock Bot", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please create a task to basketball club", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you create a task to basketball club", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please create a task to UAV research", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you create a task to UAV research", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please create a task to Project 2", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you create a task to Project 2", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please create a task to the report", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you create a task to the report", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please create a task to groceries", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you create a task to groceries", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please create a task to pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you create a task to pantry", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please create a task to my project", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you create a task to my project", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please create a task to CS170", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you create a task to CS170", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please create a task to CS61A", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you create a task to CS61A", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please create a task to travel plan", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you create a task to travel plan", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please create a task to reading list", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you create a task to reading list", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please create a task to gym schedule", "expected_action": "create_item"}
+{"category": "single_turn", "input": "could you create a task to gym schedule", "expected_action": "create_item"}
+{"category": "single_turn", "input": "please link this to CS188", "expected_action": "link_items"}
+{"category": "single_turn", "input": "could you link this to CS188", "expected_action": "link_items"}
+{"category": "single_turn", "input": "please link this to CS168", "expected_action": "link_items"}
+{"category": "single_turn", "input": "could you link this to CS168", "expected_action": "link_items"}
+{"category": "single_turn", "input": "please link this to Stock Bot", "expected_action": "link_items"}
+{"category": "single_turn", "input": "could you link this to Stock Bot", "expected_action": "link_items"}
+{"category": "single_turn", "input": "please link this to basketball club", "expected_action": "link_items"}
+{"category": "single_turn", "input": "could you link this to basketball club", "expected_action": "link_items"}
+{"category": "single_turn", "input": "please link this to UAV research", "expected_action": "link_items"}
+{"category": "single_turn", "input": "could you link this to UAV research", "expected_action": "link_items"}
+{"category": "single_turn", "input": "please link this to Project 2", "expected_action": "link_items"}
+{"category": "single_turn", "input": "could you link this to Project 2", "expected_action": "link_items"}
+{"category": "single_turn", "input": "please link this to the report", "expected_action": "link_items"}
+{"category": "single_turn", "input": "could you link this to the report", "expected_action": "link_items"}
+{"category": "single_turn", "input": "please link this to groceries", "expected_action": "link_items"}
+{"category": "single_turn", "input": "could you link this to groceries", "expected_action": "link_items"}
+{"category": "single_turn", "input": "please link this to pantry", "expected_action": "link_items"}
+{"category": "single_turn", "input": "could you link this to pantry", "expected_action": "link_items"}
+{"category": "single_turn", "input": "please link this to my project", "expected_action": "link_items"}
+{"category": "single_turn", "input": "could you link this to my project", "expected_action": "link_items"}
+{"category": "single_turn", "input": "please link this to CS170", "expected_action": "link_items"}
+{"category": "single_turn", "input": "could you link this to CS170", "expected_action": "link_items"}
+{"category": "single_turn", "input": "please link this to CS61A", "expected_action": "link_items"}
+{"category": "single_turn", "input": "could you link this to CS61A", "expected_action": "link_items"}
+{"category": "single_turn", "input": "please link this to travel plan", "expected_action": "link_items"}
+{"category": "single_turn", "input": "could you link this to travel plan", "expected_action": "link_items"}
+{"category": "single_turn", "input": "please link this to reading list", "expected_action": "link_items"}
+{"category": "single_turn", "input": "could you link this to reading list", "expected_action": "link_items"}
+{"category": "single_turn", "input": "please link this to gym schedule", "expected_action": "link_items"}
+{"category": "single_turn", "input": "could you link this to gym schedule", "expected_action": "link_items"}
+{"category": "single_turn", "input": "please connect groceries to food", "expected_action": "link_items"}
+{"category": "single_turn", "input": "could you connect groceries to food", "expected_action": "link_items"}
+{"category": "single_turn", "input": "please remember that I prefer CS188", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "could you remember that I prefer CS188", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "please remember that I prefer CS168", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "could you remember that I prefer CS168", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "please remember that I prefer Stock Bot", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "could you remember that I prefer Stock Bot", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "please remember that I prefer basketball club", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "could you remember that I prefer basketball club", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "please remember that I prefer UAV research", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "could you remember that I prefer UAV research", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "please remember that I prefer Project 2", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "could you remember that I prefer Project 2", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "please remember that I prefer the report", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "could you remember that I prefer the report", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "please remember that I prefer groceries", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "could you remember that I prefer groceries", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "please remember that I prefer pantry", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "could you remember that I prefer pantry", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "please remember that I prefer my project", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "could you remember that I prefer my project", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "please remember that I prefer CS170", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "could you remember that I prefer CS170", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "please remember that I prefer CS61A", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "could you remember that I prefer CS61A", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "please remember that I prefer travel plan", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "could you remember that I prefer travel plan", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "please remember that I prefer reading list", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "could you remember that I prefer reading list", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "please remember that I prefer gym schedule", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "could you remember that I prefer gym schedule", "expected_action": "memory_learn"}
+{"category": "single_turn", "input": "please forget my CS188 preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "could you forget my CS188 preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "please forget my CS168 preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "could you forget my CS168 preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "please forget my Stock Bot preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "could you forget my Stock Bot preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "please forget my basketball club preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "could you forget my basketball club preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "please forget my UAV research preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "could you forget my UAV research preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "please forget my Project 2 preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "could you forget my Project 2 preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "please forget my the report preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "could you forget my the report preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "please forget my groceries preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "could you forget my groceries preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "please forget my pantry preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "could you forget my pantry preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "please forget my my project preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "could you forget my my project preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "please forget my CS170 preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "could you forget my CS170 preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "please forget my CS61A preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "could you forget my CS61A preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "please forget my travel plan preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "could you forget my travel plan preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "please forget my reading list preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "could you forget my reading list preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "please forget my gym schedule preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "could you forget my gym schedule preference", "expected_action": "memory_forget"}
+{"category": "single_turn", "input": "please what do you remember about CS188", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "could you what do you remember about CS188", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "please what do you remember about CS168", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "could you what do you remember about CS168", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "please what do you remember about Stock Bot", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "could you what do you remember about Stock Bot", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "please what do you remember about basketball club", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "could you what do you remember about basketball club", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "please what do you remember about UAV research", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "could you what do you remember about UAV research", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "please what do you remember about Project 2", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "could you what do you remember about Project 2", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "please what do you remember about the report", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "could you what do you remember about the report", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "please what do you remember about groceries", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "could you what do you remember about groceries", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "please what do you remember about pantry", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "could you what do you remember about pantry", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "please what do you remember about my project", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "could you what do you remember about my project", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "please what do you remember about CS170", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "could you what do you remember about CS170", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "please what do you remember about CS61A", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "could you what do you remember about CS61A", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "please what do you remember about travel plan", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "could you what do you remember about travel plan", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "please what do you remember about reading list", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "could you what do you remember about reading list", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "please what do you remember about gym schedule", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "could you what do you remember about gym schedule", "expected_action": "memory_query"}
+{"category": "single_turn", "input": "please plan my day", "expected_action": "plan_day"}
+{"category": "single_turn", "input": "could you plan my day", "expected_action": "plan_day"}
+{"category": "single_turn", "input": "please plan my week", "expected_action": "plan_week"}
+{"category": "single_turn", "input": "could you plan my week", "expected_action": "plan_week"}
+{"category": "single_turn", "input": "please what should I work on", "expected_action": "recommend"}
+{"category": "single_turn", "input": "could you what should I work on", "expected_action": "recommend"}
+{"category": "single_turn", "input": "please what is most urgent", "expected_action": "urgency"}
+{"category": "single_turn", "input": "could you what is most urgent", "expected_action": "urgency"}
+{"category": "single_turn", "input": "please show my tasks", "expected_action": "status"}
+{"category": "single_turn", "input": "could you show my tasks", "expected_action": "status"}
+{"category": "single_turn", "input": "please show my trackers", "expected_action": "tracker_list"}
+{"category": "single_turn", "input": "could you show my trackers", "expected_action": "tracker_list"}
+{"category": "single_turn", "input": "please enable web here", "expected_action": "settings_update"}
+{"category": "single_turn", "input": "could you enable web here", "expected_action": "settings_update"}
+{"category": "single_turn", "input": "please disable scheduling here", "expected_action": "settings_update"}
+{"category": "single_turn", "input": "could you disable scheduling here", "expected_action": "settings_update"}
+{"category": "single_turn", "input": "please find me two hours for CS188", "expected_action": "find_best_slot"}
+{"category": "single_turn", "input": "could you find me two hours for CS188", "expected_action": "find_best_slot"}
+{"category": "single_turn", "input": "please find me two hours for CS168", "expected_action": "find_best_slot"}
+{"category": "single_turn", "input": "could you find me two hours for CS168", "expected_action": "find_best_slot"}
+{"category": "single_turn", "input": "please find me two hours for Stock Bot", "expected_action": "find_best_slot"}
+{"category": "single_turn", "input": "could you find me two hours for Stock Bot", "expected_action": "find_best_slot"}

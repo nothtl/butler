@@ -146,6 +146,9 @@ class TemporalResolver:
     def _range(self, phrase: str, start: int, end: int,
                resolution: TemporalResolution, confidence: float,
                *, all_day: bool = False) -> TemporalRange:
+        if int(end) < int(start):
+            # A malformed window is never guessed; ask instead.
+            return self._unresolved(phrase, "window not resolvable")
         return TemporalRange(
             phrase=phrase, start=int(start), end=int(end),
             timezone=str(getattr(self.clock.tz, "key", "") or ""),

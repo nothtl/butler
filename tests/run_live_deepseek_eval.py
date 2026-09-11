@@ -176,6 +176,28 @@ def main() -> int:
     print(f"FOLLOWUP n={len(frows)} resolved={f_ok}/{len(frows)} "
           f"({f_ok/max(1,len(frows))*100:.0f}%)")
 
+    # ---- clarification (real LLM + service) ------------------------------
+    def butler_corpus(name):
+        path = os.path.join(EVALS, "butler", name)
+        with open(path) as f:
+            return [json.loads(x) for x in f if x.strip()]
+
+    clar_rows = butler_corpus("clarification.jsonl")[:limit]
+    cc = temp_container()
+    cc1 = cc.db.add_course("CS188", "AI")
+    cc2 = cc.db.add_course("CS168", "Net")
+    cc.projects.create_project("Project 2", course_id=cc1)
+    cc.projects.create_project("Project 2", course_id=cc2)
+    csvc = ExecutiveService(cc, interpreter=llm)
+    cl_ok = 0
+    for i, r in enumerate(clar_rows):
+        res = csvc.ask(text=r["input"], user=f"cl{i}", topic={})
+        data = res.data if isinstance(res.data, dict) else {}
+        if isinstance(data, dict) and data.get("clarification"):
+            cl_ok += 1
+    print(f"CLARIFICATION n={len(clar_rows)} offered={cl_ok}/{len(clar_rows)} "
+          f"({cl_ok/max(1,len(clar_rows))*100:.0f}%)")
+
     # ---- latency ---------------------------------------------------------
     if lat:
         print(f"\nLATENCY n={len(lat)} mean={statistics.mean(lat):.0f}ms "

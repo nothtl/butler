@@ -985,6 +985,8 @@ class TelegramBot:
             from .agent.service import ExecutiveService
             svc = ExecutiveService(self.container)
             res = svc.ask(request=req, topic=self._tracker_ctx(update))
+            if await self._reply_semantic(update, res):
+                return True
             await update.effective_message.reply_text(
                 self._render_tracker_result(res))
             return True
@@ -1071,6 +1073,8 @@ class TelegramBot:
             from .agent.service import ExecutiveService
             svc = ExecutiveService(self.container)
             res = svc.ask(request=req, topic=self._tracker_ctx(update))
+            if await self._reply_semantic(update, res):
+                return True
             chat_id = update.effective_chat.id
             data = res.data if isinstance(res.data, dict) else {}
             if data.get("proposal") and (res.status.value in
@@ -1128,6 +1132,8 @@ class TelegramBot:
             from .agent.service import ExecutiveService
             svc = ExecutiveService(self.container)
             res = svc.ask(request=req, topic=self._tracker_ctx(update))
+            if await self._reply_semantic(update, res):
+                return True
             await update.effective_message.reply_text(self._render_memory_result(res))
             return True
         except Exception as exc:  # noqa: BLE001
@@ -1234,6 +1240,8 @@ class TelegramBot:
                 from .agent.service import ExecutiveService
                 res = ExecutiveService(self.container).ask(
                     request=req, topic=self._tracker_ctx(update))
+                if await self._reply_semantic(update, res):
+                    return True
                 data = res.data if isinstance(res.data, dict) else {}
                 await update.effective_message.reply_text(
                     data.get("text") or self.container.settings.render())
@@ -2273,6 +2281,101 @@ class TelegramBot:
             return
         await query.edit_message_text("⚠️ Unrecognised action.")
 
+    # ------------------------------------------------- Q1 clarification UX
+    def _clarification(self, res: Any) -> dict[str, Any] | None:
+        data = res.data if isinstance(res.data, dict) else {}
+        clar = data.get("clarification")
+        return clar if isinstance(clar, dict) else None
+
+    def _clarification_markup(self, res: Any) -> Any:
+        clar = self._clarification(res)
+        if not clar:
+            return None
+        rows = []
+        for o in clar.get("options") or []:
+            rows.append([InlineKeyboardButton(
+                str(o.get("label", "?")),
+                callback_data=("clar:%s:%s:%s" % (clar.get("interaction_id", ""),
+                                                  clar.get("slot_name", ""),
+                                                  o.get("option_id", ""))))])
+        rows.append([InlineKeyboardButton(
+            "✕ Cancel",
+            callback_data=("clar:%s:%s:__cancel" % (clar.get("interaction_id", ""),
+                                                    clar.get("slot_name", ""))))])
+        return InlineKeyboardMarkup(rows)
+
+    def _render_clarification(self, res: Any) -> str:
+        clar = self._clarification(res) or {}
+        return str(clar.get("question") or "Please choose.")
+
+    async def _reply_semantic(self, update: Update, res: Any) -> bool:
+        """Reply with a clarification (buttons) when one is pending."""
+        clar = self._clarification(res)
+        if not clar:
+            return False
+        await update.effective_message.reply_text(
+            self._render_clarification(res),
+            reply_markup=self._clarification_markup(res))
+        return True
+
+    async def on_clarification_cb(self, update: Update,
+                                  context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        parts = (query.data or "").split(":")
+        if len(parts) < 4:
+            await query.edit_message_text("⚠️ Invalid choice.")
+            return
+        _pre, interaction_id, slot, option_id = parts[0], parts[1], parts[2], parts[3]
+        from .agent.service import ExecutiveService
+        from .agent.clarification import ClarificationRequest
+        user = update.effective_user.username or "user"
+        svc = ExecutiveService(self.container)
+        session = svc.session(user)
+        clar = None
+        for it in svc.interactions._all(session):
+            if it.id == interaction_id and it.is_open() \
+                    and it.kind.value == "clarification":
+                clar = it
+                break
+        if clar is None:
+            await query.edit_message_text(
+                "That choice has expired. Please choose again.")
+            return
+        cdict = (clar.proposal or {}).get("clarification") or {}
+        creq = ClarificationRequest.from_dict(cdict)
+        if creq.slot_name != slot:
+            await query.edit_message_text(
+                "That doesn't match the available choices.")
+            return
+        if option_id == "__cancel":
+            svc.interactions.close(session, clar, "cancelled")
+            await query.edit_message_text("Cancelled — nothing was changed.")
+            return
+        value = None
+        matched = False
+        for o in creq.options:
+            if o.option_id == option_id:
+                value, matched = o.value, True
+                break
+        if not matched:
+            await query.edit_message_text(
+                "That doesn't match the available choices.")
+            return
+        if value is None:
+            svc.interactions.close(session, clar, "cancelled")
+            await query.edit_message_text("Cancelled — nothing was changed.")
+            return
+        res = svc.resume_with_slot(interaction_id, slot, value, user=user)
+        if await self._reply_semantic(update, res):
+            return
+        text = getattr(res, "answer", "") or ""
+        if not text:
+            try:
+                text = self._render_creation_result(res)
+            except Exception:  # noqa: BLE001
+                text = "Done."
+        await query.edit_message_text(text)
+
     async def on_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
         await query.answer()
@@ -2295,6 +2398,9 @@ class TelegramBot:
             return
         if data.startswith("topic:"):
             await self.on_topic_cb(update, context)
+            return
+        if data.startswith("clar:"):
+            await self.on_clarification_cb(update, context)
             return
         if data.startswith("create:"):
             await self.on_creation_cb(update, context)
