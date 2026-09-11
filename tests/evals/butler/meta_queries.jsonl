@@ -1,0 +1,64 @@
+{"category": "capability", "stratum": "capability", "input": "What can you do?", "id": "capability-0"}
+{"category": "capability", "stratum": "capability", "input": "What can you help with?", "id": "capability-1"}
+{"category": "capability", "stratum": "capability", "input": "What do you do here?", "id": "capability-2"}
+{"category": "capability", "stratum": "capability", "input": "How can you help me in this topic?", "id": "capability-3"}
+{"category": "capability", "stratum": "capability", "input": "What can I use you for?", "id": "capability-4"}
+{"category": "capability", "stratum": "capability", "input": "What are you able to do here?", "id": "capability-5"}
+{"category": "capability", "stratum": "capability", "input": "What are you handling?", "id": "capability-6"}
+{"category": "capability", "stratum": "capability", "input": "What are you taking care of?", "id": "capability-7"}
+{"category": "capability", "stratum": "capability", "input": "How can you help me with this topic?", "id": "capability-8"}
+{"category": "capability", "stratum": "capability", "input": "What can I ask you here?", "id": "capability-9"}
+{"category": "capability", "stratum": "capability", "input": "What are you good for in this topic?", "id": "capability-10"}
+{"category": "capability", "stratum": "capability", "input": "What can you do for me here?", "id": "capability-11"}
+{"category": "capability", "stratum": "capability", "input": "In what ways can you help?", "id": "capability-12"}
+{"category": "capability", "stratum": "capability", "input": "What are your abilities here?", "id": "capability-13"}
+{"category": "capability", "stratum": "capability", "input": "How do you help with this topic?", "id": "capability-14"}
+{"category": "tracking", "stratum": "tracking", "input": "What are you searching?", "id": "tracking-0"}
+{"category": "tracking", "stratum": "tracking", "input": "What are you monitoring?", "id": "tracking-1"}
+{"category": "tracking", "stratum": "tracking", "input": "What are you watching?", "id": "tracking-2"}
+{"category": "tracking", "stratum": "tracking", "input": "What are you checking online?", "id": "tracking-3"}
+{"category": "tracking", "stratum": "tracking", "input": "What web sources are you watching?", "id": "tracking-4"}
+{"category": "tracking", "stratum": "tracking", "input": "What are you keeping an eye on?", "id": "tracking-5"}
+{"category": "tracking", "stratum": "tracking", "input": "What are you looking up for me?", "id": "tracking-6"}
+{"category": "tracking", "stratum": "tracking", "input": "What are you tracking?", "id": "tracking-7"}
+{"category": "tracking", "stratum": "tracking", "input": "What are you looking at?", "id": "tracking-8"}
+{"category": "tracking", "stratum": "tracking", "input": "What is being monitored here?", "id": "tracking-9"}
+{"category": "tracking", "stratum": "tracking", "input": "What are you checking?", "id": "tracking-10"}
+{"category": "tracking", "stratum": "tracking", "input": "What are you following?", "id": "tracking-11"}
+{"category": "tracking", "stratum": "tracking", "input": "What are you keeping tabs on?", "id": "tracking-12"}
+{"category": "tracking", "stratum": "tracking", "input": "What are you observing?", "id": "tracking-13"}
+{"category": "tracking", "stratum": "tracking", "input": "What do you monitor here?", "id": "tracking-14"}
+{"category": "configuration", "stratum": "configuration", "input": "What's enabled here?", "id": "configuration-0"}
+{"category": "configuration", "stratum": "configuration", "input": "What is configured in this topic?", "id": "configuration-1"}
+{"category": "configuration", "stratum": "configuration", "input": "Which capabilities are on?", "id": "configuration-2"}
+{"category": "configuration", "stratum": "configuration", "input": "What settings are active here?", "id": "configuration-3"}
+{"category": "configuration", "stratum": "configuration", "input": "What have you turned on here?", "id": "configuration-4"}
+{"category": "configuration", "stratum": "configuration", "input": "What is this topic set up to do?", "id": "configuration-5"}
+{"category": "configuration", "stratum": "configuration", "input": "What features are enabled here?", "id": "configuration-6"}
+{"category": "configuration", "stratum": "configuration", "input": "What is currently active in this topic?", "id": "configuration-7"}
+{"category": "configuration", "stratum": "configuration", "input": "Which options are on?", "id": "configuration-8"}
+{"category": "configuration", "stratum": "configuration", "input": "What configuration does this topic have?", "id": "configuration-9"}
+{"category": "configuration", "stratum": "configuration", "input": "What is turned on here?", "id": "configuration-10"}
+{"category": "configuration", "stratum": "configuration", "input": "Which capabilities are enabled?", "id": "configuration-11"}
+{"category": "connections", "stratum": "connections", "input": "What is this connected to?", "id": "connections-0"}
+{"category": "connections", "stratum": "connections", "input": "What is this topic linked to?", "id": "connections-1"}
+{"category": "connections", "stratum": "connections", "input": "What does this connect to?", "id": "connections-2"}
+{"category": "connections", "stratum": "connections", "input": "What is associated with this topic?", "id": "connections-3"}
+{"category": "connections", "stratum": "connections", "input": "What links does this topic have?", "id": "connections-4"}
+{"category": "connections", "stratum": "connections", "input": "What is this attached to?", "id": "connections-5"}
+{"category": "connections", "stratum": "connections", "input": "What is this topic related to?", "id": "connections-6"}
+{"category": "connections", "stratum": "connections", "input": "What data is linked here?", "id": "connections-7"}
+{"category": "connections", "stratum": "connections", "input": "What is connected here?", "id": "connections-8"}
+{"category": "connections", "stratum": "connections", "input": "What references does this topic have?", "id": "connections-9"}
+{"category": "connections", "stratum": "connections", "input": "What is this topic tied to?", "id": "connections-10"}
+{"category": "connections", "stratum": "connections", "input": "What is linked to this topic?", "id": "connections-11"}
+{"category": "setup_meta", "stratum": "setup_meta", "input": "What can you do?", "id": "setup_meta-0"}
+{"category": "setup_meta", "stratum": "setup_meta", "input": "How does this work?", "id": "setup_meta-1"}
+{"category": "setup_meta", "stratum": "setup_meta", "input": "What can I use this topic for?", "id": "setup_meta-2"}
+{"category": "setup_meta", "stratum": "setup_meta", "input": "What are you able to handle?", "id": "setup_meta-3"}
+{"category": "setup_meta", "stratum": "setup_meta", "input": "Tell me about this Butler.", "id": "setup_meta-4"}
+{"category": "setup_meta", "stratum": "setup_meta", "input": "How do you work?", "id": "setup_meta-5"}
+{"category": "setup_meta", "stratum": "setup_meta", "input": "What are your capabilities?", "id": "setup_meta-6"}
+{"category": "setup_meta", "stratum": "setup_meta", "input": "What is this for?", "id": "setup_meta-7"}
+{"category": "setup_meta", "stratum": "setup_meta", "input": "Can you help me?", "id": "setup_meta-8"}
+{"category": "setup_meta", "stratum": "setup_meta", "input": "What do you do?", "id": "setup_meta-9"}

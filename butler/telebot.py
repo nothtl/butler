@@ -987,6 +987,72 @@ class TelegramBot:
             return f"✅ Tracker {data['action']}."
         return "Done."
 
+    async def _maybe_state_query_nl(self, update: Update,
+                                   message: str) -> bool:
+        """Q6: answer state questions (capabilities/activity/config/connections)
+        from live topic state via the semantic interpreter (no phrase lists)."""
+        try:
+            from .agent.interpret import resolve_interpreter
+            from .agent.semantic import ActionKind
+            it = resolve_interpreter(self.container)
+            req = it.interpret(message, topic=self._tracker_ctx(update))
+            if req.action not in (ActionKind.STATUS, ActionKind.TRACKER_LIST,
+                                  ActionKind.SETTINGS_VIEW):
+                return False
+            # Only intercept when we have topic context to answer from.
+            if not self._tracker_ctx(update).get("chat_id"):
+                return False
+            from .agent.service import ExecutiveService
+            res = ExecutiveService(self.container).ask(
+                request=req, topic=self._tracker_ctx(update))
+            data = res.data if isinstance(res.data, dict) else {}
+            text = data.get("text")
+            if not text:
+                return False
+            await update.effective_message.reply_text(str(text))
+            return True
+        except Exception as exc:  # noqa: BLE001
+            log.warning("state query dispatch failed: %s", exc)
+            return False
+
+    async def _maybe_web_nl(self, update: Update, message: str) -> bool:
+        """Q6: web actions with explicit execution status (never fake success)."""
+        try:
+            from .agent.interpret import resolve_interpreter
+            from .agent.semantic import ActionKind
+            it = resolve_interpreter(self.container)
+            req = it.interpret(message, topic=self._tracker_ctx(update))
+            if req.action not in (ActionKind.WEB_SEARCH, ActionKind.WEB_RESEARCH,
+                                  ActionKind.WEB_FETCH):
+                return False
+            from .agent.service import ExecutiveService
+            res = ExecutiveService(self.container).ask(
+                request=req, topic=self._tracker_ctx(update))
+            data = res.data if isinstance(res.data, dict) else {}
+            payload = (data.get("search") or data.get("research")
+                       or data.get("fetch") or {})
+            executed = bool(payload.get("ok"))
+            if not executed:
+                reason = payload.get("error") or "the web search provider is unavailable"
+                await update.effective_message.reply_text(
+                    "I couldn't search the web right now because "
+                    f"{reason}.")
+                return True
+            results = payload.get("results") or []
+            if not results:
+                await update.effective_message.reply_text(
+                    "The search ran but returned no useful matches.")
+                return True
+            lines = [f"🔎 {payload.get('query') or message}", ""]
+            for r in results[:5]:
+                title = r.get("title") or r.get("url") or ""
+                lines.append(f"• {title} ({r.get('domain') or r.get('url') or ''})")
+            await update.effective_message.reply_text("\n".join(lines))
+            return True
+        except Exception as exc:  # noqa: BLE001
+            log.warning("web NL dispatch failed: %s", exc)
+            return False
+
     async def _maybe_tracker_nl(self, update: Update, message: str) -> bool:
         """Route natural-language tracker requests through the executive layer."""
         try:
@@ -1593,6 +1659,10 @@ class TelegramBot:
         # Unmatched free text is answered naturally from live state. The topic
         # provides *context* (a relevance hint), not a hardcoded route. The old
         # per-topic default-routing remains only as a legacy fallback.
+        if await self._maybe_state_query_nl(update, message):
+            return
+        if await self._maybe_web_nl(update, message):
+            return
         if await self._maybe_tracker_nl(update, message):
             return
         if await self._maybe_creation_nl(update, message):

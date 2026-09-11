@@ -58,7 +58,7 @@ class FakeChat:
 
 def test_slot_compat():
     print("\n== purpose-slot compatibility ==")
-    meta = ["what can you do?", "what can you do", "help", "/help",
+    meta = ["what can you do?", "what can you do", "help?", "/help",
             "what is this?", "what can this topic do?", "how does this work?",
             "what is this for?"]
     for t in meta:
@@ -289,6 +289,68 @@ def test_generated():
         check(f"G16 {want} {text!r}", classify_slot_text(None, text) == want)
 
 
+def test_state_queries():
+    print("\n== semantic state queries ==")
+    from butler.agent.semantic import AgentRequest, RequestIntent
+    from butler.agent.service import ExecutiveService
+    c = fresh("q6-state-")
+    c.trackers.register_provider(n4h.SnapshotProvider(c, {}))
+    c.trackers.create(name="CS188 Fall 26", source="course",
+                      target_type="course", target_ref="CS188",
+                      condition={"type": "new_item"},
+                      action={"type": "CREATE_SUGGESTION", "params": {}},
+                      destination={"chat_id": 1, "thread_id": 7}, cadence=86400)
+    prof, _ = c.topics.ensure(1, 7, "CS188")
+    c.topics.update(prof, purpose="Course management", status="active",
+                    capabilities={**prof.capabilities, "tracking": "enabled",
+                                  "web": "enabled"})
+    c.topics.add_link(c.topics.get(1, 7), "course", 1, "about", 0.9, "user")
+    svc = ExecutiveService(c)
+    topic = {"chat_id": 1, "thread_id": 7}
+
+    def text(action, subject=None):
+        params = {"query_subject": subject} if subject else {}
+        req = AgentRequest(intent=RequestIntent.QUERY, action=action,
+                           parameters=params, confidence=0.8, source="llm",
+                           raw_text="x")
+        return svc.ask(request=req, topic=topic).data.get("text") or ""
+
+    cap = text(ActionKind.STATUS, "capabilities")
+    check("Q1 capabilities answer is contextual", "In CS188 I can help with" in cap)
+    check("Q2 capabilities lists enabled caps", "Web" in cap)
+    check("Q3 capabilities shows current tracking",
+          "Currently tracking" in cap and "CS188 Fall 26" in cap)
+    conn = text(ActionKind.STATUS, "connections")
+    check("Q4 connections answer", "connected to" in conn and "course" in conn)
+    trk = text(ActionKind.TRACKER_LIST)
+    check("Q5 tracking answer", "monitoring in CS188" in trk)
+    check("Q6 tracking shows the tracker", "CS188 Fall 26" in trk)
+    conf = text(ActionKind.SETTINGS_VIEW)
+    check("Q7 configuration answer", "Enabled in CS188" in conf)
+    # no trackers -> honest
+    c2 = fresh("q6-notrk-")
+    prof2, _ = c2.topics.ensure(1, 8, "Ideas")
+    c2.topics.update(prof2, purpose="Ideas", status="active",
+                     capabilities=dict(prof2.capabilities))
+    svc2 = ExecutiveService(c2)
+    req = AgentRequest(intent=RequestIntent.QUERY, action=ActionKind.TRACKER_LIST,
+                       parameters={"query_subject": "tracking"}, confidence=0.8,
+                       source="llm", raw_text="x")
+    t2 = svc2.ask(request=req, topic={"chat_id": 1, "thread_id": 8}).data.get("text")
+    check("Q8 no trackers is honest",
+          "not currently monitoring" in (t2 or ""))
+    # web search execution status model
+    req = AgentRequest(intent=RequestIntent.QUERY, action=ActionKind.WEB_SEARCH,
+                       confidence=0.9, source="llm",
+                       raw_text="search the internet for CS168")
+    res = svc2.ask(request=req)
+    check("Q9 offline search is UNAVAILABLE", res.status == ResultStatus.UNAVAILABLE)
+    check("Q10 search not executed", res.data.get("search", {}).get("ok") is False)
+    check("Q11 search reports provider error",
+          "provider" in (res.data.get("search", {}).get("error") or "").lower()
+          or res.data.get("search", {}).get("provider") == "offline")
+
+
 def main():
     test_slot_compat()
     test_setup_state()
@@ -296,6 +358,7 @@ def main():
     test_web_and_search()
     test_tracker_visibility()
     test_generated()
+    test_state_queries()
     print(f"\n==== RESULT: {PASS} passed, {FAIL} failed ====")
     return 1 if FAIL else 0
 

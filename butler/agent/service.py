@@ -739,7 +739,59 @@ class ExecutiveService:
             result.warnings.append("no active tasks in this scope")
         return result
 
+    def _topic_state_text(self, subject: str, req: AgentRequest) -> str:
+        """Q6: a contextual answer built from live topic state (no phrase lists)."""
+        from ..topics import CAPABILITIES, CAP_LABELS
+        topics = getattr(self.container, "topics", None)
+        t = req.topic or {}
+        prof = None
+        if topics is not None and t.get("chat_id") is not None:
+            try:
+                prof = topics.get(int(t["chat_id"]), int(t.get("thread_id") or 0))
+            except Exception:  # noqa: BLE001
+                prof = None
+        subject = str(subject or "").lower()
+        if prof is None:
+            if subject in ("tracking", "activity"):
+                return "I'm not currently monitoring anything."
+            return "I'm not in a configured topic right now."
+        name = prof.name or "this topic"
+        if subject == "connections":
+            links = topics.links(prof) if topics is not None else []
+            if not links:
+                return f"{name} isn't connected to anything yet."
+            return f"{name} is connected to:\n" + "\n".join(
+                f"• {l['target_type']}" for l in links)
+        if subject == "configuration":
+            enabled = [CAP_LABELS[c] for c in CAPABILITIES
+                       if prof.cap(c) == "enabled"]
+            return (f"Enabled in {name}: "
+                    + (", ".join(enabled) if enabled else "nothing") + ".")
+        if subject in ("tracking", "activity"):
+            lines = topics.tracking_lines(prof) if topics is not None else []
+            if not lines:
+                return f"I'm not currently monitoring anything in {name}."
+            return f"I'm monitoring in {name}:\n" + "\n".join(
+                f"• {x}" for x in lines)
+        # capabilities
+        enabled = [CAP_LABELS[c] for c in CAPABILITIES
+                   if prof.cap(c) == "enabled"]
+        out = [f"In {name} I can help with:"]
+        out += [f"• {x}" for x in enabled] or ["• (nothing enabled yet)"]
+        lines = topics.tracking_lines(prof) if topics is not None else []
+        if lines:
+            out += ["", "Currently tracking:"]
+            out += [f"• {x}" for x in lines]
+        return "\n".join(out)
+
     def _status(self, req: AgentRequest, snap: Any) -> AgentResult:
+        subject = (req.parameters or {}).get("query_subject")
+        if subject:
+            return AgentResult(
+                status=ResultStatus.OK,
+                data={"text": self._topic_state_text(str(subject), req),
+                      "query_subject": str(subject)},
+                facts=[{"kind": "state_query", "query_subject": str(subject)}])
         return AgentResult(
             status=ResultStatus.OK,
             data={"snapshot": snap.to_dict()},
@@ -1370,7 +1422,8 @@ class ExecutiveService:
                 if ctx.get("chat_id") is not None else eng.list(limit=100))
         return AgentResult(
             status=ResultStatus.OK,
-            data={"trackers": [t.to_dict() for t in rows], "count": len(rows)},
+            data={"trackers": [t.to_dict() for t in rows], "count": len(rows),
+                  "text": self._topic_state_text("tracking", req)},
             facts=[{"kind": "tracker_list", "count": len(rows),
                     "active": sum(1 for t in rows if t.state == "active")}])
 
@@ -1626,6 +1679,20 @@ class ExecutiveService:
         if settings is None:
             return AgentResult(status=ResultStatus.UNAVAILABLE,
                                error="settings unavailable")
+        # Q6: inside a topic, "what's enabled here?" means the topic config.
+        t = req.topic or {}
+        topics = getattr(self.container, "topics", None)
+        if topics is not None and t.get("chat_id") is not None:
+            try:
+                prof = topics.get(int(t["chat_id"]), int(t.get("thread_id") or 0))
+            except Exception:  # noqa: BLE001
+                prof = None
+            if prof is not None:
+                return AgentResult(
+                    status=ResultStatus.OK,
+                    data={"settings": settings.snapshot(),
+                          "text": self._topic_state_text("configuration", req)},
+                    facts=[{"kind": "settings_view", "scope": "topic"}])
         return AgentResult(
             status=ResultStatus.OK,
             data={"settings": settings.snapshot(), "text": settings.render()},

@@ -310,12 +310,7 @@ def explain(clar: ClarificationRequest) -> str:
 # slot-text compatibility (Q6): a meta question must not fill a purpose slot
 # ---------------------------------------------------------------------------
 
-_PURPOSE_META = {
-    "help", "what can you do", "what can you do?", "what is this",
-    "what is this?", "what can this topic do", "what can this topic do?",
-    "how does this work", "how does this work?", "what is this for",
-    "what is this for?",
-}
+_PURPOSE_META: set[str] = set()  # structural fallback only; no phrase list
 
 
 def classify_slot_text(chat: Any, text: str, *,
@@ -348,12 +343,12 @@ def classify_slot_text(chat: Any, text: str, *,
         except Exception:  # noqa: BLE001 — fall through to the small fallback
             pass
     low = raw.lower().rstrip("?!. ")
-    if raw.startswith("/") or low in _PURPOSE_META:
+    words = low.split()
+    if raw.startswith("/"):
         return "meta"
-    first = low.split()[0] if low.split() else ""
+    first = words[0] if words else ""
     if raw.endswith("?") or first in ("what", "how", "why", "can", "who"):
         return "meta"
-    if len(low.split()) < 2 or low in ("stuff", "everything", "things",
-                                       "anything", "whatever", "idk"):
+    if len(words) < 2:
         return "vague"
     return "purpose"

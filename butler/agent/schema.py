@@ -216,6 +216,17 @@ def schema_prompt() -> str:
         'parameters={"event_types":["deadline_changed"]}',
         '- "Ask me before changing my calendar." -> settings_update, '
         'parameters={"setting":"calendar_confirm","value":"on"}',
+        "",
+        "STATE QUERIES (map the MEANING, never the wording):",
+        '- any question about what you can do / how you can help in the current '
+        'topic -> action=status, parameters={"query_subject":"capabilities"}',
+        '- any question about what you are monitoring/searching/watching/'
+        'checking -> action=tracker_list, '
+        'parameters={"query_subject":"tracking"}',
+        '- any question about what is enabled/configured here -> '
+        'action=settings_view',
+        '- any question about what this topic is connected to -> '
+        'action=status, parameters={"query_subject":"connections"}',
     ]
     return "\n".join(lines)
 
