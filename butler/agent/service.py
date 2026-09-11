@@ -235,35 +235,66 @@ class ExecutiveService:
             base, session, include_context=include_context,
             expired_notice=expired_notice)
 
+    #: state-query subjects that are topic-scoped and never need a target
+    _TOPIC_SCOPED_SUBJECTS = ("capabilities", "configuration", "connections",
+                              "schedule", "knowledge", "memory",
+                              "notifications")
+    _TARGETED_SUBJECTS = ("tracking", "activity")
+    _STATE_ACTIONS = (ActionKind.STATUS, ActionKind.TRACKER_LIST,
+                      ActionKind.SETTINGS_VIEW)
+
+    def _is_targetless_state_query(self, req: AgentRequest) -> bool:
+        """Q7: a state query with no (or a non-essential) target must bypass
+        ordinary target resolution. Driven by the semantic ``query_subject``,
+        never by wording."""
+        if req.action not in self._STATE_ACTIONS:
+            return False
+        subject = str((req.parameters or {}).get("query_subject") or "").lower()
+        name = (req.target.name or "").strip() if req.target is not None else ""
+        if subject in self._TOPIC_SCOPED_SUBJECTS:
+            return True  # topic-scoped: any target is noise
+        if subject in self._TARGETED_SUBJECTS:
+            return not name  # only targetless tracking/activity queries bypass
+        # No subject: a state action with no usable target is still a state query.
+        return not name
+
     def _dispatch_or_clarify(self, req: AgentRequest, session: Any, *,
                              include_context: bool = False,
                              expired_notice: bool = False) -> AgentResult:
-        ambiguities = self._resolve(req, session)
-        if ambiguities:
-            candidates = []
-            for a in ambiguities:
-                candidates.extend(a.candidates)
-            # Only ask "which one?" when we have concrete, server-resolved
-            # candidates. A model-emitted ambiguity without candidates is not a
-            # real ambiguity, but a server-detected reference ("this"/"that")
-            # still needs an answer.
-            needs_answer = bool(candidates) or any(
-                a.source == "server" for a in ambiguities)
-            if needs_answer:
-                req.ambiguity = ambiguities
-                creq = self._open_target_clarification(session, req, candidates)
-                res = AgentResult.ambiguous(ambiguities)
-                res.data = {"clarification": creq.to_dict()}
-                return self._finish_result(res, req, session, include_context,
-                                           expired_notice)
-        # Q1/P1.1: missing required slots (semantic path). The deterministic
-        # fallback keeps its own bounded handling.
-        if req.source == "llm":
-            missing = missing_slots(req)
-            if missing:
-                res = self._open_slot_clarification(session, req, missing[0])
-                return self._finish_result(res, req, session, include_context,
-                                           expired_notice)
+        # Q7: state queries with no target skip resolution/slot-completion and
+        # go straight to their state handler.
+        if not self._is_targetless_state_query(req):
+            ambiguities = self._resolve(req, session)
+            # Q7: a not-found target on a state query is not an ambiguity; fall
+            # back to the unscoped state answer instead of blocking it.
+            if ambiguities and req.action in self._STATE_ACTIONS \
+                    and not any(a.candidates for a in ambiguities):
+                ambiguities = []
+            if ambiguities:
+                candidates = []
+                for a in ambiguities:
+                    candidates.extend(a.candidates)
+                # Only ask "which one?" when we have concrete, server-resolved
+                # candidates. A model-emitted ambiguity without candidates is not
+                # a real ambiguity, but a server-detected reference ("this"/
+                # "that") still needs an answer.
+                needs_answer = bool(candidates) or any(
+                    a.source == "server" for a in ambiguities)
+                if needs_answer:
+                    req.ambiguity = ambiguities
+                    creq = self._open_target_clarification(session, req,
+                                                           candidates)
+                    res = AgentResult.ambiguous(ambiguities)
+                    res.data = {"clarification": creq.to_dict()}
+                    return self._finish_result(res, req, session,
+                                               include_context, expired_notice)
+            # Q1/P1.1: missing required slots (semantic path).
+            if req.source == "llm":
+                missing = missing_slots(req)
+                if missing:
+                    res = self._open_slot_clarification(session, req, missing[0])
+                    return self._finish_result(res, req, session,
+                                               include_context, expired_notice)
         snapshot = self.context.build_snapshot(req)
         try:
             res = self._dispatch(req, snapshot)
