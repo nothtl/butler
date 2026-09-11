@@ -1,0 +1,3 @@
+PREFLIGHT: {"calls": 736, "input_tokens": 559360, "output_tokens": 63296, "total_tokens": 622656, "cost_usd": 0.2207, "runtime_s": 883.2}
+artifacts: /home/tingli/butler/artifacts/evals/20260911T171937Z
+behavioral_score=95.1% cases=630 failures={'WRONG_INTENT': 12, 'TAXONOMY_ONLY': 1, 'MISSED_CLARIFICATION': 1}

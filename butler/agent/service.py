@@ -193,6 +193,13 @@ class ExecutiveService:
             cand = match_candidates(req.raw_text, clar.candidates)
             if cand is not None:
                 parsed = (cand, "")
+        # A free-text follow-up to a target clarification may carry the target
+        # itself (e.g. "the CS188 ones" -> target "CS188"); adopt it onto the
+        # pending request rather than restarting interpretation.
+        if parsed is None and creq is not None and creq.slot_name == "target" \
+                and req.target is not None and req.target.name:
+            parsed = ({"type": req.target.type.value,
+                       "name": req.target.name}, "")
         if parsed is None:
             # A new, clearly-recognised request supersedes a stale clarification.
             if req.action not in (ActionKind.UNKNOWN,) \
