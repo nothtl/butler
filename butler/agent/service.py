@@ -243,6 +243,13 @@ class ExecutiveService:
     _STATE_ACTIONS = (ActionKind.STATUS, ActionKind.TRACKER_LIST,
                       ActionKind.SETTINGS_VIEW)
 
+    def _bypasses_target_resolution(self, req: AgentRequest) -> bool:
+        """Q8: web search/research queries search by text; they never require a
+        resolvable entity target. Plus the Q7 targetless state queries."""
+        if req.action in (ActionKind.WEB_SEARCH, ActionKind.WEB_RESEARCH):
+            return True
+        return self._is_targetless_state_query(req)
+
     def _is_targetless_state_query(self, req: AgentRequest) -> bool:
         """Q7: a state query with no (or a non-essential) target must bypass
         ordinary target resolution. Driven by the semantic ``query_subject``,
@@ -263,7 +270,7 @@ class ExecutiveService:
                              expired_notice: bool = False) -> AgentResult:
         # Q7: state queries with no target skip resolution/slot-completion and
         # go straight to their state handler.
-        if not self._is_targetless_state_query(req):
+        if not self._bypasses_target_resolution(req):
             ambiguities = self._resolve(req, session)
             # Q7: a not-found target on a state query is not an ambiguity; fall
             # back to the unscoped state answer instead of blocking it.

@@ -21,6 +21,7 @@ from butler.web import (  # noqa: E402
 from butler.config import Config  # noqa: E402
 from butler.core import Container  # noqa: E402
 from butler.agent.session import SessionStore  # noqa: E402
+from butler.agent.semantic import ResultStatus  # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -220,6 +221,37 @@ def main():
         WebKnowledge(c, search_provider=prov).search(f"CS168 {i}")
     check("G6 searches created no trackers",
           c.db.one("SELECT COUNT(*) n FROM trackers")["n"] == 0)
+
+    # Q8 regression: a web_search with an unresolvable target must NOT be
+    # blocked by entity resolution; it searches by text.
+    from butler.agent.semantic import (ActionKind, AgentRequest, EntityRef,
+                                       RequestIntent)
+    from butler.agent.service import ExecutiveService
+    cfgx = _cfg(base)
+    cfgx.web_search_provider = "searxng"
+    cx = Container(cfgx)
+    cx.agent.store = SessionStore()
+    cx.planner._maybe_sync = lambda: None
+    cx.safety.retry = None
+    svc = ExecutiveService(cx)
+    req = AgentRequest(intent=RequestIntent.QUERY, action=ActionKind.WEB_SEARCH,
+                       target=EntityRef(name="CS168"), confidence=0.9,
+                       source="llm", raw_text="search the internet for CS168")
+    res = svc.ask(request=req)
+    d = res.data if isinstance(res.data, dict) else {}
+    check("X1 web search with unresolved target is not ambiguous",
+          res.status == ResultStatus.OK, res.status.value)
+    check("X2 web search executed through the provider",
+          bool((d.get("search") or {}).get("ok")))
+    check("X3 web search returned results",
+          len((d.get("search") or {}).get("results") or []) >= 1)
+    # a genuinely unresolvable target on a non-web action still clarifies
+    req2 = AgentRequest(intent=RequestIntent.MUTATE, action=ActionKind.UPDATE,
+                        target=EntityRef(name="nonexistent thing"), confidence=0.9,
+                        source="llm", raw_text="update nonexistent thing")
+    res2 = svc.ask(request=req2)
+    check("X4 non-web unresolved target still clarifies",
+          res2.status == ResultStatus.AMBIGUOUS, res2.status.value)
 
     srv.shutdown()
     print(f"\n==== RESULT: {PASS} passed, {FAIL} failed ====")
