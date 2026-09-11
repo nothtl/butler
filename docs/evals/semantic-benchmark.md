@@ -45,3 +45,37 @@ failures to understand.
 Mean ~1.03 s per interpretation; ~760 input + ~86 output tokens
 (≈ $0.0003/interpretation at DeepSeek list pricing). The hybrid fast path skips
 the model for high-confidence structured input.
+
+
+## A/B: JSON mode vs strict tool calling
+
+Same 50-prompt corpus, same model:
+
+| Metric | A: JSON mode | B: strict tool (beta) |
+|---|---|---|
+| schema validity | 50/50 | 50/50 |
+| internal accuracy | 40/50 (80%) | 37/50 (74%) |
+| behavioral correctness | 41/50 (82%) | 40/50 (80%) |
+| mean latency | 1054 ms | 1982 ms |
+| p95 latency | 1484 ms | 3491 ms |
+
+**Conclusion:** strict tool calling (DeepSeek beta, `strict:true`) was slower and
+no more accurate on this corpus, so JSON mode remains the production default and
+strict is opt-in (`LLMInterpreter(use_strict=True)`). This is an evidence-based
+choice, not a preference.
+
+## Current live DeepSeek (450+ calls)
+
+| Metric | Baseline | Current |
+|---|---|---|
+| strict semantic | ~82% | 80% |
+| behavioral correctness | — | 82% |
+| follow-up resolved | ~80% | **84%** |
+| clarification offered | n/a | **99%** |
+| ambiguity flagged | 100% | **100%** |
+| temporal | ~98% | 93% |
+| mean / median / p95 latency | 1.03 / 1.02 / 1.31 s | 1.08 / 1.08 / 1.51 s |
+| live failures | 0 | 1 (out-of-enum entity type, safely rejected) |
+
+The one failure was an entity type outside the enum; the interpreter now
+coerces unknown entity types to `unknown` (name preserved, server resolves).

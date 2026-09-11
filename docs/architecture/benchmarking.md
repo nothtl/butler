@@ -55,3 +55,23 @@ scheduling/memory/files/cross_topic/proactive).
 Adapters call the semantic path through the same typed contract, so the same
 corpus can be run against a different OpenAI-compatible model without changing
 Butler.
+
+## Adopted principles (research)
+
+Synthesised from current public guidance (Rasa forms/slot filling; Home
+Assistant Conversation API; Microsoft Semantic Kernel function calling;
+DeepSeek strict tool calling; OWASP LLM Excessive Agency; NIST AI RMF):
+
+- **Typed slots** with explicit required/optional/defaultable/clarifiable sets.
+- **Persisted, expiring conversation state** (InteractionStore) as the
+  authoritative source for clarifications/confirmations.
+- **Finite-choice buttons** for bounded answer spaces; server resolves
+  candidate ids (never the client/model).
+- **Structured tool arguments** validated server-side; DeepSeek strict tool
+  calling is supported but not the measured default (see A/B above).
+- **Downstream authorization / least privilege / complete mediation**: every
+  action is on an allow-list; external/destructive actions require
+  confirmation; fail-closed on the unknown (OWASP Excessive Agency).
+- **Quantitative evaluation** with separated categories and documented
+  limitations/uncertainty (NIST AI RMF: validity, reliability, safety,
+  security, resilience, transparency, regular testing).

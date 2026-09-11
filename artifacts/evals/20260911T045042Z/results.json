@@ -1,0 +1,122 @@
+{
+ "run_id": "20260911T045042Z",
+ "commit": "91d4953",
+ "model": "deepseek-chat",
+ "prompt_version": "v2-disambiguation+relevant-actions",
+ "timestamp": "20260911T045042Z",
+ "benchmarks": [
+  {
+   "name": "AgentBench FC (Butler-adapted)",
+   "status": "ADAPTED",
+   "scope": "10 FC-style cases",
+   "score": "tool_choice 5/10 (50%), valid_action 10/10",
+   "measures": "valid tool choice, registry validity, argument acceptance",
+   "does_not_map": "official AgentBench container tasks/environments",
+   "environment": "local, offline",
+   "version": "adapted-1",
+   "runner": "tests/evals/benchmarks/run_benchmarks.py",
+   "known_deviations": "input phrasing is Butler-specific; no official AgentBench harness was run",
+   "limitations": "measures selection only, not multi-step task success"
+  },
+  {
+   "name": "ToolBench (Butler-adapted)",
+   "status": "ADAPTED",
+   "scope": "10 tool-selection cases",
+   "score": "tool_selection 9/10 (90%), valid_action 10/10",
+   "measures": "intent -> tool selection, registry validity",
+   "does_not_map": "official ToolBench API/tool corpus",
+   "environment": "local, offline",
+   "version": "adapted-1",
+   "runner": "tests/evals/benchmarks/run_benchmarks.py",
+   "known_deviations": "Butler registry, not the official ToolBench tools",
+   "limitations": "no argument-generation scoring against official tools"
+  },
+  {
+   "name": "tau-bench (Butler-adapted multi-turn)",
+   "status": "ADAPTED",
+   "scope": "200 two-turn chains",
+   "score": "followup_consumed 170/200 (85%)",
+   "measures": "multi-turn state consistency, follow-up consumption",
+   "does_not_map": "official tau2 airline/retail/telecom domains + user simulator",
+   "environment": "local, offline (deterministic interpreter)",
+   "version": "adapted-1",
+   "runner": "tests/evals/benchmarks/run_benchmarks.py",
+   "known_deviations": "not the official tau-bench; Butler-adapted",
+   "limitations": "offline only; live follow-up measured separately"
+  },
+  {
+   "name": "tau-bench / tau2 (official)",
+   "status": "BLOCKED",
+   "scope": "multi-turn tool+policy tasks",
+   "score": "",
+   "measures": "task success, tool correctness, policy compliance",
+   "does_not_map": "requires the official tau-bench user simulator, domain databases and runner",
+   "environment": "repo cloned (sierra-research/tau2-bench @ 2174a60); isolated venv install attempted; official CLI import fails on missing deps; Butler is not a tau2 agent",
+   "version": "unknown (runner not installed)",
+   "runner": "official tau-bench runner (not available)",
+   "known_deviations": "not executed; official runner not runnable here",
+   "limitations": "Butler maps user->Telegram/CLI, tools->action registry, policy->SafetyPolicy, conversation->InteractionStore; a compatible harness would be required before any score is meaningful"
+  },
+  {
+   "name": "GAIA (official)",
+   "status": "BLOCKED",
+   "scope": "general assistant reasoning / research",
+   "score": "",
+   "measures": "planning, web research, tool use, evidence synthesis",
+   "does_not_map": "GAIA tasks often require arbitrary web browsing and file tools with resource needs unsuitable for the Pi",
+   "environment": "not installed; resource/domain mismatch",
+   "version": "unknown (runner not installed)",
+   "runner": "official GAIA runner (not available)",
+   "known_deviations": "not executed",
+   "limitations": "do not claim GAIA capability without the official runner and a sandboxed environment"
+  }
+ ],
+ "live_deepseek": {
+  "intent": {
+   "n": 50,
+   "schema_valid": 50,
+   "strict": 40,
+   "lenient": 41,
+   "false_confident": 0
+  },
+  "temporal": {
+   "n": 100,
+   "correct": 93
+  },
+  "ambiguity": {
+   "n": 100,
+   "flagged": 100
+  },
+  "followup": {
+   "n": 100,
+   "resolved": 84
+  },
+  "clarification": {
+   "n": 100,
+   "offered": 99
+  },
+  "latency_ms": {
+   "n": 250,
+   "mean": 1079,
+   "median": 1083,
+   "p95": 1508
+  },
+  "model": "deepseek-chat",
+  "endpoint": "https://api.deepseek.com/v1"
+ },
+ "categories": {
+  "LIVE_DEEPSEEK": "tests/run_live_deepseek_eval.py",
+  "DETERMINISTIC": "tests/run_acceptance_* (3569 checks)",
+  "SYNTHETIC_FAKE": "validation/failure tests only",
+  "OFFICIAL_EXTERNAL": "none executed",
+  "ADAPTED_EXTERNAL": [
+   "AgentBench FC (Butler-adapted)",
+   "ToolBench (Butler-adapted)",
+   "tau-bench (Butler-adapted multi-turn)"
+  ],
+  "BLOCKED": [
+   "tau-bench / tau2 (official)",
+   "GAIA (official)"
+  ]
+ }
+}

@@ -18,3 +18,83 @@
 {"input": "This task.", "expected": "clarification_or_resolution"}
 {"input": "Add Project 2 to CS188.", "expected": "clarification_or_resolution"}
 {"input": "Track the club stuff.", "expected": "clarification_or_resolution"}
+{"input": "Track my project.", "expected": "clarification_or_resolution"}
+{"input": "Add Project 2.", "expected": "clarification_or_resolution"}
+{"input": "Track the assignments.", "expected": "clarification_or_resolution"}
+{"input": "Link this to the other one.", "expected": "clarification_or_resolution"}
+{"input": "The CS188 one.", "expected": "clarification_or_resolution"}
+{"input": "The other project.", "expected": "clarification_or_resolution"}
+{"input": "No, the second one.", "expected": "clarification_or_resolution"}
+{"input": "Use the other course.", "expected": "clarification_or_resolution"}
+{"input": "Do the same for groceries.", "expected": "clarification_or_resolution"}
+{"input": "Which one did you mean?", "expected": "clarification_or_resolution"}
+{"input": "Add it to the project.", "expected": "clarification_or_resolution"}
+{"input": "Track that course.", "expected": "clarification_or_resolution"}
+{"input": "Link this to the one we discussed.", "expected": "clarification_or_resolution"}
+{"input": "Add this to my other project.", "expected": "clarification_or_resolution"}
+{"input": "The first one.", "expected": "clarification_or_resolution"}
+{"input": "The last one.", "expected": "clarification_or_resolution"}
+{"input": "That assignment.", "expected": "clarification_or_resolution"}
+{"input": "This task.", "expected": "clarification_or_resolution"}
+{"input": "Add Project 2 to CS188.", "expected": "clarification_or_resolution"}
+{"input": "Track the club stuff.", "expected": "clarification_or_resolution"}
+{"input": "Track my project.", "expected": "clarification_or_resolution"}
+{"input": "Add Project 2.", "expected": "clarification_or_resolution"}
+{"input": "Track the assignments.", "expected": "clarification_or_resolution"}
+{"input": "Link this to the other one.", "expected": "clarification_or_resolution"}
+{"input": "The CS188 one.", "expected": "clarification_or_resolution"}
+{"input": "The other project.", "expected": "clarification_or_resolution"}
+{"input": "No, the second one.", "expected": "clarification_or_resolution"}
+{"input": "Use the other course.", "expected": "clarification_or_resolution"}
+{"input": "Do the same for groceries.", "expected": "clarification_or_resolution"}
+{"input": "Which one did you mean?", "expected": "clarification_or_resolution"}
+{"input": "Add it to the project.", "expected": "clarification_or_resolution"}
+{"input": "Track that course.", "expected": "clarification_or_resolution"}
+{"input": "Link this to the one we discussed.", "expected": "clarification_or_resolution"}
+{"input": "Add this to my other project.", "expected": "clarification_or_resolution"}
+{"input": "The first one.", "expected": "clarification_or_resolution"}
+{"input": "The last one.", "expected": "clarification_or_resolution"}
+{"input": "That assignment.", "expected": "clarification_or_resolution"}
+{"input": "This task.", "expected": "clarification_or_resolution"}
+{"input": "Add Project 2 to CS188.", "expected": "clarification_or_resolution"}
+{"input": "Track the club stuff.", "expected": "clarification_or_resolution"}
+{"input": "Track my project.", "expected": "clarification_or_resolution"}
+{"input": "Add Project 2.", "expected": "clarification_or_resolution"}
+{"input": "Track the assignments.", "expected": "clarification_or_resolution"}
+{"input": "Link this to the other one.", "expected": "clarification_or_resolution"}
+{"input": "The CS188 one.", "expected": "clarification_or_resolution"}
+{"input": "The other project.", "expected": "clarification_or_resolution"}
+{"input": "No, the second one.", "expected": "clarification_or_resolution"}
+{"input": "Use the other course.", "expected": "clarification_or_resolution"}
+{"input": "Do the same for groceries.", "expected": "clarification_or_resolution"}
+{"input": "Which one did you mean?", "expected": "clarification_or_resolution"}
+{"input": "Add it to the project.", "expected": "clarification_or_resolution"}
+{"input": "Track that course.", "expected": "clarification_or_resolution"}
+{"input": "Link this to the one we discussed.", "expected": "clarification_or_resolution"}
+{"input": "Add this to my other project.", "expected": "clarification_or_resolution"}
+{"input": "The first one.", "expected": "clarification_or_resolution"}
+{"input": "The last one.", "expected": "clarification_or_resolution"}
+{"input": "That assignment.", "expected": "clarification_or_resolution"}
+{"input": "This task.", "expected": "clarification_or_resolution"}
+{"input": "Add Project 2 to CS188.", "expected": "clarification_or_resolution"}
+{"input": "Track the club stuff.", "expected": "clarification_or_resolution"}
+{"input": "Track my project.", "expected": "clarification_or_resolution"}
+{"input": "Add Project 2.", "expected": "clarification_or_resolution"}
+{"input": "Track the assignments.", "expected": "clarification_or_resolution"}
+{"input": "Link this to the other one.", "expected": "clarification_or_resolution"}
+{"input": "The CS188 one.", "expected": "clarification_or_resolution"}
+{"input": "The other project.", "expected": "clarification_or_resolution"}
+{"input": "No, the second one.", "expected": "clarification_or_resolution"}
+{"input": "Use the other course.", "expected": "clarification_or_resolution"}
+{"input": "Do the same for groceries.", "expected": "clarification_or_resolution"}
+{"input": "Which one did you mean?", "expected": "clarification_or_resolution"}
+{"input": "Add it to the project.", "expected": "clarification_or_resolution"}
+{"input": "Track that course.", "expected": "clarification_or_resolution"}
+{"input": "Link this to the one we discussed.", "expected": "clarification_or_resolution"}
+{"input": "Add this to my other project.", "expected": "clarification_or_resolution"}
+{"input": "The first one.", "expected": "clarification_or_resolution"}
+{"input": "The last one.", "expected": "clarification_or_resolution"}
+{"input": "That assignment.", "expected": "clarification_or_resolution"}
+{"input": "This task.", "expected": "clarification_or_resolution"}
+{"input": "Add Project 2 to CS188.", "expected": "clarification_or_resolution"}
+{"input": "Track the club stuff.", "expected": "clarification_or_resolution"}

@@ -1,0 +1,9 @@
+
+INTENT  n=50 schema_valid=50 strict=40/50 (80%) lenient=41/50 (82%) false_confident=0
+  error: SemanticValidationError entity.type: unknown value 'meeting'; expected one of task,
+TEMPORAL n=100 correct=93/100 (93%)
+AMBIGUITY n=100 flagged=100/100 (100%)
+FOLLOWUP n=100 resolved=84/100 (84%)
+CLARIFICATION n=100 offered=99/100 (99%)
+
+LATENCY n=250 mean=1079ms median=1083ms p95=1508ms failures=1

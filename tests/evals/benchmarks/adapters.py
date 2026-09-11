@@ -187,9 +187,11 @@ class TauBenchAdapter(BenchmarkAdapter):
             measures="task success, tool correctness, policy compliance",
             does_not_map="requires the official tau-bench user simulator, "
                          "domain databases and runner",
-            environment="not installed; no network/domain match",
+            environment="repo cloned (sierra-research/tau2-bench @ 2174a60); "
+                        "isolated venv install attempted; official CLI import "
+                        "fails on missing deps; Butler is not a tau2 agent",
             version=self.version, runner=self.runner,
-            known_deviations="not executed",
+            known_deviations="not executed; official runner not runnable here",
             limitations="Butler maps user->Telegram/CLI, tools->action "
                         "registry, policy->SafetyPolicy, conversation->"
                         "InteractionStore; a compatible harness would be "
@@ -230,5 +232,78 @@ class GaiaAdapter(BenchmarkAdapter):
                         "runner and a sandboxed environment")
 
 
-ADAPTERS = (AgentBenchFCAdapter, ToolBenchAdapter, TauBenchAdapter,
-            GaiaAdapter)
+# ---------------------------------------------------------------------------
+# tau-bench (Butler-adapted multi-turn)
+# ---------------------------------------------------------------------------
+class TauBenchAdaptedAdapter(BenchmarkAdapter):
+    """Butler-adapted multi-turn evaluation (NOT the official tau-bench).
+
+    Runs 2-turn chains from tests/evals/butler/multi_turn.jsonl through the
+    deterministic service and measures whether the follow-up is consumed by
+    the pending interaction (clarification resolved or proposal modified).
+    """
+
+    name = "tau-bench (Butler-adapted multi-turn)"
+    version = "adapted-1"
+    runner = "tests/evals/benchmarks/run_benchmarks.py"
+
+    def load_cases(self):
+        import json, os
+        path = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "butler", "multi_turn.jsonl")
+        with open(path) as f:
+            return [json.loads(l) for l in f if l.strip()][:200]
+
+    def build_context(self, case):
+        return {}
+
+    def invoke_agent(self, case, context):
+        import os, tempfile
+        from butler.config import Config
+        from butler.core import Container
+        from butler.agent.session import SessionStore
+        from butler.agent.interpret import DeterministicInterpreter
+        from butler.agent.service import ExecutiveService
+        from butler.agent.interactions import InteractionKind
+        base = tempfile.mkdtemp(prefix="bench-tau-", dir="/tmp/opencode")
+        cfg = Config()
+        cfg.data_dir = os.path.join(base, "s"); os.makedirs(cfg.data_dir)
+        cfg.config_path = os.path.join(base, "c.toml"); cfg.timezone = "UTC"
+        cfg.roots = [os.path.join(base, "r")]; os.makedirs(cfg.roots[0])
+        cfg.ensure_dirs()
+        c = Container(cfg)
+        c.agent.store = SessionStore(); c.planner._maybe_sync = lambda: None
+        c1 = c.db.add_course("CS188", "AI"); c2 = c.db.add_course("CS168", "Net")
+        c.projects.create_project("Project 2", course_id=c1)
+        c.projects.create_project("Project 2", course_id=c2)
+        svc = ExecutiveService(c, interpreter=DeterministicInterpreter(c))
+        first, second = case["turns"]
+        svc.ask(text=first, user="bench")
+        session = svc.session("bench")
+        before = svc.interactions.active(session)
+        svc.ask(text=second, user="bench")
+        after = svc.interactions.active(session)
+        consumed = (before is None and after is None) or (
+            before is not None and (after is None or after.id != before.id))
+        return {"consumed": consumed}
+
+    def evaluate(self, case, output):
+        return {"turns": case["turns"], "consumed": bool(output.get("consumed")),
+                "error": output.get("error")}
+
+    def summarize(self, results):
+        n = len(results)
+        ok = sum(1 for r in results if r["consumed"])
+        return BenchmarkResult(
+            name=self.name, status=ADAPTED, scope=f"{n} two-turn chains",
+            score=f"followup_consumed {ok}/{n} ({ok/n*100:.0f}%)",
+            measures="multi-turn state consistency, follow-up consumption",
+            does_not_map="official tau2 airline/retail/telecom domains + user simulator",
+            environment="local, offline (deterministic interpreter)",
+            version=self.version, runner=self.runner,
+            known_deviations="not the official tau-bench; Butler-adapted",
+            limitations="offline only; live follow-up measured separately")
+
+
+ADAPTERS = (AgentBenchFCAdapter, ToolBenchAdapter,
+            TauBenchAdaptedAdapter, TauBenchAdapter, GaiaAdapter)

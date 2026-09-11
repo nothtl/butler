@@ -17,6 +17,7 @@ Nothing here executes anything; it only describes the contract.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from .semantic import (
@@ -239,9 +240,74 @@ def relevant_actions(topic: Any = None) -> list[str]:
             "tracker_create", "plan_day", "settings_update", "memory_learn"]
 
 
+
+def strict_tool_schema() -> dict[str, Any]:
+    """A flat, strict-mode-compatible schema for DeepSeek tool calling.
+
+    DeepSeek strict mode requires every object property to be ``required`` and
+    ``additionalProperties=false``. Action-specific slots are therefore passed
+    as a JSON *string* (``parameters_json``) and parsed server-side.
+    """
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["intent", "action", "target_name", "target_type",
+                     "scope", "parameters_json", "confidence",
+                     "requires_confirmation"],
+        "properties": {
+            "intent": {"type": "string",
+                       "enum": _enum_values(RequestIntent)},
+            "action": {"type": "string", "enum": _enum_values(ActionKind)},
+            "target_name": {"type": "string",
+                            "description": "The user's words for the target; "
+                                           "empty if none. Never an id."},
+            "target_type": {"type": "string",
+                            "enum": _enum_values(EntityType)},
+            "scope": {"type": "string",
+                      "enum": ["current_topic", "global", "unknown"]},
+            "parameters_json": {
+                "type": "string",
+                "description": "A JSON object string of action-specific "
+                               "slots (e.g. {\"capability\":\"web\"}), "
+                               "or {} when none."},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "requires_confirmation": {"type": "boolean"},
+        },
+    }
+
+
+def strict_to_request_dict(flat: dict[str, Any]) -> dict[str, Any]:
+    """Map a strict-mode tool payload onto the AgentRequest contract."""
+    params: dict[str, Any] = {}
+    pj = flat.get("parameters_json")
+    if pj:
+        try:
+            parsed = json.loads(pj) if isinstance(pj, str) else dict(pj)
+            if isinstance(parsed, dict):
+                params = parsed
+        except (TypeError, ValueError):
+            params = {}
+    target = None
+    if str(flat.get("target_name") or "").strip():
+        target = {"type": flat.get("target_type", "unknown"),
+                  "name": str(flat["target_name"])}
+    return {
+        "intent": flat.get("intent", "unknown"),
+        "action": flat.get("action", "unknown"),
+        "confidence": flat.get("confidence", 0.0),
+        "requires_confirmation": bool(flat.get("requires_confirmation", False)),
+        "target": target,
+        "scope": {"kind": flat.get("scope", "unknown")},
+        "parameters": params,
+        "source": "llm",
+    }
+
+
 __all__ = [
     "ALLOWED_REQUEST_FIELDS",
     "request_json_schema",
     "schema_prompt",
+    "strict_tool_schema",
+    "strict_to_request_dict",
     "ResultStatus",
 ]

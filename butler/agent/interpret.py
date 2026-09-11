@@ -809,10 +809,11 @@ class LLMInterpreter:
     )
 
     def __init__(self, llm: Any = None, *, client: Any = None,
-                 max_retries: int = 1):
+                 max_retries: int = 1, use_strict: bool = False):
         self.llm = llm
         self.client = client
         self.max_retries = max(0, int(max_retries))
+        self.use_strict = bool(use_strict)
 
     def available(self) -> bool:
         return self.client is not None or self.llm is not None
@@ -821,6 +822,30 @@ class LLMInterpreter:
                   user: str = "user", topic: Any = None) -> Any:
         raw = (text or "").strip()
         system = self._system(context, topic)
+        # 1) Strict tool calling (DeepSeek beta, JSON-Schema strict mode) is the
+        # strongest structured-output path. Fall back to JSON mode on failure.
+        if self.use_strict and self.client is not None \
+                and hasattr(self.client, "complete_tool"):
+            from .schema import strict_to_request_dict, strict_tool_schema
+            strict_error = ""
+            for attempt in range(1 + self.max_retries):
+                prompt_text = raw if attempt == 0 else self._repair(raw, strict_error)
+                try:
+                    args = self.client.complete_tool(
+                        system, prompt_text, tool_name="emit_request",
+                        schema=strict_tool_schema())
+                    if args:
+                        flat = json.loads(args)
+                        payload = strict_to_request_dict(flat)
+                        payload.setdefault("raw_text", raw)
+                        self._coerce_entity_types(payload)
+                        req = AgentRequest.from_dict(payload, strict=True)
+                        self._sanitize(req)
+                        if context is not None and req.conversation is None:
+                            req.conversation = context
+                        return req
+                except Exception as exc:  # noqa: BLE001
+                    strict_error = str(exc)
         payload: Any = None
         last_error = ""
         for attempt in range(1 + self.max_retries):
@@ -839,6 +864,7 @@ class LLMInterpreter:
                 last_error or "llm: malformed structured output")
         if not isinstance(payload, dict):
             raise SemanticValidationError("llm: response was not a JSON object")
+        self._coerce_entity_types(payload)
         payload.setdefault("raw_text", raw)
         payload.setdefault("source", "llm")
         req = AgentRequest.from_dict(payload, strict=True)
@@ -898,6 +924,23 @@ class LLMInterpreter:
         except (TypeError, ValueError) as exc:
             raise SemanticValidationError(
                 f"llm: malformed JSON ({exc})") from exc
+
+    @staticmethod
+    def _coerce_entity_types(payload: Any) -> Any:
+        """Map an out-of-enum entity type to 'unknown' (name is preserved and
+        the server resolves identity), instead of rejecting the whole request."""
+        from .semantic import EntityType
+        valid = {e.value for e in EntityType}
+
+        def fix(ref: Any) -> None:
+            if isinstance(ref, dict) and ref.get("type") not in valid:
+                ref["type"] = "unknown"
+
+        if isinstance(payload, dict):
+            fix(payload.get("target"))
+            for e in payload.get("entities") or []:
+                fix(e)
+        return payload
 
     @staticmethod
     def _sanitize(req: AgentRequest) -> None:
@@ -972,7 +1015,9 @@ def resolve_interpreter(container: Any,
     ready = bool(chat is not None and cfg is not None
                  and getattr(cfg, "llm_api_key", "")
                  and getattr(cfg, "llm_base_url", ""))
-    llm = LLMInterpreter(client=chat) if ready else None
+    # Measured A/B: JSON mode is faster and at least as accurate as strict
+    # tool calling on the live corpus, so it is the default; strict is opt-in.
+    llm = LLMInterpreter(client=chat, use_strict=False) if ready else None
     return HybridInterpreter(det, llm=llm)
 
 

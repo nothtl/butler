@@ -239,6 +239,48 @@ class Chat:
     def _llm(self, prompt: tuple[str, str]) -> str | None:
         return self.complete(prompt[0], prompt[1])
 
+    def complete_tool(self, system: str, user: str, *, tool_name: str,
+                      schema: dict[str, Any], temperature: float = 0.0,
+                      timeout: int = 60) -> str | None:
+        """Call DeepSeek's strict tool-calling mode (beta base).
+
+        Returns the tool-call arguments JSON string, or ``None`` when strict
+        mode is unavailable/fails (the caller falls back to JSON mode).
+        """
+        import requests
+        base = (self.cfg.llm_base_url or "").rstrip("/")
+        if not base or not self.cfg.llm_api_key:
+            return None
+        beta = base.replace("/v1", "/beta") if "/v1" in base else base + "/beta"
+        tool = {"type": "function", "function": {
+            "name": tool_name, "strict": True,
+            "description": "Emit one structured request for the assistant.",
+            "parameters": schema}}
+        body = {
+            "model": self.cfg.llm_model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "tools": [tool],
+            "tool_choice": {"type": "function",
+                            "function": {"name": tool_name}},
+            "temperature": temperature,
+        }
+        try:
+            resp = requests.post(
+                beta + "/chat/completions",
+                headers={"Authorization": f"Bearer {self.cfg.llm_api_key}"},
+                json=body, timeout=timeout)
+            resp.raise_for_status()
+            msg = resp.json()["choices"][0]["message"]
+            calls = msg.get("tool_calls") or []
+            if not calls:
+                return None
+            return calls[0]["function"].get("arguments")
+        except Exception:
+            return None
+
     def complete(self, system: str, user: str, *,
                  json_mode: bool = False, temperature: float = 0.3,
                  timeout: int = 60) -> str | None:
