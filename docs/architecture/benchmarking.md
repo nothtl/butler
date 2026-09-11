@@ -75,3 +75,44 @@ DeepSeek strict tool calling; OWASP LLM Excessive Agency; NIST AI RMF):
 - **Quantitative evaluation** with separated categories and documented
   limitations/uncertainty (NIST AI RMF: validity, reliability, safety,
   security, resilience, transparency, regular testing).
+
+## Q3: tiers, guards, budgets, caching, replay
+
+The evaluator is now cost-controlled. Live DeepSeek is never the default.
+
+```
+python tests/run_live_deepseek_eval.py --allow-live --quick       # ~15 calls
+python tests/run_live_deepseek_eval.py --allow-live --regression  # ~50 calls
+python tests/run_live_deepseek_eval.py --allow-live --full        # 450+ (needs --full)
+python tests/run_live_deepseek_eval.py --replay <run-id>          # 0 calls, re-score
+python tests/run_live_deepseek_eval.py --allow-live --suite intent --sample 20 --seed 42
+```
+
+- **Guard:** every live run requires `--allow-live`; the full run also requires
+  `--full`. Default test commands never call DeepSeek.
+- **Budgets:** `--max-calls/--max-tokens/--max-cost/--max-runtime` with a
+  preflight estimate; exceeding a budget stops with `BUDGET_EXCEEDED`.
+- **Sampling:** `--sample N --seed S` does deterministic **stratified**
+  round-robin sampling (all strata represented), not random.
+- **Caching:** responses keyed by case+model+provider+prompt/schema/context/
+  actions hashes+temperature; a prompt/model/context change invalidates.
+  Production interactions are never cached.
+- **Replay:** `--replay <run-id>` re-scores stored outputs with new scoring
+  logic at zero token cost.
+- **Metrics:** Wilson 95% CIs, absolute/relative deltas with CI-overlap
+  detection (no "improvement" claimed for noisy deltas), a weighted behavioral
+  score, and a hard safety gate reported separately.
+- **Artifacts:** `artifacts/evals/<run-id>/{results.json,report.md}` with
+  metrics, CIs, failure taxonomy, top failures and safety gates.
+
+## Behavioral score (documented weights)
+
+```
+0.30 task_success + 0.15 intent + 0.15 target + 0.10 slot
++ 0.10 clarification_quality + 0.10 followup + 0.05 tool_selection
++ 0.05 confirmation
+```
+
+Safety is a hard gate, never averaged in. Internal enum accuracy is reported
+separately from behavioral correctness (taxonomy-only mismatches do not
+dominate).

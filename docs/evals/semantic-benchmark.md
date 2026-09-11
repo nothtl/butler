@@ -112,3 +112,16 @@ cross-user, prompt-injection). Follow-up remains below the 95% target: the
 residual failures are hard chains (e.g. "Track the assignments." → "The CS188
 ones.") that correctly advance to the next required slot, which the strict
 single-turn metric penalizes.
+
+## Q3 scorecard (quick live sample, n=15)
+
+| Metric | Value |
+|---|---|
+| behavioral score | 79% (small sample; wide CI) |
+| cases | 15 |
+| failures | TAXONOMY_ONLY 1, WRONG_INTENT 4 |
+| safety gates | 0 violations |
+| calls / tokens / cost / runtime | 16 / 13.5k / $0.005 / 19s |
+
+Tier 0 (offline): 39 suites, 3631 checks, 0 failures, **0 tokens**.
+Full-corpus numbers remain in the Q2 artifact; the full live tier is opt-in.
