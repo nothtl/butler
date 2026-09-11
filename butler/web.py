@@ -484,6 +484,87 @@ class DuckDuckGoSearchProvider:
         return out
 
 
+class SearxngSearchProvider:
+    """Self-hosted SearXNG JSON search provider (private, localhost).
+
+    Butler talks only to the local SearXNG endpoint; SearXNG fans out to the
+    upstream engines. Provider-specific knowledge lives here only.
+    """
+
+    name = "searxng"
+    available = True
+
+    def __init__(self, base_url: str, *, timeout: int = DEFAULT_TIMEOUT,
+                 user_agent: str = "Butler/4", safesearch: int = 1,
+                 categories: str = "general"):
+        self.base_url = (base_url or "").rstrip("/")
+        self.timeout = int(timeout)
+        self.user_agent = user_agent
+        self.safesearch = int(safesearch)
+        self.categories = categories
+
+    def health(self) -> dict[str, Any]:
+        import time as _t
+        import requests
+        t0 = _t.time()
+        try:
+            r = requests.get(
+                self.base_url + "/search",
+                params={"q": "butler health check", "format": "json",
+                        "safesearch": self.safesearch},
+                headers={"User-Agent": self.user_agent}, timeout=self.timeout)
+            ok = r.status_code == 200
+            return {"ok": ok, "status": "ok" if ok else "error",
+                    "provider": self.name, "http": r.status_code,
+                    "latency_ms": int((_t.time() - t0) * 1000)}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "status": "unavailable", "provider": self.name,
+                    "error": str(exc),
+                    "latency_ms": int((_t.time() - t0) * 1000)}
+
+    def search(self, query: str, *, domains: list[str] | None = None,
+               max_results: int = DEFAULT_MAX_RESULTS) -> list[WebSource]:
+        import json as _json
+        import requests
+        params: dict[str, Any] = {"q": query, "format": "json",
+                                  "safesearch": self.safesearch}
+        if self.categories:
+            params["categories"] = self.categories
+        try:
+            r = requests.get(self.base_url + "/search", params=params,
+                             headers={"User-Agent": self.user_agent},
+                             timeout=self.timeout)
+            r.raise_for_status()
+        except Exception as exc:  # noqa: BLE001 — provider failure is controlled
+            raise WebError(f"searxng unavailable: {exc}") from exc
+        try:
+            data = r.json()
+        except Exception as exc:  # noqa: BLE001
+            raise WebError(f"searxng returned malformed JSON: {exc}") from exc
+        raw = data.get("results") if isinstance(data, dict) else None
+        if not isinstance(raw, list):
+            raise WebError("searxng returned an unexpected payload")
+        out: list[WebSource] = []
+        seen: set[str] = set()
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            url = str(item.get("url") or "").strip()
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            out.append(WebSource(
+                url=url, title=_strip_tags(str(item.get("title") or "")),
+                domain=_domain_of(url),
+                excerpt=_strip_tags(str(item.get("content")
+                                       or item.get("snippet") or "")),
+                source_type="search_result", confidence=0.55,
+                retrieved_at=int(time.time())))
+            if len(out) >= max_results:
+                break
+        return out
+
+
 class FetchProvider(Protocol):
     def fetch(self, url: str, *, timeout: int = DEFAULT_TIMEOUT,
               max_bytes: int = DEFAULT_MAX_BYTES) -> FetchResult: ...
@@ -1035,6 +1116,11 @@ def _provider_from_config(cfg: Any) -> SearchProvider:
         return DuckDuckGoSearchProvider(
             user_agent=str(getattr(cfg, "web_user_agent", "Butler/4")),
             timeout=int(getattr(cfg, "web_timeout", DEFAULT_TIMEOUT)))
+    if name == "searxng":
+        return SearxngSearchProvider(
+            str(getattr(cfg, "web_searxng_url", "http://127.0.0.1:8080")),
+            timeout=int(getattr(cfg, "web_timeout", DEFAULT_TIMEOUT)),
+            user_agent=str(getattr(cfg, "web_user_agent", "Butler/4")))
     return NullSearchProvider()
 
 

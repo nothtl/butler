@@ -169,7 +169,8 @@ class Config:
     # Butler state and never perform an external action. ``offline`` disables
     # all network access (search returns a controlled "provider unavailable").
     web_enabled: bool = True
-    web_search_provider: str = "offline"   # offline | duckduckgo (see web.py)
+    web_search_provider: str = "offline"   # offline | duckduckgo | searxng
+    web_searxng_url: str = "http://127.0.0.1:8080"  # self-hosted SearXNG base
     web_max_results: int = 8               # search hits considered
     web_max_sources: int = 5               # pages fetched per research
     web_timeout: int = 12                  # per-request timeout (seconds)
@@ -505,6 +506,11 @@ class Config:
         cfg.web_enabled = bool(web.get("enabled", cfg.web_enabled))
         cfg.web_search_provider = web.get("search_provider",
                                           cfg.web_search_provider)
+        searx = web.get("searxng", {}) or {}
+        cfg.web_searxng_url = str(
+            os.environ.get("BUTLER_SEARXNG_URL")
+            or searx.get("base_url")
+            or web.get("searxng_url", cfg.web_searxng_url))
         cfg.web_max_results = int(web.get("max_results", cfg.web_max_results))
         cfg.web_max_sources = int(web.get("max_sources", cfg.web_max_sources))
         cfg.web_timeout = int(web.get("timeout", cfg.web_timeout))
