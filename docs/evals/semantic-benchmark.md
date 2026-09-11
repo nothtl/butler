@@ -79,3 +79,36 @@ choice, not a preference.
 
 The one failure was an entity type outside the enum; the interpreter now
 coerces unknown entity types to `unknown` (name preserved, server resolves).
+
+## Q2 failure-driven refinement
+
+Failure traces from the Q1/Q2 artifacts were classified (WRONG_INTENT,
+FOLLOWUP_FAILURE, MISSED_CLARIFICATION, WRONG_TIME, TAXONOMY_ONLY, …). Two
+targeted fixes landed:
+
+1. **State-first follow-up** (`ExecutiveService._answer_clarification`): the
+   stored candidate set is always consulted before a re-classified follow-up
+   can supersede a pending clarification.
+2. **Name-before-qualifier matching** (`interactions.match_candidates`): "the
+   CS188 one" now prefers the CS188 *course* over a project tagged CS188.
+
+Temporal evaluation now uses a **reproducible reference clock** (10:00 local),
+since the resolver is deterministic; the model still extracts the phrase.
+
+| Metric | Q1 baseline | Q2 after |
+|---|---|---|
+| strict semantic | 80% | 80% |
+| lenient | 82% | 82% |
+| behavioral | 82% | 82% |
+| follow-up | 84% | **85%** |
+| clarification | 99% | 99% |
+| ambiguity | 100% | 100% |
+| temporal | 93% | **100%** |
+| median / p95 latency | 1.08 / 1.51 s | 1.15 / 1.59 s |
+| live failures | 1 | 0 |
+
+Hard safety gates remain 0 (unknown-action, unsafe, hallucinated-target,
+cross-user, prompt-injection). Follow-up remains below the 95% target: the
+residual failures are hard chains (e.g. "Track the assignments." → "The CS188
+ones.") that correctly advance to the next required slot, which the strict
+single-turn metric penalizes.

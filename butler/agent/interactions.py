@@ -188,14 +188,16 @@ def match_candidates(text: str, candidates: list[dict[str, Any]]
         qual_tokens: set[str] = set()
         for q in (c.get("qualifiers") or []):
             qual_tokens |= set(_tokens(str(q)))
-        if qual_tokens and qual_tokens <= toks:
-            qual_hits.append(c)
-        elif name_tokens and name_tokens <= toks:
+        if name_tokens and name_tokens <= toks:
             name_hits.append(c)
-    if len(qual_hits) == 1:
-        return qual_hits[0]
+        elif qual_tokens and qual_tokens <= toks:
+            qual_hits.append(c)
+    # Prefer a unique exact-name match (e.g. the CS188 *course*) over a
+    # qualifier match (e.g. a project tagged CS188).
     if len(name_hits) == 1:
         return name_hits[0]
+    if len(qual_hits) == 1:
+        return qual_hits[0]
     ordinals = {"first": 0, "1st": 0, "second": 1, "2nd": 1, "third": 2,
                 "3rd": 2, "last": len(candidates) - 1}
     for word, idx in ordinals.items():

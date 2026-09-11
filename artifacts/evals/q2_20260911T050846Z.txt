@@ -1,0 +1,8 @@
+
+INTENT  n=50 schema_valid=50 strict=40/50 (80%) lenient=41/50 (82%) false_confident=0
+TEMPORAL n=100 correct=100/100 (100%)
+AMBIGUITY n=100 flagged=100/100 (100%)
+FOLLOWUP n=100 resolved=85/100 (85%)
+CLARIFICATION n=100 offered=99/100 (99%)
+
+LATENCY n=250 mean=1159ms median=1154ms p95=1591ms failures=0

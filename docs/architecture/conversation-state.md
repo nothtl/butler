@@ -55,3 +55,12 @@ Butler: I found two Project 2s — Project 2 (CS188) / Project 2 (CS168)?
 User:  The CS188 one.
 Butler: resolves Project 2 (CS188)
 ```
+
+## State-first follow-up (Q2)
+
+When a clarification is active, the resolver consults the **stored candidate
+set** before any global interpretation, even if the model re-classified the
+follow-up as a new request. A unique exact-name match wins over a qualifier
+match (so "the CS188 one" prefers the CS188 course over a project tagged
+CS188). Only if no stored candidate matches may a clearly-recognised new
+request supersede the pending clarification.

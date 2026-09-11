@@ -1,0 +1,79 @@
+{
+ "run_id": "20260911T062908Z",
+ "milestone": "Q2",
+ "commit_before": "ed4c30e",
+ "model": "deepseek-chat",
+ "endpoint": "https://api.deepseek.com/v1",
+ "prompt_version": "v2-disambiguation+relevant-actions",
+ "corpus_version": "tests/evals (intent 50, temporal 100, ambiguity 100, followup 100, clarification 100)",
+ "environment": "Pi 5, Python 3.13.5, isolated; production DB untouched",
+ "before": {
+  "strict": 0.8,
+  "lenient": 0.82,
+  "behavioral": 0.82,
+  "followup": 0.84,
+  "clarification": 0.99,
+  "ambiguity": 1.0,
+  "temporal": 0.93,
+  "median_ms": 1080,
+  "p95_ms": 1510,
+  "failures": 1
+ },
+ "after": {
+  "strict": 0.8,
+  "lenient": 0.82,
+  "behavioral": 0.82,
+  "followup": 0.85,
+  "clarification": 0.99,
+  "ambiguity": 1.0,
+  "temporal": 1.0,
+  "median_ms": 1154,
+  "p95_ms": 1591,
+  "failures": 0
+ },
+ "live_calls": "450+",
+ "safety": {
+  "unknown_action_execution": 0,
+  "unsafe_execution": 0,
+  "hallucinated_target_execution": 0,
+  "cross_user_violation": 0,
+  "prompt_injection_execution": 0
+ },
+ "failure_taxonomy_before": {
+  "WRONG_INTENT": 9,
+  "TAXONOMY_ONLY": 5,
+  "FOLLOWUP_FAILURE": 15,
+  "MISSED_CLARIFICATION": 1,
+  "WRONG_TIME": 8,
+  "MODEL_FAILURE": 0,
+  "SERVER_VALIDATION_FAILURE": 1,
+  "UNSAFE": 0
+ },
+ "changes": [
+  "follow-up: always consult the stored candidate set before superseding",
+  "match_candidates: prefer a unique exact-name match over a qualifier match",
+  "temporal evaluation uses a reproducible reference clock (10:00 local)",
+  "unknown entity types coerced to unknown (name preserved)"
+ ],
+ "categories": {
+  "LIVE_DEEPSEEK": "run_live_deepseek_eval.py",
+  "DETERMINISTIC": "3569 checks",
+  "SYNTHETIC_FAKE": "negative validation only",
+  "OFFICIAL_EXTERNAL": "none",
+  "ADAPTED_EXTERNAL": [
+   "AgentBench FC",
+   "ToolBench",
+   "tau multi-turn"
+  ],
+  "BLOCKED": [
+   "tau2 official",
+   "GAIA"
+  ]
+ },
+ "limitations": [
+  "follow-up 85% (<95% target); hard chains re-ask the next required slot",
+  "strict semantic 80% (<90%); residual failures are taxonomy disputes",
+  "temporal 100% is measured against a fixed reference clock",
+  "official external benchmarks remain BLOCKED"
+ ]
+}

@@ -187,7 +187,9 @@ class ExecutiveService:
         parsed = None
         if creq is not None and creq.slot_name:
             parsed = parse_answer(req.raw_text, creq)
-        if parsed is None and (creq is None or not creq.slot_name):
+        # State-first: always try the stored candidate set before anything else,
+        # including when the model re-classified the follow-up as a new request.
+        if parsed is None and clar.candidates:
             cand = match_candidates(req.raw_text, clar.candidates)
             if cand is not None:
                 parsed = (cand, "")
@@ -296,7 +298,8 @@ class ExecutiveService:
     def _open_target_clarification(self, session: Any, req: AgentRequest,
                                    candidates: list[dict[str, Any]]
                                    ) -> ClarificationRequest:
-        spec = slot_spec(req.action.value, "target") or             _TARGET_SLOT_SPEC
+        spec = slot_spec(req.action.value, "target") or \
+            _TARGET_SLOT_SPEC
         enriched = self._enrich_candidates(candidates)
         reason = (f"I found {len(enriched)} matches and need to know which "
                   f"one you mean." if len(enriched) > 1 else "")

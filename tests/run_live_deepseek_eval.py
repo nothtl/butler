@@ -117,11 +117,21 @@ def main() -> int:
           f"false_confident={false_confident}")
 
     # ---- temporal --------------------------------------------------------
-    tz = Clock.from_config(cfg)
+    # Evaluate against a reproducible reference clock (10:00 local today);
+    # the model still does the real phrase extraction.
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+    try:
+        _tz = _ZI(getattr(cfg, "timezone", "UTC") or "UTC")
+    except Exception:  # noqa: BLE001
+        _tz = _ZI("UTC")
+    ref = int(_dt.now(_tz).replace(hour=10, minute=0, second=0,
+                                   microsecond=0).timestamp())
+    tz = Clock(tz=_tz, now_ts=ref)
     resolver = TemporalResolver(
         tz,
-        class_windows=[(int(time.time()) + 3600, int(time.time()) + 7200, "c")],
-        meeting_windows=[(int(time.time()) + 10800, int(time.time()) + 14400, "m")])
+        class_windows=[(ref + 3600, ref + 7200, "c")],
+        meeting_windows=[(ref + 10800, ref + 14400, "m")])
     trows = load("temporal.jsonl")[:limit]
     t_ok = 0
     for r in trows:

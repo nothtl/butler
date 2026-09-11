@@ -1,0 +1,144 @@
+{
+ "run_id": "20260911T050751Z",
+ "commit": "ed4c30e",
+ "followup": {
+  "ok": 91,
+  "n": 100,
+  "failures": [
+   {
+    "first": "Track the assignments.",
+    "second": "The CS188 ones.",
+    "r1": "ambiguous",
+    "r2": "ok",
+    "before": "clarification",
+    "after": "clarification"
+   },
+   {
+    "first": "Track the assignments.",
+    "second": "The CS188 ones.",
+    "r1": "ambiguous",
+    "r2": "ok",
+    "before": "clarification",
+    "after": "clarification"
+   },
+   {
+    "first": "Track the assignments.",
+    "second": "The CS188 ones.",
+    "r1": "ambiguous",
+    "r2": "ok",
+    "before": "clarification",
+    "after": "clarification"
+   },
+   {
+    "first": "Track the assignments.",
+    "second": "The CS188 ones.",
+    "r1": "ambiguous",
+    "r2": "ok",
+    "before": "clarification",
+    "after": "clarification"
+   },
+   {
+    "first": "Track the assignments.",
+    "second": "The CS188 ones.",
+    "r1": "ambiguous",
+    "r2": "ok",
+    "before": "clarification",
+    "after": "clarification"
+   },
+   {
+    "first": "Track the assignments.",
+    "second": "The CS188 ones.",
+    "r1": "ambiguous",
+    "r2": "ok",
+    "before": "clarification",
+    "after": "clarification"
+   },
+   {
+    "first": "Track the assignments.",
+    "second": "The CS188 ones.",
+    "r1": "ambiguous",
+    "r2": "ok",
+    "before": "clarification",
+    "after": "clarification"
+   },
+   {
+    "first": "Track the assignments.",
+    "second": "The CS188 ones.",
+    "r1": "ambiguous",
+    "r2": "ok",
+    "before": "clarification",
+    "after": "clarification"
+   },
+   {
+    "first": "Track the assignments.",
+    "second": "The CS188 ones.",
+    "r1": "ambiguous",
+    "r2": "ok",
+    "before": "clarification",
+    "after": "clarification"
+   }
+  ]
+ },
+ "temporal": {
+  "ok": 112,
+  "n": 120,
+  "failures": [
+   {
+    "input": "before lunch",
+    "phrase": "before lunch",
+    "resolution": "unresolved",
+    "start": 0,
+    "expected": true
+   },
+   {
+    "input": "after my lecture",
+    "phrase": "after my lecture",
+    "resolution": "unresolved",
+    "start": 0,
+    "expected": true
+   },
+   {
+    "input": "after my class",
+    "phrase": "after my class",
+    "resolution": "unresolved",
+    "start": 0,
+    "expected": true
+   },
+   {
+    "input": "this morning",
+    "phrase": "this morning",
+    "resolution": "unresolved",
+    "start": 0,
+    "expected": true
+   },
+   {
+    "input": "this afternoon",
+    "phrase": "this afternoon",
+    "resolution": "unresolved",
+    "start": 0,
+    "expected": true
+   },
+   {
+    "input": "before lunch",
+    "phrase": "before lunch",
+    "resolution": "unresolved",
+    "start": 0,
+    "expected": true
+   },
+   {
+    "input": "after my lecture",
+    "phrase": "after my lecture",
+    "resolution": "unresolved",
+    "start": 0,
+    "expected": true
+   },
+   {
+    "input": "after my class",
+    "phrase": "after my class",
+    "resolution": "unresolved",
+    "start": 0,
+    "expected": true
+   }
+  ]
+ }
+}
