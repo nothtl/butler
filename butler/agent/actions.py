@@ -191,6 +191,9 @@ _TABLE: dict[str, tuple[str, bool, bool]] = {
     "tracker_explain": ("READ_ONLY", False, False),
     "tracker_list": ("READ_ONLY", False, False),
     "tracker_query": ("READ_ONLY", False, False),
+    # Q13 generic topic behaviors (shape future requests; never bypass safety)
+    "create_topic_behavior": ("LOCAL_MUTATION", True, False),
+    "topic_behavior_query": ("READ_ONLY", False, False),
     "trash": ("DESTRUCTIVE", True, True),
     "trash_duplicates": ("DESTRUCTIVE", True, True),
     "trash_list": ("READ_ONLY", False, False),
@@ -330,6 +333,13 @@ SLOT_SCHEMAS: dict[str, tuple[SlotSpec, ...]] = {
                  ("On", "Off"), default="on"),
         SlotSpec("scope", "scope", True, "Just here, or everywhere?",
                  ("This topic", "Global")),
+    ),
+    # Q13: a standing instruction. Persistence is asked, never assumed.
+    "create_topic_behavior": (
+        SlotSpec("trigger", "value", True, "When should this apply?"),
+        SlotSpec("persistence", "choice", True,
+                 "Should this always apply here, or only this time?",
+                 ("Always in this topic", "Only this time")),
     ),
     "find_best_slot": (
         SlotSpec("duration", "choice", True, "How long do you need?",

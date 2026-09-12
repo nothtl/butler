@@ -25,7 +25,7 @@ _VALID_TASK_STATUSES = ACTIVE_TASK_STATUSES + TERMINAL_STATUSES
 
 #: Current schema revision. Bumped whenever a migration is added; persisted in
 #: ``PRAGMA user_version`` so startup can detect an old/new database.
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 
 def normalize_status(status: str) -> str:
@@ -513,6 +513,26 @@ CREATE TABLE IF NOT EXISTS topic_links(
     UNIQUE(topic_profile_id, target_type, target_id, relation)
 );
 CREATE INDEX IF NOT EXISTS idx_topic_links_profile ON topic_links(topic_profile_id);
+
+-- Q13: generic persistent topic behaviors ("when I ask about X, also do Y").
+-- One generic shape (trigger/strategy/constraints/scope/persistence); never a
+-- per-domain class. Behaviors shape future requests but cannot bypass safety.
+CREATE TABLE IF NOT EXISTS topic_behaviors(
+    id               INTEGER PRIMARY KEY,
+    topic_profile_id INTEGER NOT NULL,
+    trigger          TEXT DEFAULT '',
+    strategy         TEXT DEFAULT '',      -- JSON shaping flags
+    constraints      TEXT DEFAULT '',      -- JSON
+    scope            TEXT DEFAULT '',
+    persistence      TEXT DEFAULT 'always',-- always | once
+    enabled          INTEGER DEFAULT 1,
+    priority         INTEGER DEFAULT 0,
+    created_from     TEXT DEFAULT '',
+    created_at       INTEGER DEFAULT 0,
+    updated_at       INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_topic_behaviors_profile
+    ON topic_behaviors(topic_profile_id);
 
 -- ---------------------------------------------------------------------------
 -- N2: universal tracking / trigger engine. One compact Tracker row folds the

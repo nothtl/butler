@@ -179,6 +179,9 @@ def slot_is_filled(req: AgentRequest, spec: SlotSpec) -> bool:
         return (_param(req, name) is not None
                 or _param(req, "condition") is not None
                 or _param(req, "events") is not None)
+    if name == "persistence":
+        # Q13: persistence must be explicitly resolved (ask, never assume).
+        return _param(req, name) in ("always", "once")
     return _param(req, name) is not None
 
 
@@ -216,6 +219,11 @@ def apply_slot(req: AgentRequest, name: str, value: Any) -> None:
     if name in ("time_window", "deadline"):
         req.parameters[name] = value
         req.temporal = TemporalRange(phrase=str(value))
+        return
+    if name == "persistence":
+        text = str(value).lower()
+        req.parameters["persistence"] = (
+            "once" if ("once" in text or "time" in text) else "always")
         return
     req.parameters[name] = value
 

@@ -217,8 +217,23 @@ def schema_prompt() -> str:
         '- "Ask me before changing my calendar." -> settings_update, '
         'parameters={"setting":"calendar_confirm","value":"on"}',
         "",
-        "STATE QUERIES (map the MEANING, never the wording):",
-        '- any question about what you can do / how you can help in the current '
+        "PERSISTENT TOPIC BEHAVIORS (a standing instruction, not a one-off):",
+        '- "When I ask about X, also do Y." -> create_topic_behavior, '
+        'parameters={"trigger":"<when: the X request>",'
+        '"strategy":{"use_web":true},"persistence":"ask"}',
+        '- "Always use the pantry when I ask for meals." -> '
+        'create_topic_behavior, parameters={"trigger":"meal request",'
+        '"strategy":{"use_pantry":true},"persistence":"ask"}',
+        '- "Normally do X here, unless I say otherwise." -> '
+        'create_topic_behavior (a default, still overridable this turn)',
+        "A persistent behavior must never be created silently: set "
+        "persistence=ask so the server offers [Always in this topic] / "
+        "[Only this time] / [Cancel]. Never turn a behavior into a tracker "
+        "(trackers monitor external state over time).",
+        '- "Never mind." / "Cancel that." / "Forget it." -> cancel '
+        "(abandon the active request; do not execute it)",
+        "",
+        "STATE QUERIES (map the MEANING, never the wording):",        '- any question about what you can do / how you can help in the current '
         'topic -> action=status, parameters={"query_subject":"capabilities"}',
         '- any question about what you are monitoring/searching/watching/'
         'checking -> action=tracker_list, '

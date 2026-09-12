@@ -165,6 +165,10 @@ class ActionKind(str, Enum):
     # --- N4 system settings ---
     SETTINGS_VIEW = "settings_view"
     SETTINGS_UPDATE = "settings_update"
+    # --- Q13 generic conversation coordination + topic behaviors ---
+    CANCEL = "cancel"                              # abandon the active task
+    CREATE_TOPIC_BEHAVIOR = "create_topic_behavior"  # standing instruction
+    TOPIC_BEHAVIOR_QUERY = "topic_behavior_query"    # what will you do here
     UNKNOWN = "unknown"
 
 

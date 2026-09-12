@@ -38,6 +38,11 @@ from .clarification import (
     ClarificationRequest, apply_slot, build_clarification, explain,
     missing_slots, parse_answer,
 )
+from .conversation import (
+    ConversationTask, ConversationTaskStore, TaskStatus, TurnClassifier,
+    TurnKind,
+)
+from .behaviors import TopicBehaviorStore
 from .actions import slot_spec
 from .temporal import Clock, TemporalResolver
 from ..ux import new_request_id
@@ -93,6 +98,12 @@ class ExecutiveService:
         # P2: explicit, expiring pending-interaction state (clarification +
         # confirmation). Never rely on model memory for follow-ups.
         self.interactions = InteractionStore()
+        # Q13: the single canonical active conversation task + the semantic
+        # turn classifier that decides how a turn relates to it.
+        self.conversation = ConversationTaskStore()
+        self.behaviors = TopicBehaviorStore(container)
+        self.turn_classifier = TurnClassifier(
+            chat=getattr(container, "chat", None))
         # When True, memory-mutating actions return a proposal instead of
         # executing (used by the strictly read-only `executive_ask` MCP tool).
         self._read_only = False
@@ -153,14 +164,44 @@ class ExecutiveService:
             _is_reference(req.raw_text)
             or len((req.raw_text or "").split()) <= 6
             or req.action in (ActionKind.UNKNOWN, ActionKind.RESOLVE_REFERENCE))
-        # Q1/P2.1: answer an active clarification first, using structured state.
+        # Q13: identify the active conversation task and classify this turn
+        # relative to it BEFORE any action runs. This is what makes a follow-up
+        # "about" the active task instead of an unrelated new request.
         clar = self.interactions.active(session, InteractionKind.CLARIFICATION)
+        conf = self.interactions.active(session, InteractionKind.CONFIRMATION)
+        task = self.conversation.active(session)
+        kind = self.turn_classifier.classify(
+            req.raw_text, task, interpreted=req,
+            candidates=(list(clar.candidates) if clar is not None else []),
+            expected_slot=(clar.expected_slot if clar is not None else ""),
+            awaiting_confirmation=(conf is not None))
+        if kind == TurnKind.CANCEL_ACTIVE_REQUEST:
+            return self._cancel_active(session, clar, conf, req,
+                                       include_context, expired_notice)
+        if kind == TurnKind.META_QUESTION and clar is not None:
+            return self._answer_meta_question(session, clar, req,
+                                              include_context, expired_notice)
+        if kind == TurnKind.QUERY_ACTIVE_REQUEST \
+                and (task is not None or clar is not None or conf is not None):
+            return self._answer_active_query(session, task, clar, conf, req,
+                                             include_context, expired_notice)
+        if kind in (TurnKind.MODIFY_ACTIVE_REQUEST,
+                    TurnKind.CONTINUE_ACTIVE_REQUEST) \
+                and task is not None and clar is None and conf is None:
+            return self._continue_active(session, task, req,
+                                         include_context, expired_notice)
+        # Q1/P2.1: answer an active clarification first, using structured state.
         if clar is not None:
             handled = self._answer_clarification(
                 session, clar, req, include_context=include_context,
                 expired_notice=expired_notice)
             if handled is not None:
                 return handled
+        # Q13: a clearly new request supersedes the stale active task.
+        if kind in (TurnKind.NEW_REQUEST,
+                    TurnKind.INTERRUPT_WITH_NEW_REQUEST) \
+                and task is not None:
+            self.conversation.clear(session, TaskStatus.SUPERSEDED.value)
         # P2.2: a follow-up may modify the pending proposal instead of creating
         # a new, unrelated request.
         conf = self.interactions.active(session, InteractionKind.CONFIRMATION)
@@ -235,6 +276,261 @@ class ExecutiveService:
             base, session, include_context=include_context,
             expired_notice=expired_notice)
 
+    # ------------------------------------------------- Q13 conversation flow
+    def _phrase(self, system: str, payload: dict[str, Any],
+                fallback: str) -> str:
+        """Phrase an answer from live state via the model; fall back to data."""
+        chat = getattr(self.container, "chat", None)
+        if chat is not None and getattr(chat, "_llm_ready", lambda: False)():
+            try:
+                import json as _json
+                out = chat.complete(
+                    system, _json.dumps(payload, default=str), json_mode=False)
+                if out and out.strip():
+                    return out.strip()
+            except Exception:  # noqa: BLE001 — never fail the turn on phrasing
+                pass
+        return fallback
+
+    def _topic_profile(self, topic: dict[str, Any] | None) -> Any:
+        topic = topic or {}
+        store = getattr(self.container, "topics", None)
+        if store is None or not topic.get("chat_id"):
+            return None
+        try:
+            return store.get(topic.get("chat_id"),
+                             topic.get("thread_id") or 0)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _cancel_active(self, session: Any, clar: Any, conf: Any,
+                       req: AgentRequest, include_context: bool,
+                       expired_notice: bool) -> AgentResult:
+        """Abandon the active task safely; never execute it."""
+        if clar is not None:
+            self.interactions.close(session, clar, InteractionStatus.CANCELLED)
+        if conf is not None:
+            self.interactions.close(session, conf, InteractionStatus.CANCELLED)
+        self.conversation.clear(session, TaskStatus.CANCELLED.value)
+        res = AgentResult(status=ResultStatus.OK,
+                          data={"cancelled": True, "executed": False},
+                          assumptions=["the active request was cancelled"])
+        return self._finish_result(res, req, session, include_context,
+                                   expired_notice)
+
+    def _answer_meta_question(self, session: Any, clar: Any, req: AgentRequest,
+                              include_context: bool,
+                              expired_notice: bool) -> AgentResult:
+        """Answer a question about the pending question; keep it active."""
+        cdict = (clar.proposal or {}).get("clarification") or {}
+        creq = ClarificationRequest.from_dict(cdict) if cdict else None
+        reason = (creq.reason if creq is not None else "") or explain(creq) \
+            if creq is not None else ""
+        options = []
+        if creq is not None:
+            options = [o.label for o in creq.options if o.value is not None]
+        payload = {
+            "detected": reason,
+            "expected_slot": (creq.slot_name if creq is not None else ""),
+            "options": options,
+            "original_request": clar.original_text,
+        }
+        fallback = reason or "I need one more detail before I can continue."
+        text = self._phrase(
+            "The user asked about the clarifying question you just asked. "
+            "Explain briefly what ambiguity you detected and what you were "
+            "asking, using only the given state. Do not invent options. Then "
+            "the system will re-ask.", payload, fallback)
+        res = AgentResult(
+            status=ResultStatus.AMBIGUOUS, answer=text,
+            data={"clarification": cdict, "meta_explanation": text,
+                  "active_task_preserved": True},
+            warnings=[text])
+        return self._finish_result(res, req, session, include_context,
+                                   expired_notice)
+
+    def _answer_active_query(self, session: Any, task: Any, clar: Any,
+                             conf: Any, req: AgentRequest,
+                             include_context: bool,
+                             expired_notice: bool) -> AgentResult:
+        """Answer 'what are you doing/will do?' from the active task state."""
+        payload: dict[str, Any] = {"active_task": None, "pending_question": None,
+                                   "pending_proposal": None}
+        if task is not None:
+            payload["active_task"] = task.summary()
+        if clar is not None:
+            cdict = (clar.proposal or {}).get("clarification") or {}
+            payload["pending_question"] = {
+                "slot": clar.expected_slot,
+                "candidates": [c.get("label") or c.get("name")
+                               for c in (clar.candidates or [])][:6],
+                "reason": cdict.get("reason", ""),
+            }
+        if conf is not None:
+            payload["pending_proposal"] = {
+                "summary": (conf.proposal or {}).get("summary", ""),
+                "parameters": (conf.proposal or {}).get("parameters", {}),
+            }
+        fallback = self._active_summary_text(payload)
+        text = self._phrase(
+            "Answer the user's question about what you are currently doing or "
+            "about to do, using only the given active-task state. Be concrete "
+            "and do not claim anything not present in the state.", payload,
+            fallback)
+        res = AgentResult(status=ResultStatus.OK, answer=text,
+                          data={"text": text, "active_task_preserved": True},
+                          facts=[{"kind": "active_task",
+                                  "task": payload["active_task"]}])
+        return self._finish_result(res, req, session, include_context,
+                                   expired_notice)
+
+    @staticmethod
+    def _active_summary_text(payload: dict[str, Any]) -> str:
+        task = payload.get("active_task") or {}
+        lines = []
+        if task:
+            lines.append("Active request: " + str(task.get("original_request")
+                                                   or task.get("action") or ""))
+            if task.get("filled_slots"):
+                lines.append("Slots: " + ", ".join(
+                    f"{k}={v}" for k, v in task["filled_slots"].items()))
+            if task.get("missing_slots"):
+                lines.append("Still needed: " + ", ".join(task["missing_slots"]))
+        q = payload.get("pending_question")
+        if q:
+            lines.append("Waiting on: " + str(q.get("slot") or "a choice"))
+            if q.get("candidates"):
+                lines.append("Options: " + ", ".join(map(str, q["candidates"])))
+        p = payload.get("pending_proposal")
+        if p and p.get("summary"):
+            lines.append("Proposal: " + str(p["summary"]))
+        return "\n".join(lines) or "There is no active request right now."
+
+    def _continue_active(self, session: Any, task: Any, req: AgentRequest,
+                         include_context: bool,
+                         expired_notice: bool) -> AgentResult:
+        """Merge a refinement into the active task and re-dispatch it."""
+        try:
+            base = AgentRequest.from_dict(task.request) if task.request else req
+        except SemanticValidationError:
+            base = req
+        base.raw_text = req.raw_text
+        # Fold the new turn's slots in without replacing the goal action.
+        for key, value in (req.parameters or {}).items():
+            base.parameters.setdefault(key, value)
+        if req.action in (ActionKind.WEB_SEARCH, ActionKind.WEB_RESEARCH):
+            base.parameters.setdefault("use_web", True)
+        if req.temporal is not None and req.temporal.phrase:
+            base.temporal = req.temporal
+        base.preferences = list(dict.fromkeys(
+            list(base.preferences or []) + list(req.preferences or [])))
+        for c in (req.constraints or []):
+            base.constraints.append(c)
+        base.ambiguity = []
+        base.entities = []
+        self.conversation.update_from_request(session, task, base)
+        return self._dispatch_or_clarify(base, session,
+                                         include_context=include_context,
+                                         expired_notice=expired_notice)
+
+    # --------------------------------------------------- topic behaviors
+    def _apply_behaviors(self, req: AgentRequest) -> AgentRequest:
+        """Merge matching topic behaviors into the request (lowest precedence
+        above topic defaults). An explicit current-turn instruction overrides."""
+        prof = self._topic_profile(req.topic)
+        if prof is None:
+            return req
+        params = dict(req.parameters or {})
+        overridden = bool(params.pop("behavior_override", False))
+        if overridden:
+            req.parameters = params
+            return req
+        try:
+            matched = self.behaviors.match(prof.id, req.raw_text)
+            if not matched:
+                matched = self.behaviors.select_semantic(
+                    getattr(self.container, "chat", None), prof.id,
+                    req.raw_text)
+            applied: list[dict[str, Any]] = []
+            for behavior in matched:
+                for key, value in behavior.sanitized_strategy().items():
+                    params.setdefault(key, value)
+                if behavior.constraints:
+                    params.setdefault("behavior_constraints",
+                                      dict(behavior.constraints))
+                applied.append({"id": behavior.id, "trigger": behavior.trigger})
+            if applied:
+                params.setdefault("behavior_applied", []).extend(applied)
+        except Exception:  # noqa: BLE001 — behaviors must never break a turn
+            return req
+        req.parameters = params
+        return req
+
+    def _create_topic_behavior(self, req: AgentRequest, snap: Any
+                               ) -> AgentResult:
+        prof = self._topic_profile(req.topic)
+        params = req.parameters or {}
+        trigger = str(params.get("trigger") or params.get("condition")
+                      or params.get("when") or "").strip()
+        strategy = dict(params.get("strategy") or {})
+        for key in ("use_web", "source_preference", "prefer_pantry_compatible"):
+            if params.get(key):
+                strategy.setdefault(key, params[key])
+        constraints = dict(params.get("constraints") or {})
+        persistence = str(params.get("persistence") or "ask").lower()
+        if persistence not in ("always", "once"):
+            persistence = "always"
+        if not trigger:
+            return AgentResult(
+                status=ResultStatus.INVALID,
+                error="A topic behavior needs a trigger (when should it apply?)")
+        if prof is None:
+            return AgentResult(
+                status=ResultStatus.UNAVAILABLE,
+                data={"behavior": {"trigger": trigger, "strategy": strategy,
+                                   "constraints": constraints,
+                                   "persistence": persistence},
+                      "persisted": False},
+                warnings=["No topic context; behavior was not stored."])
+        if persistence == "always":
+            behavior = self.behaviors.add(
+                prof.id, trigger=trigger, strategy=strategy,
+                constraints=constraints, scope=(prof.name or prof.purpose or ""),
+                persistence="always", created_from=req.raw_text)
+            text = ("Stored a behavior for this topic: when "
+                    f"\"{trigger}\", " + (self.behaviors.describe(prof.id)
+                                         .split("→")[-1].strip() or "adjust."))
+            return AgentResult(
+                status=ResultStatus.OK, answer=text,
+                data={"behavior": behavior.to_dict(), "persisted": True,
+                      "text": text},
+                facts=[{"kind": "topic_behavior",
+                        "behavior": behavior.to_dict()}])
+        text = ("Noted for this time only: \"" + trigger
+                + "\" — it will not be stored.")
+        return AgentResult(status=ResultStatus.OK, answer=text,
+                           data={"behavior": {"trigger": trigger,
+                                              "strategy": strategy,
+                                              "constraints": constraints,
+                                              "persistence": "once"},
+                                 "persisted": False, "text": text})
+
+    def _topic_behavior_query(self, req: AgentRequest, snap: Any
+                              ) -> AgentResult:
+        prof = self._topic_profile(req.topic)
+        if prof is None:
+            return AgentResult(
+                status=ResultStatus.OK,
+                data={"text": "There is no topic context for behaviors here.",
+                      "behaviors": []})
+        items = [b.to_dict() for b in self.behaviors.list(prof.id)]
+        text = self.behaviors.describe(prof.id) or \
+            "No standing behaviors are stored for this topic."
+        return AgentResult(status=ResultStatus.OK, answer=text,
+                           data={"text": text, "behaviors": items},
+                           facts=[{"kind": "topic_behaviors", "count":
+                                   len(items)}])
+
     #: state-query subjects that are topic-scoped and never need a target
     _TOPIC_SCOPED_SUBJECTS = ("capabilities", "configuration", "connections",
                               "schedule", "knowledge", "memory",
@@ -245,8 +541,11 @@ class ExecutiveService:
 
     def _bypasses_target_resolution(self, req: AgentRequest) -> bool:
         """Q8: web search/research queries search by text; they never require a
-        resolvable entity target. Plus the Q7 targetless state queries."""
-        if req.action in (ActionKind.WEB_SEARCH, ActionKind.WEB_RESEARCH):
+        resolvable entity target. Plus the Q7 targetless state queries. Q13:
+        a standing behavior is defined by its trigger text, not an entity."""
+        if req.action in (ActionKind.WEB_SEARCH, ActionKind.WEB_RESEARCH,
+                          ActionKind.CREATE_TOPIC_BEHAVIOR,
+                          ActionKind.TOPIC_BEHAVIOR_QUERY):
             return True
         return self._is_targetless_state_query(req)
 
@@ -268,6 +567,12 @@ class ExecutiveService:
     def _dispatch_or_clarify(self, req: AgentRequest, session: Any, *,
                              include_context: bool = False,
                              expired_notice: bool = False) -> AgentResult:
+        # Q13: topic behaviors shape the request (below any current-turn
+        # instruction, which is already reflected in the request parameters).
+        req = self._apply_behaviors(req)
+        # Q13: keep a canonical active task for refinable requests.
+        if self.conversation.should_persist(req) and req.source == "llm":
+            self.conversation.begin(session, req)
         # Q7: state queries with no target skip resolution/slot-completion and
         # go straight to their state handler.
         if not self._bypasses_target_resolution(req):
@@ -295,13 +600,15 @@ class ExecutiveService:
                     res.data = {"clarification": creq.to_dict()}
                     return self._finish_result(res, req, session,
                                                include_context, expired_notice)
-            # Q1/P1.1: missing required slots (semantic path).
-            if req.source == "llm":
-                missing = missing_slots(req)
-                if missing:
-                    res = self._open_slot_clarification(session, req, missing[0])
-                    return self._finish_result(res, req, session,
-                                               include_context, expired_notice)
+        # Q1/P1.1: missing required slots (semantic path). Runs for actions that
+        # bypass target resolution too (e.g. a standing behavior must ask about
+        # persistence rather than assume it).
+        if req.source == "llm":
+            missing = missing_slots(req)
+            if missing:
+                res = self._open_slot_clarification(session, req, missing[0])
+                return self._finish_result(res, req, session,
+                                           include_context, expired_notice)
         snapshot = self.context.build_snapshot(req)
         try:
             res = self._dispatch(req, snapshot)
@@ -347,6 +654,16 @@ class ExecutiveService:
                 session, kind=InteractionKind.CONFIRMATION,
                 original_text=req.raw_text, request=req.to_dict(),
                 proposal=proposal)
+            if self.conversation.active(session) is None:
+                self.conversation.begin(
+                    session, req,
+                    status=TaskStatus.WAITING_CONFIRMATION.value)
+            else:
+                self.conversation.set_status(
+                    session, TaskStatus.WAITING_CONFIRMATION.value)
+        elif not (self.conversation.should_persist(req)
+                  and req.source == "llm"):
+            self.conversation.clear(session, TaskStatus.COMPLETED.value)
         return self._finish_result(res, req, session, include_context,
                                    expired_notice)
 
@@ -385,6 +702,13 @@ class ExecutiveService:
             proposal={"clarification": creq.to_dict()})
         creq.interaction_id = it.id
         it.proposal["clarification"] = creq.to_dict()
+        # Q13: record the active task and the exact slot we are waiting on.
+        if self.conversation.active(session) is None:
+            self.conversation.begin(
+                session, req, status=TaskStatus.WAITING_CLARIFICATION.value)
+        self.conversation.set_status(
+            session, TaskStatus.WAITING_CLARIFICATION.value,
+            missing_slots=[spec.name])
         return creq
 
     def resume_with_slot(self, interaction_id: str, slot: str, value: Any, *,
@@ -660,6 +984,8 @@ class ExecutiveService:
             ActionKind.ORGANIZE_ITEMS: self._creation_organize,
             ActionKind.SETTINGS_VIEW: self._settings_view,
             ActionKind.SETTINGS_UPDATE: self._settings_update,
+            ActionKind.CREATE_TOPIC_BEHAVIOR: self._create_topic_behavior,
+            ActionKind.TOPIC_BEHAVIOR_QUERY: self._topic_behavior_query,
             ActionKind.WEB_SEARCH: self._web_search,
             ActionKind.WEB_RESEARCH: self._web_research,
             ActionKind.WEB_FETCH: self._web_fetch,

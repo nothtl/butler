@@ -987,8 +987,48 @@ class TelegramBot:
             return f"✅ Tracker {data['action']}."
         return "Done."
 
+    async def _maybe_conversation(self, update: Update, message: str) -> bool:
+        """Q13: route a turn through the active conversation task, if any.
+
+        Runs before the independent domain routers so a follow-up (answer,
+        meta-question, modification, cancellation, interruption) is handled
+        relative to what is currently in progress instead of as a fresh request.
+        """
+        try:
+            from .agent.service import ExecutiveService
+            from .agent.interpret import resolve_interpreter
+            from .agent.interactions import InteractionKind
+            user = update.effective_user.username or "telegram"
+            svc = ExecutiveService(self.container)
+            session = svc.session(user)
+            has_active = (
+                svc.interactions.active(session, InteractionKind.CLARIFICATION)
+                is not None
+                or svc.interactions.active(session, InteractionKind.CONFIRMATION)
+                is not None
+                or svc.conversation.active(session) is not None)
+            if not has_active:
+                return False
+            it = resolve_interpreter(self.container)
+            req = it.interpret(message, topic=self._tracker_ctx(update))
+            req.topic = self._tracker_ctx(update)
+            res = svc.handle(req, user=user)
+            if await self._reply_semantic(update, res):
+                return True
+            text = getattr(res, "answer", "") or ""
+            data = res.data if isinstance(res.data, dict) else {}
+            if not text:
+                text = str(data.get("text") or "")
+            if text:
+                await update.effective_message.reply_text(text)
+                return True
+            return False
+        except Exception as exc:  # noqa: BLE001 — never drop a user turn
+            log.warning("conversation coordinator failed: %s", exc)
+            return False
+
     async def _maybe_state_query_nl(self, update: Update,
-                                   message: str) -> bool:
+                                    message: str) -> bool:
         """Q6: answer state questions (capabilities/activity/config/connections)
         from live topic state via the semantic interpreter (no phrase lists)."""
         try:
@@ -1659,6 +1699,11 @@ class TelegramBot:
         # Unmatched free text is answered naturally from live state. The topic
         # provides *context* (a relevance hint), not a hardcoded route. The old
         # per-topic default-routing remains only as a legacy fallback.
+        # Q13: if a conversation task / clarification / confirmation is active,
+        # the turn belongs to it. Classify and route it as a follow-up BEFORE
+        # the independent _maybe_* routers can treat it as a new request.
+        if await self._maybe_conversation(update, message):
+            return
         if await self._maybe_state_query_nl(update, message):
             return
         if await self._maybe_web_nl(update, message):
@@ -2430,13 +2475,20 @@ class TelegramBot:
         return str(clar.get("question") or "Please choose.")
 
     async def _reply_semantic(self, update: Update, res: Any) -> bool:
-        """Reply with a clarification (buttons) when one is pending."""
+        """Reply with a clarification (buttons) when one is pending.
+
+        Q13: when the turn was a meta-question about the pending clarification,
+        send the explanation first, then re-ask (the interaction stays active).
+        """
         clar = self._clarification(res)
         if not clar:
             return False
+        answer = getattr(res, "answer", "") or ""
+        question = self._render_clarification(res)
+        if answer and answer.strip() != question.strip():
+            await update.effective_message.reply_text(answer)
         await update.effective_message.reply_text(
-            self._render_clarification(res),
-            reply_markup=self._clarification_markup(res))
+            question, reply_markup=self._clarification_markup(res))
         return True
 
     async def on_clarification_cb(self, update: Update,
