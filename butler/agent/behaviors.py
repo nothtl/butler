@@ -178,6 +178,57 @@ class TopicBehaviorStore:
                                        int(behavior_id)))
         return True
 
+    def update(self, behavior_id: int, **fields: Any) -> TopicBehavior | None:
+        """Update an existing behavior in place (never creates a duplicate)."""
+        if self.db is None:
+            return None
+        allowed = {"trigger", "strategy", "constraints", "scope",
+                   "persistence", "enabled", "priority"}
+        sets, params = [], []
+        for key, value in fields.items():
+            if key not in allowed:
+                continue
+            if key in ("strategy", "constraints"):
+                value = _dumps(value)
+            sets.append(f"{key}=?")
+            params.append(value)
+        if not sets:
+            return None
+        sets.append("updated_at=?")
+        params.append(int(time.time()))
+        params.append(int(behavior_id))
+        self.db.execute(f"UPDATE topic_behaviors SET {', '.join(sets)} "
+                        "WHERE id=?", tuple(params))
+        return self.get(behavior_id)
+
+    def get(self, behavior_id: int) -> TopicBehavior | None:
+        if self.db is None:
+            return None
+        row = self.db.one("SELECT * FROM topic_behaviors WHERE id=?",
+                          (int(behavior_id),))
+        return TopicBehavior.from_row(row) if row is not None else None
+
+    def find_by_trigger(self, topic_profile_id: int, trigger: str
+                        ) -> TopicBehavior | None:
+        """The existing behavior a new instruction refers to, if any.
+
+        Exact normalized trigger wins; otherwise a unique token-overlap match
+        (so "only use the web when ingredients are low" updates the existing
+        "food request" behavior rather than duplicating it)."""
+        text = _norm(trigger)
+        if not text:
+            return None
+        items = self.list(topic_profile_id)
+        for b in items:
+            if _norm(b.trigger) == text:
+                return b
+        hits = [b for b in items if b.matches(trigger)]
+        return hits[0] if len(hits) == 1 else None
+
+    def recent(self, topic_profile_id: int) -> TopicBehavior | None:
+        items = self.list(topic_profile_id)
+        return items[-1] if items else None
+
     def remove(self, behavior_id: int) -> bool:
         if self.db is None:
             return False

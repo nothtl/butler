@@ -20,6 +20,26 @@ from butler.agent.conversation import (  # noqa: E402
 from butler.agent.semantic import ActionKind  # noqa: E402
 from butler.core import Container  # noqa: E402
 
+#: (text, expected ActionKind) — behavior lifecycle + behavior-vs-tracker/memory
+ACTION_CASES = [
+    ("When I ask you for food, also search the Web for good menus that fit my pantry.", ActionKind.CREATE_TOPIC_BEHAVIOR),
+    ("Always use my pantry when I ask for meals.", ActionKind.CREATE_TOPIC_BEHAVIOR),
+    ("Actually, only use the web when you don't have enough ingredients.", ActionKind.CREATE_TOPIC_BEHAVIOR),
+    ("For this topic, use the web for course updates.", ActionKind.CREATE_TOPIC_BEHAVIOR),
+    ("Stop doing that automatically.", ActionKind.TOPIC_BEHAVIOR_CONTROL),
+    ("Disable that behavior here.", ActionKind.TOPIC_BEHAVIOR_CONTROL),
+    ("What will you do when I ask for food?", ActionKind.TOPIC_BEHAVIOR_QUERY),
+    ("Why do you search the web for food?", ActionKind.TOPIC_BEHAVIOR_QUERY),
+    ("What behaviors do you have here?", ActionKind.TOPIC_BEHAVIOR_QUERY),
+    ("Tell me when chicken is low.", ActionKind.TRACKER_CREATE),
+    ("Track CS188 assignments.", ActionKind.TRACKER_CREATE),
+    ("Remember that I prefer morning study sessions.", ActionKind.MEMORY_LEARN),
+    ("Never mind.", ActionKind.CANCEL),
+    ("Cancel that.", ActionKind.CANCEL),
+    ("What should I work on today?", ActionKind.RECOMMEND),
+    ("Schedule two hours for CS188 tomorrow afternoon.", ActionKind.FIND_BEST_SLOT),
+]
+
 CANDS = [{"name": "Project 2", "label": "Project 2 (CS188)"},
          {"name": "Project 1", "label": "Project 1 (CS61A)"}]
 
@@ -75,6 +95,10 @@ def main() -> int:
     if "--allow-live" not in sys.argv:
         print("BLOCKED: pass --allow-live to make real DeepSeek calls")
         return 0
+    max_calls = 0
+    for i, arg in enumerate(sys.argv):
+        if arg == "--max-calls" and i + 1 < len(sys.argv):
+            max_calls = int(sys.argv[i + 1])
     container = Container()
     cfg = container.cfg
     if not (getattr(cfg, "llm_api_key", "") and getattr(cfg, "llm_base_url", "")):
@@ -119,8 +143,32 @@ def main() -> int:
         print("misclassified:")
         for w in wrong:
             print("  " + w)
-    print("RESULT: PASS" if acc >= 0.95 else "RESULT: FAIL")
-    return 0 if acc >= 0.95 else 1
+
+    # --- section 2: action mapping for the behavior lifecycle (real DeepSeek) --
+    from butler.agent.interpret import resolve_interpreter
+    interp = resolve_interpreter(container)
+    a_ok = 0
+    print("\naction mapping (behavior lifecycle / behavior-vs-tracker):")
+    for text, expected in ACTION_CASES:
+        if max_calls and calls >= max_calls:
+            break
+        try:
+            req = interp.interpret(text, topic={"topic_name": "Food"})
+            got = req.action
+        except Exception as exc:  # noqa: BLE001
+            got = f"error:{exc}"
+        calls += 1
+        ok = got == expected
+        a_ok += 1 if ok else 0
+        print(f"  {'PASS' if ok else 'FAIL'}  {text[:52]!r} -> {got}"
+              f" (want {expected.value})")
+    a_total = len(ACTION_CASES)
+    a_acc = a_ok / a_total if a_total else 0.0
+    print(f"\naction_mapping_accuracy: {a_acc:.3f} ({a_ok}/{a_total})")
+    print(f"total live calls: {calls}")
+    ok_all = acc >= 0.95 and a_acc >= 0.90
+    print("RESULT: PASS" if ok_all else "RESULT: FAIL")
+    return 0 if ok_all else 1
 
 
 if __name__ == "__main__":

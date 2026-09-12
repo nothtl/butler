@@ -194,6 +194,7 @@ _TABLE: dict[str, tuple[str, bool, bool]] = {
     # Q13 generic topic behaviors (shape future requests; never bypass safety)
     "create_topic_behavior": ("LOCAL_MUTATION", True, False),
     "topic_behavior_query": ("READ_ONLY", False, False),
+    "topic_behavior_control": ("LOCAL_MUTATION", True, False),
     "trash": ("DESTRUCTIVE", True, True),
     "trash_duplicates": ("DESTRUCTIVE", True, True),
     "trash_list": ("READ_ONLY", False, False),

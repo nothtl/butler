@@ -125,6 +125,29 @@ def main() -> int:
           or bool(task6 and task6.filled_slots.get("use_web"))
           or bool(store.list(prof.id)))
 
+    print("7) modify the behavior (no duplicate)")
+    _, res7 = step("Actually, only use the web when you don't have enough "
+                   "ingredients.")
+    d7 = res7.data if isinstance(res7.data, dict) else {}
+    items7 = store.list(prof.id, enabled_only=False)
+    check("S10 modified in place (no duplicate)", len(items7) == 1,
+          f"count={len(items7)} updated={d7.get('updated')}")
+
+    print("8) cancel the behavior")
+    _, res8 = step("Stop doing that automatically.")
+    d8 = res8.data if isinstance(res8.data, dict) else {}
+    check("S11 behavior disabled",
+          str(d8.get("changed")) in ("disabled", "removed")
+          or store.match(prof.id, "recommend a meal") == [],
+          f"changed={d8.get('changed')}")
+
+    print("9) behavior query after cancel")
+    _, res9 = step("What will you do when I ask for food?")
+    txt9 = (res9.answer or (res9.data or {}).get("text") or "").lower()
+    check("S12 no active standing behavior",
+          store.match(prof.id, "recommend a meal") == []
+          or "no standing" in txt9, txt9[:80])
+
     passed = sum(1 for _, ok in checks if ok)
     print(f"\nscenario: {passed}/{len(checks)} checks passed")
     print("RESULT: PASS" if passed == len(checks) else "RESULT: FAIL")

@@ -581,6 +581,30 @@ class TopicStore:
             out.append("Tracking")
             out.append("• nothing yet — say \"track …\"")
             out.append("")
+        # Q13: standing behaviors (how Butler responds to future requests here).
+        try:
+            from .agent.behaviors import TopicBehaviorStore
+            behaviors = TopicBehaviorStore(self.container).list(prof.id)
+        except Exception:  # noqa: BLE001 — panel must never fail to render
+            behaviors = []
+        if behaviors:
+            out.append("Behaviors")
+            for b in behaviors:
+                bits = []
+                strat = b.sanitized_strategy()
+                if strat.get("use_web"):
+                    bits.append("web search")
+                if strat.get("source_preference"):
+                    bits.append(f"prefer {strat['source_preference']}")
+                if strat.get("prefer_pantry_compatible"):
+                    bits.append("use pantry")
+                if b.constraints:
+                    bits.append(", ".join(f"{k}={v}"
+                                          for k, v in b.constraints.items()))
+                out.append(f"🟢 {b.trigger} → " +
+                           ("; ".join(bits) or "adjust") +
+                           f" ({b.persistence})")
+            out.append("")
         # Planning / Scheduling / Web / Proactive
         for cap, label in (("planning", "Planning"), ("scheduling", "Scheduling"),
                            ("web", "Web"), ("proactive", "Proactive")):

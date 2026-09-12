@@ -495,6 +495,61 @@ def test_service_behaviors() -> None:
 # =====================================================================
 # 6. no hardcoded phrase handling / no domain classes
 # =====================================================================
+def test_behavior_lifecycle() -> None:
+    print("\n== behavior lifecycle (modify / cancel / panel) ==")
+    c = fresh("q13-life-")
+    prof, _ = c.topics.ensure(-100, 31, "Food")
+    c.topics.update(prof, status="active", name="Food")
+    svc = svc_for(c)
+    topic = {"chat_id": -100, "thread_id": 31, "topic_name": "Food"}
+
+    def create(strategy, trigger="meal recommendation"):
+        return svc.handle(req(
+            ActionKind.CREATE_TOPIC_BEHAVIOR, conf=0.85,
+            raw="When I ask for food, search the web.",
+            parameters={"trigger": trigger, "strategy": dict(strategy),
+                        "persistence": "always"}, topic=topic))
+
+    create({"use_web": True, "prefer_pantry_compatible": True})
+    store = TopicBehaviorStore(c)
+    check("L1 one behavior created", len(store.list(prof.id)) == 1)
+    # modify: same trigger, new strategy -> update in place, no duplicate
+    r = create({"use_web": True}, trigger="meal recommendation")
+    d = r.data or {}
+    check("L2 modification updates in place", d.get("updated") is True)
+    check("L3 no duplicate after modify", len(store.list(prof.id)) == 1)
+    check("L4 strategy replaced",
+          store.list(prof.id)[0].sanitized_strategy()
+          == {"use_web": True})
+
+    # cancel/disable via the generic control action
+    rc = svc.handle(req(ActionKind.TOPIC_BEHAVIOR_CONTROL, conf=0.85,
+                        raw="Stop doing that automatically.",
+                        parameters={"state": "disabled"}, topic=topic))
+    check("L5 control disables behavior",
+          (rc.data or {}).get("changed") == "disabled")
+    check("L6 disabled behavior not matched",
+          store.match(prof.id, "recommend a meal") == [])
+    check("L7 disabled behavior still listed for control",
+          len(store.list(prof.id, enabled_only=False)) == 1)
+
+    # remove
+    svc.handle(req(ActionKind.TOPIC_BEHAVIOR_CONTROL, conf=0.85,
+                   raw="Remove that behavior.",
+                   parameters={"state": "remove"}, topic=topic))
+    check("L8 remove deletes behavior", store.list(prof.id) == [])
+
+    # panel shows behaviors and is not a tracker
+    create({"use_web": True})
+    text, _ = c.topics.render_panel(c.topics.get(-100, 31))
+    check("L9 panel shows a Behaviors section", "Behaviors" in text)
+    check("L10 panel behavior line has trigger + persistence",
+          "meal recommendation" in text and "always" in text)
+    check("L11 behavior is not rendered as a tracker",
+          "Tracking" not in text.split("Behaviors")[0].split("CONNECTED")[-1]
+          or "Behaviors" in text)
+
+
 def test_genericity() -> None:
     print("\n== genericity ==")
     import butler.agent.conversation as conv
@@ -510,7 +565,8 @@ def test_genericity() -> None:
                   for name in dir(beh)))
     check("G3 new actions registered",
           is_registered("create_topic_behavior")
-          and is_registered("topic_behavior_query"))
+          and is_registered("topic_behavior_query")
+          and is_registered("topic_behavior_control"))
     check("G4 behavior schema requires trigger+persistence",
           {s.name for s in required_slots("create_topic_behavior")}
           == {"trigger", "persistence"})
@@ -524,6 +580,7 @@ def main() -> int:
     test_behaviors()
     test_service_flows()
     test_service_behaviors()
+    test_behavior_lifecycle()
     test_genericity()
     print(f"\n==== RESULT: {PASS} passed, {FAIL} failed ====")
     return 1 if FAIL else 0

@@ -169,6 +169,7 @@ class ActionKind(str, Enum):
     CANCEL = "cancel"                              # abandon the active task
     CREATE_TOPIC_BEHAVIOR = "create_topic_behavior"  # standing instruction
     TOPIC_BEHAVIOR_QUERY = "topic_behavior_query"    # what will you do here
+    TOPIC_BEHAVIOR_CONTROL = "topic_behavior_control"  # disable/remove one
     UNKNOWN = "unknown"
 
 

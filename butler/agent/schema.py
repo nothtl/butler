@@ -223,13 +223,23 @@ def schema_prompt() -> str:
         '"strategy":{"use_web":true},"persistence":"ask"}',
         '- "Always use the pantry when I ask for meals." -> '
         'create_topic_behavior, parameters={"trigger":"meal request",'
-        '"strategy":{"use_pantry":true},"persistence":"ask"}',
+        '"strategy":{"prefer_pantry_compatible":true},"persistence":"ask"}',
         '- "Normally do X here, unless I say otherwise." -> '
         'create_topic_behavior (a default, still overridable this turn)',
         "A persistent behavior must never be created silently: set "
         "persistence=ask so the server offers [Always in this topic] / "
         "[Only this time] / [Cancel]. Never turn a behavior into a tracker "
         "(trackers monitor external state over time).",
+        '- "Actually, only use the web when ingredients are low." -> '
+        'create_topic_behavior (updates the existing matching behavior in '
+        'place, never a duplicate)',
+        '- "Stop doing that automatically." / "Disable that behavior here." -> '
+        'topic_behavior_control, parameters={"state":"disabled",'
+        '"trigger":"<the behavior it refers to, or empty for the most recent>"}',
+        '- "Remove that behavior." -> topic_behavior_control, '
+        'parameters={"state":"remove"}',
+        '- "What behaviors do you have here?" / "Why do you search the web '
+        'for food?" -> topic_behavior_query',
         '- "Never mind." / "Cancel that." / "Forget it." -> cancel '
         "(abandon the active request; do not execute it)",
         "",

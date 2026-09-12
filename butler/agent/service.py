@@ -190,6 +190,20 @@ class ExecutiveService:
                 and task is not None and clar is None and conf is None:
             return self._continue_active(session, task, req,
                                          include_context, expired_notice)
+        # Q13: a clearly new request supersedes any pending question rather than
+        # being consumed as a (free-text) answer to it.
+        if kind == TurnKind.INTERRUPT_WITH_NEW_REQUEST:
+            if clar is not None:
+                self.interactions.close(session, clar,
+                                        InteractionStatus.CANCELLED)
+                clar = None
+            if conf is not None:
+                self.interactions.close(session, conf,
+                                        InteractionStatus.CANCELLED)
+                conf = None
+            if task is not None:
+                self.conversation.clear(session, TaskStatus.SUPERSEDED.value)
+                task = None
         # Q1/P2.1: answer an active clarification first, using structured state.
         if clar is not None:
             handled = self._answer_clarification(
@@ -440,6 +454,12 @@ class ExecutiveService:
         prof = self._topic_profile(req.topic)
         if prof is None:
             return req
+        # A behavior-management request defines behavior; it must not be shaped
+        # by the behaviors it is managing.
+        if req.action in (ActionKind.CREATE_TOPIC_BEHAVIOR,
+                          ActionKind.TOPIC_BEHAVIOR_CONTROL,
+                          ActionKind.TOPIC_BEHAVIOR_QUERY):
+            return req
         params = dict(req.parameters or {})
         overridden = bool(params.pop("behavior_override", False))
         if overridden:
@@ -472,10 +492,14 @@ class ExecutiveService:
         params = req.parameters or {}
         trigger = str(params.get("trigger") or params.get("condition")
                       or params.get("when") or "").strip()
-        strategy = dict(params.get("strategy") or {})
-        for key in ("use_web", "source_preference", "prefer_pantry_compatible"):
-            if params.get(key):
-                strategy.setdefault(key, params[key])
+        if params.get("strategy"):
+            strategy = dict(params["strategy"])
+        else:
+            strategy = {}
+            for key in ("use_web", "source_preference",
+                        "prefer_pantry_compatible"):
+                if params.get(key):
+                    strategy.setdefault(key, params[key])
         constraints = dict(params.get("constraints") or {})
         persistence = str(params.get("persistence") or "ask").lower()
         if persistence not in ("always", "once"):
@@ -493,6 +517,23 @@ class ExecutiveService:
                       "persisted": False},
                 warnings=["No topic context; behavior was not stored."])
         if persistence == "always":
+            existing = self.behaviors.find_by_trigger(prof.id, trigger)
+            if existing is not None:
+                behavior = self.behaviors.update(
+                    existing.id, trigger=trigger, strategy=strategy,
+                    constraints=constraints, scope=(prof.name or prof.purpose
+                                                    or ""),
+                    persistence="always")
+                text = ("Updated the existing behavior for this topic: when "
+                        f"\"{behavior.trigger}\", "
+                        + (self.behaviors.describe(prof.id).split("→")[-1]
+                           .strip() or "adjust."))
+                return AgentResult(
+                    status=ResultStatus.OK, answer=text,
+                    data={"behavior": behavior.to_dict(), "persisted": True,
+                          "updated": True, "text": text},
+                    facts=[{"kind": "topic_behavior",
+                            "behavior": behavior.to_dict()}])
             behavior = self.behaviors.add(
                 prof.id, trigger=trigger, strategy=strategy,
                 constraints=constraints, scope=(prof.name or prof.purpose or ""),
@@ -531,6 +572,54 @@ class ExecutiveService:
                            facts=[{"kind": "topic_behaviors", "count":
                                    len(items)}])
 
+    def _topic_behavior_control(self, req: AgentRequest, snap: Any
+                                ) -> AgentResult:
+        """Enable/disable/remove a standing behavior (generic, no phrases)."""
+        prof = self._topic_profile(req.topic)
+        if prof is None:
+            return AgentResult(
+                status=ResultStatus.UNAVAILABLE,
+                error="There is no topic context for behaviors here.")
+        params = req.parameters or {}
+        state = str(params.get("state") or params.get("action")
+                    or "disabled").lower()
+        trigger = str(params.get("trigger") or params.get("behavior")
+                      or params.get("when") or "").strip()
+        behavior_id = params.get("behavior_id")
+        behavior = None
+        if behavior_id and str(behavior_id).isdigit():
+            behavior = self.behaviors.get(int(behavior_id))
+        if behavior is None and trigger:
+            behavior = self.behaviors.find_by_trigger(prof.id, trigger)
+        if behavior is None:
+            # "that" with no explicit trigger refers to the most recent one.
+            behavior = self.behaviors.recent(prof.id)
+        if behavior is None:
+            return AgentResult(
+                status=ResultStatus.OK,
+                data={"text": "There is no standing behavior to change here.",
+                      "changed": False},
+                warnings=["no matching topic behavior"])
+        if state in ("remove", "delete", "forget"):
+            self.behaviors.remove(behavior.id)
+            changed = "removed"
+        elif state in ("enabled", "enable", "on", "resume", "resumed"):
+            self.behaviors.set_enabled(behavior.id, True)
+            changed = "enabled"
+        else:
+            self.behaviors.set_enabled(behavior.id, False)
+            changed = "disabled"
+        remaining = self.behaviors.list(prof.id)
+        text = (f"Behavior \"{behavior.trigger}\" {changed}. "
+                + (self.behaviors.describe(prof.id) if remaining
+                   else "No standing behaviors remain for this topic."))
+        return AgentResult(
+            status=ResultStatus.OK, answer=text,
+            data={"text": text, "changed": changed,
+                  "behavior": behavior.to_dict(),
+                  "behaviors": [b.to_dict() for b in remaining]},
+            facts=[{"kind": "topic_behavior_control", "changed": changed}])
+
     #: state-query subjects that are topic-scoped and never need a target
     _TOPIC_SCOPED_SUBJECTS = ("capabilities", "configuration", "connections",
                               "schedule", "knowledge", "memory",
@@ -545,7 +634,8 @@ class ExecutiveService:
         a standing behavior is defined by its trigger text, not an entity."""
         if req.action in (ActionKind.WEB_SEARCH, ActionKind.WEB_RESEARCH,
                           ActionKind.CREATE_TOPIC_BEHAVIOR,
-                          ActionKind.TOPIC_BEHAVIOR_QUERY):
+                          ActionKind.TOPIC_BEHAVIOR_QUERY,
+                          ActionKind.TOPIC_BEHAVIOR_CONTROL):
             return True
         return self._is_targetless_state_query(req)
 
@@ -570,9 +660,14 @@ class ExecutiveService:
         # Q13: topic behaviors shape the request (below any current-turn
         # instruction, which is already reflected in the request parameters).
         req = self._apply_behaviors(req)
-        # Q13: keep a canonical active task for refinable requests.
+        # Q13: keep a canonical active task for refinable requests. A
+        # continuation must preserve the existing task id (no duplicates).
         if self.conversation.should_persist(req) and req.source == "llm":
-            self.conversation.begin(session, req)
+            existing = self.conversation.active(session)
+            if existing is not None:
+                self.conversation.update_from_request(session, existing, req)
+            else:
+                self.conversation.begin(session, req)
         # Q7: state queries with no target skip resolution/slot-completion and
         # go straight to their state handler.
         if not self._bypasses_target_resolution(req):
@@ -986,6 +1081,7 @@ class ExecutiveService:
             ActionKind.SETTINGS_UPDATE: self._settings_update,
             ActionKind.CREATE_TOPIC_BEHAVIOR: self._create_topic_behavior,
             ActionKind.TOPIC_BEHAVIOR_QUERY: self._topic_behavior_query,
+            ActionKind.TOPIC_BEHAVIOR_CONTROL: self._topic_behavior_control,
             ActionKind.WEB_SEARCH: self._web_search,
             ActionKind.WEB_RESEARCH: self._web_research,
             ActionKind.WEB_FETCH: self._web_fetch,

@@ -260,7 +260,15 @@ class ConversationTaskStore:
         data[self._KEY] = raw
 
     def should_persist(self, req: Any) -> bool:
-        """Whether a successfully-handled request should stay active."""
+        """Whether a successfully-handled request should stay active.
+
+        Behavior-management actions are discrete commands, not evolving
+        requests, so they never become a lingering active task.
+        """
+        if req.action in (ActionKind.CREATE_TOPIC_BEHAVIOR,
+                          ActionKind.TOPIC_BEHAVIOR_CONTROL,
+                          ActionKind.TOPIC_BEHAVIOR_QUERY):
+            return False
         return req.intent in _CONTINUABLE_INTENTS
 
 
